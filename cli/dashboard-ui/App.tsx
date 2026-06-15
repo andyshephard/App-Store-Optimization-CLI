@@ -505,12 +505,15 @@ export function App() {
     startReauthentication,
     submitAuthPromptResponse,
     authCheckLoadingText,
+    isAddKeywordsAuthBusy,
+    isRetryFailedAuthBusy,
     authStatusLabel,
     activeAuthContext,
     canStartReauth,
     showReauthButton,
   } = useAuthFlow({
     isAddingKeywords,
+    isRetryingFailedKeywords,
   });
   const {
     setupStatusError,
@@ -1552,7 +1555,7 @@ export function App() {
         );
       }
     } catch (error) {
-      if (openAuthModalForRetryFailed(error)) return;
+      if (openAuthModalForRetryFailed(error, failedKeywordCount)) return;
       if (openSetupModalForPrimaryAppAccessError(error)) return;
       setErrorText(toActionableErrorMessage(error, "Failed to retry failed keywords"));
     } finally {
@@ -2098,7 +2101,9 @@ export function App() {
   const showLoading = effectiveLoadingText !== "";
   const isColdStart = isInitialLoad && !hasCachedData;
   const isAnyAppMutationInFlight = isAddingApp;
-  const isAddKeywordsBusy = isAddingKeywords || authCheckLoadingText !== "";
+  const isAddKeywordsBusy = isAddingKeywords || isAddKeywordsAuthBusy;
+  const isRetryFailedBusy = isRetryingFailedKeywords || isRetryFailedAuthBusy;
+  const isKeywordAuthBusy = isAddKeywordsAuthBusy || isRetryFailedAuthBusy;
   const showAddKeywordsOnboardingHighlight = !hasAnyAddedKeyword;
   const showAddAppOnboardingHighlight = !hasAnyAddedNonDefaultApp;
   const showError = !showLoading && errorText !== "";
@@ -2495,6 +2500,7 @@ export function App() {
               type="submit"
               disabled={
                 isAddKeywordsBusy ||
+                (isKeywordAuthBusy && !isAddKeywordsAuthBusy) ||
                 isColdStart ||
                 isKeywordMutationBlockedByStartupReauth
               }
@@ -2509,7 +2515,8 @@ export function App() {
                 type="button"
                 variant="ghost"
                 disabled={
-                  isRetryingFailedKeywords ||
+                  isRetryFailedBusy ||
+                  (isKeywordAuthBusy && !isRetryFailedAuthBusy) ||
                   isColdStart ||
                   isKeywordMutationBlockedByStartupReauth
                 }

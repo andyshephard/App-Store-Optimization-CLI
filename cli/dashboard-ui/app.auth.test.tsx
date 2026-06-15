@@ -54,7 +54,7 @@ describe("dashboard auth modal UI flow", () => {
     localStorage.clear();
   });
 
-  it("auto-starts reauthentication after AUTH_REQUIRED without showing modal when no user input is needed", async () => {
+  it("auto-starts reauthentication after AUTH_REQUIRED with inline feedback when no user input is needed", async () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -148,12 +148,110 @@ describe("dashboard auth modal UI flow", () => {
         })
       )
     );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Add Keywords" })).not.toBeDisabled()
-    );
     expect(
-      screen.queryByText("Checking Apple session for 1 keyword...")
+      await screen.findByText("Checking Apple session for 1 keyword...")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Keywords" })).toBeDisabled();
+    expect(
+      screen.queryByRole("heading", { name: "Apple Reauthentication Required" })
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps add-keyword reauthentication visible when auth is already in progress", async () => {
+    let authStartCount = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: { success: true, data: emptyKeywordPagedPayload() },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "idle",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+                appListRefreshAttempted: false,
+                appListRefreshSucceeded: false,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/keywords") {
+        return jsonResponse({
+          status: 409,
+          body: {
+            success: false,
+            errorCode: "AUTH_IN_PROGRESS",
+            error: "Auth already in progress",
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        authStartCount += 1;
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:00.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:01.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    const input = await screen.findByPlaceholderText("Add keywords (comma-separated)");
+    fireEvent.change(input, { target: { value: "term" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Keywords" }));
+
+    expect(
+      await screen.findByText("Checking Apple session for 1 keyword...")
+    ).toBeInTheDocument();
+    expect(authStartCount).toBe(0);
+    expect(screen.getByRole("button", { name: "Add Keywords" })).toBeDisabled();
     expect(
       screen.queryByRole("heading", { name: "Apple Reauthentication Required" })
     ).not.toBeInTheDocument();
@@ -278,7 +376,9 @@ describe("dashboard auth modal UI flow", () => {
 
     await waitFor(() => expect(authStatusCount).toBeGreaterThan(0));
     expect(keywordPostCount).toBe(1);
-    expect(screen.getByRole("button", { name: "Add Keywords" })).not.toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add Keywords" })).not.toBeDisabled()
+    );
   });
 
   it("collects a missing Primary App ID through the dashboard setup flow", async () => {
@@ -487,6 +587,232 @@ describe("dashboard auth modal UI flow", () => {
     expect(screen.getByText("Sign in to Apple Search Ads.")).toBeInTheDocument();
     expect(
       screen.queryByText("Apple Search Ads session expired. Use Reauthenticate and retry.")
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps retry-failed reauthentication visible when no user input is needed", async () => {
+    let retryFailedCount = 0;
+    let authStartCount = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              ...emptyKeywordPagedPayload(),
+              failedCount: 2,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "idle",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              requiresReauthentication: false,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/keywords/retry-failed") {
+        retryFailedCount += 1;
+        return jsonResponse({
+          status: 401,
+          body: {
+            success: false,
+            errorCode: "AUTH_REQUIRED",
+            error: "Auth required",
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        authStartCount += 1;
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:01.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:02.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Refresh failed keywords (2)",
+      })
+    );
+
+    await waitFor(() => expect(authStartCount).toBe(1));
+    expect(retryFailedCount).toBe(1);
+    expect(
+      await screen.findByText("Checking Apple session for 2 failed keywords...")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Refresh failed keywords (2)" })
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Keywords" })).toBeDisabled();
+    expect(
+      screen.queryByRole("heading", { name: "Apple Reauthentication Required" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps retry-failed reauthentication visible when auth is already in progress", async () => {
+    let retryFailedCount = 0;
+    let authStartCount = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              ...emptyKeywordPagedPayload(),
+              failedCount: 2,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "idle",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              requiresReauthentication: false,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/keywords/retry-failed") {
+        retryFailedCount += 1;
+        return jsonResponse({
+          status: 409,
+          body: {
+            success: false,
+            errorCode: "AUTH_IN_PROGRESS",
+            error: "Auth already in progress",
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        authStartCount += 1;
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:01.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:02.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Refresh failed keywords (2)",
+      })
+    );
+
+    expect(
+      await screen.findByText("Checking Apple session for 2 failed keywords...")
+    ).toBeInTheDocument();
+    expect(retryFailedCount).toBe(1);
+    expect(authStartCount).toBe(0);
+    expect(
+      screen.getByRole("button", { name: "Refresh failed keywords (2)" })
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Keywords" })).toBeDisabled();
+    expect(
+      screen.queryByRole("heading", { name: "Apple Reauthentication Required" })
     ).not.toBeInTheDocument();
   });
 

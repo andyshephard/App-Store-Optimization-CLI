@@ -106,9 +106,10 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 1. Resolve failed keywords for selected `appId` + `country`.
 2. Rerun the same keyword pipeline in non-interactive auth mode, chunked into max `100` keyword batches.
 3. If auth is invalid, return `AUTH_REQUIRED` or `AUTH_IN_PROGRESS`; the dashboard enters the shared reauthentication flow and the user retries the mutation explicitly after auth succeeds.
-4. Return aggregate `{ retriedCount, succeededCount, failedCount }`.
-5. Clear failed status for keywords that succeeded.
-6. Dashboard UI shows the retry action only when current keyword rows include failed entries.
+4. While retry-failed reauth is auto-starting or silently in progress, the dashboard keeps the retry action in a visible loading state until a prompt, failure, or success resolves the auth handoff.
+5. Return aggregate `{ retriedCount, succeededCount, failedCount }`.
+6. Clear failed status for keywords that succeeded.
+7. Dashboard UI shows the retry action only when current keyword rows include failed entries.
 
 ## Flow B3: Dashboard Keyword Favorites (`POST /api/aso/keywords/favorite`)
 1. UI toggles the row heart control in the dedicated `Favorite` column.
@@ -132,7 +133,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 6. Shared auth service can request browser-collected credentials, Keychain-save confirmation, 2FA method choice, trusted phone choice, and verification code without duplicating auth logic.
 7. On success, client can resume a previously paused startup refresh. Add-keyword auth handoff does not retry the original add automatically; the user retries that mutation explicitly.
 8. On failure, the same dashboard auth modal remains the single recovery surface for both add-keyword and startup-refresh flows.
-9. While reauth is auto-starting for an add-keyword auth handoff, the dashboard may briefly show `Checking Apple session...`, then clears the add-keyword loading state once auth takes over so the user can retry manually after authentication.
+9. While add-keyword or retry-failed reauth is auto-starting or silently in progress, the dashboard keeps the related keyword action in a visible loading state until a prompt, failure, or success resolves the auth handoff.
 
 ## Flow D: Startup Background Refresh
 1. Dashboard refresh settings are persisted in local ASO config:

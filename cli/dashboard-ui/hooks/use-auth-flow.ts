@@ -27,6 +27,10 @@ export type PendingAddContext = {
   keywords: string[];
 };
 
+export type PendingRetryFailedContext = {
+  failedCount: number;
+};
+
 type AuthFlowContext =
   | { kind: "add-keywords" }
   | { kind: "retry-failed" }
@@ -35,6 +39,7 @@ type AuthFlowContext =
 
 type UseAuthFlowParams = {
   isAddingKeywords: boolean;
+  isRetryingFailedKeywords: boolean;
 };
 
 function promptIdentity(prompt: AsoInteractivePrompt | null): string {
@@ -71,6 +76,8 @@ export function useAuthFlow(params: UseAuthFlowParams) {
   const [authFlowContext, setAuthFlowContext] = useState<AuthFlowContext>(null);
   const [pendingAddContext, setPendingAddContextState] =
     useState<PendingAddContext | null>(null);
+  const [pendingRetryFailedContext, setPendingRetryFailedContext] =
+    useState<PendingRetryFailedContext | null>(null);
   const [authPendingPrompt, setAuthPendingPrompt] =
     useState<AsoInteractivePrompt | null>(null);
   const isSubmittingAuthPrompt =
@@ -99,9 +106,6 @@ export function useAuthFlow(params: UseAuthFlowParams) {
   const startReauthentication = useCallback(async () => {
     try {
       setIsStartingAuth(true);
-      if (authFlowContext?.kind === "add-keywords") {
-        setPendingAddContextState(null);
-      }
       setAuthStatus("in_progress");
       setAuthStatusError("");
       const data = await apiWrite<DashboardAuthStatusPayload>(
@@ -127,7 +131,7 @@ export function useAuthFlow(params: UseAuthFlowParams) {
     } finally {
       setIsStartingAuth(false);
     }
-  }, [applyAuthState, authFlowContext]);
+  }, [applyAuthState]);
 
   const submitAuthPromptResponse = useCallback(
     async (response: AsoInteractivePromptResponse) => {
@@ -183,12 +187,12 @@ export function useAuthFlow(params: UseAuthFlowParams) {
       const errorCode = getDashboardApiErrorCode(error);
       if (!isAuthFlowErrorCode(errorCode)) return false;
       setAuthFlowContext({ kind: "add-keywords" });
+      setPendingRetryFailedContext(null);
+      setPendingAddContextState({ keywords });
       if (errorCode === "AUTH_IN_PROGRESS") {
-        setPendingAddContextState(null);
         setAuthStatus("in_progress");
         setAuthStatusError("");
       } else {
-        setPendingAddContextState({ keywords });
         setAuthStatus("idle");
         setAuthStatusError("");
       }
@@ -197,20 +201,25 @@ export function useAuthFlow(params: UseAuthFlowParams) {
     []
   );
 
-  const openAuthModalForRetryFailed = useCallback((error: unknown): boolean => {
-    const errorCode = getDashboardApiErrorCode(error);
-    if (!isAuthFlowErrorCode(errorCode)) return false;
-    setAuthFlowContext({ kind: "retry-failed" });
-    setPendingAddContextState(null);
-    if (errorCode === "AUTH_IN_PROGRESS") {
-      setAuthStatus("in_progress");
-      setAuthStatusError("");
-    } else {
-      setAuthStatus("idle");
-      setAuthStatusError("");
-    }
-    return true;
-  }, []);
+  const openAuthModalForRetryFailed = useCallback(
+    (error: unknown, failedCount: number): boolean => {
+      const errorCode = getDashboardApiErrorCode(error);
+      if (!isAuthFlowErrorCode(errorCode)) return false;
+      const normalizedFailedCount = Math.max(0, Math.floor(failedCount));
+      setAuthFlowContext({ kind: "retry-failed" });
+      setPendingAddContextState(null);
+      setPendingRetryFailedContext({ failedCount: normalizedFailedCount });
+      if (errorCode === "AUTH_IN_PROGRESS") {
+        setAuthStatus("in_progress");
+        setAuthStatusError("");
+      } else {
+        setAuthStatus("idle");
+        setAuthStatusError("");
+      }
+      return true;
+    },
+    []
+  );
 
   const requestStartupRefreshReauthentication = useCallback(() => {
     setAuthFlowContext((current) => current ?? { kind: "startup-refresh" });
@@ -252,7 +261,7 @@ export function useAuthFlow(params: UseAuthFlowParams) {
   }, [applyAuthState, authStatus, isStartingAuth]);
 
   useEffect(() => {
-    if (!pendingAddContext && authFlowContext?.kind !== "retry-failed") return;
+    if (!pendingAddContext && !pendingRetryFailedContext) return;
     if (authStatus !== "idle") return;
     if (!authCanPrompt) return;
     if (isStartingAuth || isSubmittingAuthPrompt) return;
@@ -260,6 +269,7 @@ export function useAuthFlow(params: UseAuthFlowParams) {
   }, [
     authFlowContext,
     pendingAddContext,
+    pendingRetryFailedContext,
     authStatus,
     authCanPrompt,
     isStartingAuth,
@@ -278,20 +288,33 @@ export function useAuthFlow(params: UseAuthFlowParams) {
   useEffect(() => {
     if (authStatus !== "succeeded") return;
     setPendingAddContextState(null);
+    setPendingRetryFailedContext(null);
     setAuthFlowContext(null);
   }, [authStatus]);
 
   const pendingAddKeywordCount = pendingAddContext?.keywords.length ?? 0;
+  const pendingRetryFailedCount = pendingRetryFailedContext?.failedCount ?? 0;
+  const isAuthHandoffLoading =
+    isStartingAuth ||
+    isSubmittingAuthPrompt ||
+    authStatus === "idle" ||
+    authStatus === "in_progress" ||
+    authStatus === "succeeded";
+  const isAddKeywordsAuthBusy = Boolean(
+    pendingAddContext && !authModalOpen && isAuthHandoffLoading
+  );
+  const isRetryFailedAuthBusy = Boolean(
+    pendingRetryFailedContext && !authModalOpen && isAuthHandoffLoading
+  );
+  const showAddAuthLoadingText =
+    isAddKeywordsAuthBusy && !params.isAddingKeywords;
+  const showRetryFailedAuthLoadingText =
+    isRetryFailedAuthBusy && !params.isRetryingFailedKeywords;
   const authCheckLoadingText =
-    pendingAddContext &&
-    !authModalOpen &&
-    !params.isAddingKeywords &&
-    (isStartingAuth ||
-      isSubmittingAuthPrompt ||
-      authStatus === "idle" ||
-      authStatus === "in_progress" ||
-      authStatus === "succeeded")
+    showAddAuthLoadingText
       ? `Checking Apple session for ${pendingAddKeywordCount} keyword${pendingAddKeywordCount === 1 ? "" : "s"}...`
+      : showRetryFailedAuthLoadingText
+        ? `Checking Apple session for ${pendingRetryFailedCount} failed keyword${pendingRetryFailedCount === 1 ? "" : "s"}...`
       : "";
 
   const authStatusLabel = useMemo(() => {
@@ -317,6 +340,8 @@ export function useAuthFlow(params: UseAuthFlowParams) {
     startReauthentication,
     submitAuthPromptResponse,
     authCheckLoadingText,
+    isAddKeywordsAuthBusy,
+    isRetryFailedAuthBusy,
     authStatusLabel,
     activeAuthContext: authFlowContext?.kind ?? null,
     canStartReauth:
