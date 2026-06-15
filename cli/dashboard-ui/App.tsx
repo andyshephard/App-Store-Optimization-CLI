@@ -145,6 +145,21 @@ type DeleteConfirmMenuState =
       appName: string;
     };
 
+type AddKeywordsRequestContext = {
+  appId: string;
+  country: string;
+  keywords: string[];
+  inputKeywords: string[];
+};
+type RetryFailedRequestContext = {
+  appId: string;
+  country: string;
+  failedCount: number;
+};
+type PendingKeywordAuthResume =
+  | ({ kind: "add-keywords" } & AddKeywordsRequestContext)
+  | ({ kind: "retry-failed" } & RetryFailedRequestContext);
+
 type Row = {
   keyword: string;
   popularity: number;
@@ -232,6 +247,11 @@ function clampFloatingPosition(x: number, y: number, width: number, height: numb
 
 function formatKeywordDeleteLabel(keywords: string[]) {
   return keywords.length === 1 ? `"${keywords[0]}"` : `${keywords.length} keywords`;
+}
+
+function areKeywordListsEqual(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  return a.every((keyword, index) => keyword === b[index]);
 }
 
 type StartupRefreshStatus =
@@ -446,6 +466,8 @@ export function App() {
   const resumeStartupRefreshAfterAuthRef = useRef(false);
   const startupRefreshAuthAttemptKeyRef = useRef<string | null>(null);
   const manualRefreshFeedbackPendingRef = useRef(false);
+  const pendingKeywordAuthResumeRef = useRef<PendingKeywordAuthResume | null>(null);
+  const keywordAuthResumeInFlightRef = useRef(false);
 
   const appById = useMemo(
     () => new Map(apps.map((app) => [app.id, app])),
@@ -1452,7 +1474,10 @@ export function App() {
   }, [deleteConfirmMenu, deleteKeywordsFromApp, deleteSidebarApp]);
 
   const submitKeywords = useCallback(
-    async (kws: string[]): Promise<boolean> => {
+    async (
+      context: AddKeywordsRequestContext,
+      options: { allowAuthResume: boolean } = { allowAuthResume: true }
+    ): Promise<boolean> => {
       if (isKeywordMutationBlockedByStartupReauth) {
         setErrorText("Finish Apple reauthentication before adding or retrying keywords.");
         return false;
@@ -1461,24 +1486,40 @@ export function App() {
         setIsAddingKeywords(true);
         setErrorText("");
         setSuccessText("");
-        setLoadingText(`Adding ${kws.length} keyword${kws.length === 1 ? "" : "s"}...`);
+        setLoadingText(
+          `Adding ${context.keywords.length} keyword${context.keywords.length === 1 ? "" : "s"}...`
+        );
         await apiWrite("POST", "/api/aso/keywords", {
-          appId: selectedAppId,
-          keywords: kws,
-          country: DEFAULT_ASO_COUNTRY,
+          appId: context.appId,
+          keywords: context.keywords,
+          country: context.country,
         });
-        setAddInput("");
+        setAddInput((current) => {
+          const currentKeywords = sanitizeKeywords(current.split(","));
+          return areKeywordListsEqual(currentKeywords, context.inputKeywords) ? "" : current;
+        });
         setSuccessText("");
         setPendingAddContext(null);
         await loadApps();
-        if (keywordPage === 1) {
-          await loadKeywords(selectedAppId, 1);
-        } else {
-          setKeywordPage(1);
+        if (selectedAppIdRef.current === context.appId) {
+          if (keywordPage === 1) {
+            await loadKeywords(context.appId, 1);
+          } else {
+            setKeywordPage(1);
+          }
         }
         return true;
       } catch (error) {
-        if (openAuthModalForPendingAdd(error, kws)) return false;
+        if (options.allowAuthResume && openAuthModalForPendingAdd(error, context.keywords)) {
+          pendingKeywordAuthResumeRef.current = {
+            kind: "add-keywords",
+            appId: context.appId,
+            country: context.country,
+            keywords: context.keywords,
+            inputKeywords: context.inputKeywords,
+          };
+          return false;
+        }
         if (openSetupModalForPrimaryAppAccessError(error)) return false;
         setErrorText(toActionableErrorMessage(error, "Failed to add keywords"));
         return false;
@@ -1488,7 +1529,6 @@ export function App() {
       }
     },
     [
-      selectedAppId,
       keywordPage,
       loadApps,
       loadKeywords,
@@ -1521,56 +1561,125 @@ export function App() {
       return;
     }
 
-    await submitKeywords(kwsToAdd);
+    await submitKeywords({
+      appId: selectedAppId,
+      country: DEFAULT_ASO_COUNTRY,
+      keywords: kwsToAdd,
+      inputKeywords: normalizedKeywords,
+    });
   };
 
-  const onRetryFailedKeywords = useCallback(async () => {
-    if (failedKeywordCount <= 0) return;
-    if (isKeywordMutationBlockedByStartupReauth) {
-      setErrorText("Finish Apple reauthentication before adding or retrying keywords.");
-      return;
-    }
-    try {
-      setIsRetryingFailedKeywords(true);
-      setErrorText("");
-      setSuccessText("");
-      setLoadingText(`Retrying ${failedKeywordCount} failed keyword${failedKeywordCount === 1 ? "" : "s"}...`);
-      const result = await apiWrite<{
-        retriedCount: number;
-        succeededCount: number;
-        failedCount: number;
-      }>("POST", "/api/aso/keywords/retry-failed", {
-        appId: selectedAppId,
-        country: DEFAULT_ASO_COUNTRY,
-      });
-      await loadKeywords(selectedAppId, keywordPage);
-      const retriedLabel = `Retried ${result.retriedCount} failed keyword${result.retriedCount === 1 ? "" : "s"}`;
-      if (result.failedCount === 0) {
-        setSuccessText(`${retriedLabel}: ${result.succeededCount} succeeded.`);
-      } else if (result.succeededCount === 0) {
-        setSuccessText(`${retriedLabel}: none succeeded, ${result.failedCount} still failed.`);
-      } else {
-        setSuccessText(
-          `${retriedLabel}: ${result.succeededCount} succeeded, ${result.failedCount} still failed.`
-        );
+  const retryFailedKeywords = useCallback(
+    async (
+      context: RetryFailedRequestContext,
+      options: { allowAuthResume: boolean } = { allowAuthResume: true }
+    ): Promise<boolean> => {
+      if (context.failedCount <= 0) return false;
+      if (isKeywordMutationBlockedByStartupReauth) {
+        setErrorText("Finish Apple reauthentication before adding or retrying keywords.");
+        return false;
       }
-    } catch (error) {
-      if (openAuthModalForRetryFailed(error, failedKeywordCount)) return;
-      if (openSetupModalForPrimaryAppAccessError(error)) return;
-      setErrorText(toActionableErrorMessage(error, "Failed to retry failed keywords"));
-    } finally {
-      setIsRetryingFailedKeywords(false);
-      setLoadingText("");
-    }
-  }, [
-    failedKeywordCount,
-    keywordPage,
-    loadKeywords,
-    openAuthModalForRetryFailed,
-    openSetupModalForPrimaryAppAccessError,
-    selectedAppId,
-    isKeywordMutationBlockedByStartupReauth,
-  ]);
+      try {
+        setIsRetryingFailedKeywords(true);
+        setErrorText("");
+        setSuccessText("");
+        setLoadingText(
+          `Retrying ${context.failedCount} failed keyword${context.failedCount === 1 ? "" : "s"}...`
+        );
+        const result = await apiWrite<{
+          retriedCount: number;
+          succeededCount: number;
+          failedCount: number;
+        }>("POST", "/api/aso/keywords/retry-failed", {
+          appId: context.appId,
+          country: context.country,
+        });
+        if (selectedAppIdRef.current === context.appId) {
+          await loadKeywords(context.appId, keywordPage);
+        }
+        const retriedLabel = `Retried ${result.retriedCount} failed keyword${result.retriedCount === 1 ? "" : "s"}`;
+        if (result.failedCount === 0) {
+          setSuccessText(`${retriedLabel}: ${result.succeededCount} succeeded.`);
+        } else if (result.succeededCount === 0) {
+          setSuccessText(`${retriedLabel}: none succeeded, ${result.failedCount} still failed.`);
+        } else {
+          setSuccessText(
+            `${retriedLabel}: ${result.succeededCount} succeeded, ${result.failedCount} still failed.`
+          );
+        }
+        return true;
+      } catch (error) {
+        if (options.allowAuthResume && openAuthModalForRetryFailed(error, context.failedCount)) {
+          pendingKeywordAuthResumeRef.current = {
+            kind: "retry-failed",
+            appId: context.appId,
+            country: context.country,
+            failedCount: context.failedCount,
+          };
+          return false;
+        }
+        if (openSetupModalForPrimaryAppAccessError(error)) return false;
+        setErrorText(toActionableErrorMessage(error, "Failed to retry failed keywords"));
+        return false;
+      } finally {
+        setIsRetryingFailedKeywords(false);
+        setLoadingText("");
+      }
+    },
+    [
+      keywordPage,
+      loadKeywords,
+      openAuthModalForRetryFailed,
+      openSetupModalForPrimaryAppAccessError,
+      isKeywordMutationBlockedByStartupReauth,
+    ]
+  );
+
+  const onRetryFailedKeywords = useCallback(async () => {
+    await retryFailedKeywords({
+      appId: selectedAppId,
+      country: DEFAULT_ASO_COUNTRY,
+      failedCount: failedKeywordCount,
+    });
+  }, [failedKeywordCount, retryFailedKeywords, selectedAppId]);
+
+  useEffect(() => {
+    if (authStatus !== "succeeded") return;
+    const pendingResume = pendingKeywordAuthResumeRef.current;
+    if (!pendingResume) return;
+    if (keywordAuthResumeInFlightRef.current) return;
+
+    keywordAuthResumeInFlightRef.current = true;
+    void (async () => {
+      try {
+        if (pendingResume.kind === "add-keywords") {
+          await submitKeywords(
+            {
+              appId: pendingResume.appId,
+              country: pendingResume.country,
+              keywords: pendingResume.keywords,
+              inputKeywords: pendingResume.inputKeywords,
+            },
+            { allowAuthResume: false }
+          );
+          return;
+        }
+        await retryFailedKeywords(
+          {
+            appId: pendingResume.appId,
+            country: pendingResume.country,
+            failedCount: pendingResume.failedCount,
+          },
+          { allowAuthResume: false }
+        );
+      } finally {
+        if (pendingKeywordAuthResumeRef.current === pendingResume) {
+          pendingKeywordAuthResumeRef.current = null;
+        }
+        keywordAuthResumeInFlightRef.current = false;
+      }
+    })();
+  }, [authStatus, retryFailedKeywords, submitKeywords]);
 
   useEffect(() => {
     if (authStatus !== "succeeded") return;

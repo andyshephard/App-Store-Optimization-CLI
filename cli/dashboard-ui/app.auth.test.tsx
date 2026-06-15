@@ -257,7 +257,7 @@ describe("dashboard auth modal UI flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not auto-retry the keyword add after auth succeeds", async () => {
+  it("auto-retries the keyword add once after auth succeeds", async () => {
     let keywordPostCount = 0;
     let authStatusCount = 0;
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -375,7 +375,115 @@ describe("dashboard auth modal UI flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Keywords" }));
 
     await waitFor(() => expect(authStatusCount).toBeGreaterThan(0));
-    expect(keywordPostCount).toBe(1);
+    await waitFor(() => expect(keywordPostCount).toBe(2));
+    expect(authStatusCount).toBe(1);
+    expect(input).toHaveValue("");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add Keywords" })).not.toBeDisabled()
+    );
+  });
+
+  it("leaves manual retry fallback when the resumed keyword add still needs auth", async () => {
+    let keywordPostCount = 0;
+    let authStartCount = 0;
+    let authStatusCount = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: { success: true, data: emptyKeywordPagedPayload() },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "idle",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+                appListRefreshAttempted: false,
+                appListRefreshSucceeded: false,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/keywords") {
+        keywordPostCount += 1;
+        return jsonResponse({
+          status: 401,
+          body: {
+            success: false,
+            errorCode: "AUTH_REQUIRED",
+            error: "Auth required",
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        authStartCount += 1;
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:00.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        authStatusCount += 1;
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "succeeded",
+              updatedAt: "2026-03-07T00:00:02.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    const input = await screen.findByPlaceholderText("Add keywords (comma-separated)");
+    fireEvent.change(input, { target: { value: "term" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Keywords" }));
+
+    await waitFor(() => expect(keywordPostCount).toBe(2));
+    expect(authStartCount).toBe(1);
+    expect(authStatusCount).toBe(1);
+    expect(input).toHaveValue("term");
+    expect(
+      await screen.findByText("Apple Search Ads session expired. Use Reauthenticate and retry.")
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Add Keywords" })).not.toBeDisabled()
     );
@@ -701,6 +809,128 @@ describe("dashboard auth modal UI flow", () => {
     expect(
       screen.queryByRole("heading", { name: "Apple Reauthentication Required" })
     ).not.toBeInTheDocument();
+  });
+
+  it("auto-retries failed keywords once after auth succeeds", async () => {
+    let retryFailedCount = 0;
+    let authStartCount = 0;
+    let authStatusCount = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              ...emptyKeywordPagedPayload(),
+              failedCount: retryFailedCount >= 2 ? 0 : 2,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "idle",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              requiresReauthentication: false,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/keywords/retry-failed") {
+        retryFailedCount += 1;
+        if (retryFailedCount === 1) {
+          return jsonResponse({
+            status: 401,
+            body: {
+              success: false,
+              errorCode: "AUTH_REQUIRED",
+              error: "Auth required",
+            },
+          });
+        }
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              retriedCount: 2,
+              succeededCount: 2,
+              failedCount: 0,
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        authStartCount += 1;
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-03-07T00:00:01.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        authStatusCount += 1;
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "succeeded",
+              updatedAt: "2026-03-07T00:00:02.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Refresh failed keywords (2)",
+      })
+    );
+
+    await waitFor(() => expect(retryFailedCount).toBe(2));
+    expect(authStartCount).toBe(1);
+    expect(authStatusCount).toBe(1);
+    expect(
+      await screen.findByText("Retried 2 failed keywords: 2 succeeded.")
+    ).toBeInTheDocument();
   });
 
   it("keeps retry-failed reauthentication visible when auth is already in progress", async () => {
