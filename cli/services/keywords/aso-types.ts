@@ -40,7 +40,10 @@ export interface AsoKeywordItem {
 
 export type { FailedKeyword, FailedKeywordStage };
 
-export type FilteredKeywordReason = "low_popularity" | "high_difficulty";
+export type FilteredKeywordReason =
+  | "low_popularity"
+  | "high_difficulty"
+  | "already_associated";
 
 export interface FilteredKeyword {
   keyword: string;

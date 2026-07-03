@@ -42,6 +42,16 @@ export const asoEvaluateKeywordsInputSchema = z.object({
     .describe(
       "Optional local app id to associate accepted keywords with. Defaults to the research app when omitted."
     ),
+  excludeExisting: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, skips keywords already associated with the target app/country and returns only new accepted keywords."
+    ),
+  excludeAssociated: z
+    .boolean()
+    .optional()
+    .describe("Alias for excludeExisting."),
 });
 
 export type AsoEvaluateKeywordsArgs = z.infer<typeof asoEvaluateKeywordsInputSchema>;
@@ -162,6 +172,7 @@ export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
   );
   const maxDifficulty = args.maxDifficulty ?? DEFAULT_MAX_DIFFICULTY;
   const appId = args.appId;
+  const excludeExisting = args.excludeExisting ?? args.excludeAssociated ?? false;
   const providedKeywords = splitKeywords(args.keywords);
   const keywords = normalizeKeywords(providedKeywords);
 
@@ -186,6 +197,9 @@ export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
   ];
   if (appId) {
     commandArgs.push("--app-id", appId);
+  }
+  if (excludeExisting) {
+    commandArgs.push("--exclude-existing");
   }
 
   const commandResult = await runAsoCommand(commandArgs);

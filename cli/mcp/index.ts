@@ -31,7 +31,7 @@ server.registerTool(
   {
     title: "Evaluate ASO keywords",
     description:
-      "Evaluates explicit ASO search terms (single-word or multi-word long-tail phrases) and returns only accepted keywords with compact metrics: keyword, popularity, difficulty, minDifficultyScore, isBrandKeyword.",
+      "Evaluates explicit ASO search terms (single-word or multi-word long-tail phrases) and returns accepted keywords with compact metrics. Can exclude keywords already associated with the target app.",
     inputSchema: asoEvaluateKeywordsInputSchema,
   },
   handleAsoEvaluateKeywords

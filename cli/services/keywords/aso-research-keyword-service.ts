@@ -6,8 +6,8 @@ import {
 import { createAppKeywords } from "../../db/app-keywords";
 import { getOwnedAppById, upsertOwnedApps } from "../../db/owned-apps";
 
-function resolveTargetAppId(appId: string): string {
-  const normalizedAppId = appId.trim() || DEFAULT_RESEARCH_APP_ID;
+export function resolveKeywordAssociationAppId(appId?: string): string {
+  const normalizedAppId = appId?.trim() || DEFAULT_RESEARCH_APP_ID;
   const idPrefixedNumeric = normalizedAppId.match(/^id(\d+)$/i);
   if (!idPrefixedNumeric) {
     return normalizedAppId;
@@ -41,7 +41,7 @@ export function saveKeywordsToResearchApp(
     return 0;
   }
 
-  const targetAppId = resolveTargetAppId(appId);
+  const targetAppId = resolveKeywordAssociationAppId(appId);
   if (!getOwnedAppById(targetAppId)) {
     const kind = isResearchAppId(targetAppId) ? "research" : "owned";
     const appName =

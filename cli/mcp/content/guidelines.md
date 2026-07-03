@@ -8,11 +8,13 @@ Use `aso_evaluate_keywords` to evaluate explicit ASO keyword candidates (US stor
 - `minPopularity` (optional): minimum popularity threshold.
 - `maxDifficulty` (optional): maximum difficulty threshold.
 - `appId` (optional): local app id for association (defaults to research app when omitted).
+- `excludeExisting` (optional): when true, return only keywords not already associated with the target app/country.
 
 ## Behavior
 
 - Keywords are normalized to lowercase, deduplicated, and invalid candidates are dropped.
 - The tool runs `aso keywords <terms> --stdout --min-popularity ... --max-difficulty ...` under the hood.
+- With `excludeExisting=true`, the tool also passes `--exclude-existing`; skipped keywords are handled by the CLI `filteredOut(already_associated)` contract.
 - CLI `--stdout` contract is explicit:
   - success (`exitCode=0`): stdout JSON with `items`, `failedKeywords`, `filteredOut`
   - failure (`exitCode!=0`): stdout JSON error envelope with `error.code`, `error.message`, optional `error.help`

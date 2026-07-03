@@ -17,6 +17,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 ## Trigger Map
 - `aso`: resolve Primary App ID, start dashboard server (`3456` by default, auto-fallback to a free local port when occupied), start startup refresh manager.
 - `aso keywords "..."`: run full keyword pipeline and print envelope result (`items`, `failedKeywords`, `filteredOut`); accepted/filtered rows include brand classification (`isBrandKeyword`) when available.
+- `aso keywords "..." --exclude-existing`: skip keywords already associated with the target app/country before metric evaluation and report them as `filteredOut(already_associated)`.
 - `aso keywords "..." --stdout`: machine-friendly mode; emits JSON-only stdout, attempts silent reauth, and fails when interactive user input is required.
 - `aso auth`: run only Apple Search Ads reauthentication.
 - `aso reset-credentials`: clear saved ASO keychain credentials and local cookies.
@@ -62,8 +63,9 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
    - `--no-associate`: skip association writes.
    - association runs only after a successful pipeline return (no write on thrown failures).
    - no filters: associate requested keywords.
-   - any filter active (`--min-popularity` and/or `--max-difficulty`): associate accepted `items` only.
+   - any filter active (`--min-popularity`, `--max-difficulty`, and/or `--exclude-existing`): associate accepted `items` only.
    - target app comes from `--app-id`; defaults to `research` when omitted.
+   - `--exclude-existing` uses this same target app resolution, checks `app_keywords` for `(appId, country)`, and filters only already associated keywords.
 8. Apply post-enrichment difficulty threshold when `--max-difficulty` is set:
    - rows above threshold are marked `filteredOut(high_difficulty)` and excluded from `items`.
 
@@ -77,6 +79,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 7. If user input is required, fail with guidance to run `aso auth` and retry.
 8. In raw CLI `--stdout` mode, keep the same association policy as Flow A (including `--no-associate`), and skip save logs so stdout stays JSON-only.
 9. Success output envelope is machine-parseable JSON: `items`, `failedKeywords`, `filteredOut` with exit code `0`.
+   - `--exclude-existing` adds skipped rows to `filteredOut` with `reason="already_associated"`.
 10. Failure output envelope is machine-parseable JSON on stdout:
     - `error.code` (`CLI_VALIDATION_ERROR` or `CLI_RUNTIME_ERROR`)
     - `error.message`
@@ -213,6 +216,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 2. Treat each input as a search term candidate (single-word or long-tail phrase), then split comma-separated entries, normalize (`trim + lowercase`), and dedupe valid candidates.
 3. Return an MCP error when provided keyword count is greater than `100`.
 4. Execute `aso keywords "<comma-separated-keywords>" --stdout --min-popularity <resolvedMin> --max-difficulty <resolvedMax> [--app-id <appId>]`.
+   - When `excludeExisting=true`, include `--exclude-existing`.
 5. Parse CLI output envelope and return a compact JSON array derived from accepted `items`.
 6. MCP does not write directly; association writes are owned by the CLI command path from step 4.
 

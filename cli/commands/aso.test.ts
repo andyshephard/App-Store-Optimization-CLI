@@ -36,6 +36,13 @@ jest.mock("../services/auth/aso-auth-service", () => ({
 
 jest.mock("../services/keywords/aso-research-keyword-service", () => ({
   saveKeywordsToResearchApp: jest.fn(),
+  resolveKeywordAssociationAppId: jest.fn(
+    (appId?: string) => appId?.trim() || "research"
+  ),
+}));
+
+jest.mock("../db/app-keywords", () => ({
+  listByApp: jest.fn(),
 }));
 
 jest.mock("../utils/logger", () => ({
@@ -52,7 +59,11 @@ import { asoKeychainService } from "../services/auth/aso-keychain-service";
 import { asoCookieStoreService } from "../services/auth/aso-cookie-store-service";
 import { resolveAsoAdamId } from "../services/keywords/aso-adam-id-service";
 import { asoAuthService } from "../services/auth/aso-auth-service";
-import { saveKeywordsToResearchApp } from "../services/keywords/aso-research-keyword-service";
+import {
+  resolveKeywordAssociationAppId,
+  saveKeywordsToResearchApp,
+} from "../services/keywords/aso-research-keyword-service";
+import { listByApp } from "../db/app-keywords";
 
 const STDOUT_INTERACTIVE_AUTH_REQUIRED_MESSAGE =
   "This run needs interactive Apple Search Ads reauthentication. Run 'aso auth' in a terminal, then retry this command with --stdout.";
@@ -71,6 +82,10 @@ describe("aso command", () => {
     } as any);
     jest.mocked(resolveAsoAdamId).mockResolvedValue("1234567890");
     jest.mocked(saveKeywordsToResearchApp).mockReturnValue(0);
+    jest
+      .mocked(resolveKeywordAssociationAppId)
+      .mockImplementation((appId?: string) => appId?.trim() || "research");
+    jest.mocked(listByApp).mockReturnValue([]);
     jest.mocked(asoAuthService.reAuthenticate).mockResolvedValue("cookie=value");
   });
 
@@ -356,6 +371,124 @@ describe("aso command", () => {
       },
     });
     expect(saveKeywordsToResearchApp).not.toHaveBeenCalled();
+  });
+
+  it("skips already associated keywords for the default research app", async () => {
+    const fetchedResult = {
+      items: [{ keyword: "new", popularity: 42 }],
+      failedKeywords: [],
+      filteredOut: [],
+    };
+    jest.mocked(keywordPipelineService.parseKeywords).mockReturnValue([
+      "existing",
+      "new",
+    ]);
+    jest
+      .mocked(listByApp)
+      .mockReturnValue([{ appId: "research", keyword: "existing", country: "US" } as any]);
+    jest.mocked(keywordPipelineService.run).mockResolvedValue(fetchedResult as any);
+
+    await asoCommand.handler?.({
+      subcommand: "keywords",
+      country: "US",
+      stdout: true,
+      terms: "existing,new",
+      "exclude-existing": true,
+    } as any);
+
+    const expectedResult = {
+      ...fetchedResult,
+      filteredOut: [{ keyword: "existing", reason: "already_associated" }],
+    };
+    expect(listByApp).toHaveBeenCalledWith("research", "US");
+    expect(keywordPipelineService.run).toHaveBeenCalledWith("US", ["new"], {
+      allowInteractiveAuthRecovery: false,
+      filters: {
+        minPopularity: undefined,
+        maxDifficulty: undefined,
+      },
+    });
+    expect(saveKeywordsToResearchApp).toHaveBeenCalledWith(
+      ["new"],
+      "US",
+      "research"
+    );
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      JSON.stringify(expectedResult, null, 2)
+    );
+  });
+
+  it("scopes already associated keyword filtering to the provided app id", async () => {
+    jest
+      .mocked(resolveKeywordAssociationAppId)
+      .mockImplementation((appId?: string) =>
+        appId === "id123456" ? "123456" : appId?.trim() || "research"
+      );
+    jest.mocked(keywordPipelineService.parseKeywords).mockReturnValue([
+      "existing",
+      "new",
+    ]);
+    jest
+      .mocked(listByApp)
+      .mockReturnValue([{ appId: "123456", keyword: "existing", country: "US" } as any]);
+    jest.mocked(keywordPipelineService.run).mockResolvedValue({
+      items: [{ keyword: "new", popularity: 42 }],
+      failedKeywords: [],
+      filteredOut: [],
+    } as any);
+
+    await asoCommand.handler?.({
+      subcommand: "keywords",
+      country: "US",
+      terms: "existing,new",
+      "app-id": "id123456",
+      "exclude-existing": true,
+    } as any);
+
+    expect(listByApp).toHaveBeenCalledWith("123456", "US");
+    expect(keywordPipelineService.run).toHaveBeenCalledWith("US", ["new"], {
+      filters: {
+        minPopularity: undefined,
+        maxDifficulty: undefined,
+      },
+    });
+    expect(saveKeywordsToResearchApp).toHaveBeenCalledWith(
+      ["new"],
+      "US",
+      "123456"
+    );
+  });
+
+  it("prints a stdout envelope without evaluation when all keywords already exist", async () => {
+    jest.mocked(keywordPipelineService.parseKeywords).mockReturnValue(["existing"]);
+    jest
+      .mocked(listByApp)
+      .mockReturnValue([{ appId: "research", keyword: "existing", country: "US" } as any]);
+
+    await asoCommand.handler?.({
+      subcommand: "keywords",
+      country: "US",
+      stdout: true,
+      terms: "existing",
+      "exclude-existing": true,
+    } as any);
+
+    expect(resolveAsoAdamId).not.toHaveBeenCalled();
+    expect(keywordPipelineService.run).not.toHaveBeenCalled();
+    expect(saveKeywordsToResearchApp).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      JSON.stringify(
+        {
+          items: [],
+          failedKeywords: [],
+          filteredOut: [
+            { keyword: "existing", reason: "already_associated" },
+          ],
+        },
+        null,
+        2
+      )
+    );
   });
 
   it("reauthenticates silently and retries once in --stdout mode on auth-required error", async () => {

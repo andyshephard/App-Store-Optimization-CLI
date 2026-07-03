@@ -5,8 +5,16 @@ import { asoKeychainService } from "../services/auth/aso-keychain-service";
 import { asoCookieStoreService } from "../services/auth/aso-cookie-store-service";
 import { resolveAsoAdamId } from "../services/keywords/aso-adam-id-service";
 import { asoAuthService } from "../services/auth/aso-auth-service";
-import { saveKeywordsToResearchApp } from "../services/keywords/aso-research-keyword-service";
+import {
+  resolveKeywordAssociationAppId,
+  saveKeywordsToResearchApp,
+} from "../services/keywords/aso-research-keyword-service";
 import { logger } from "../utils/logger";
+import { listByApp } from "../db/app-keywords";
+import type {
+  FilteredKeyword,
+  KeywordFetchResult,
+} from "../services/keywords/aso-types";
 import {
   ASO_MAX_KEYWORDS,
   ASO_MAX_KEYWORDS_PER_CALL_ERROR,
@@ -14,6 +22,7 @@ import {
 import {
   DEFAULT_ASO_COUNTRY,
   assertSupportedCountry,
+  normalizeKeyword,
   normalizeCountry,
 } from "../domain/keywords/policy";
 
@@ -71,7 +80,7 @@ async function fetchKeywordsForStdout(
   country: string,
   keywords: string[],
   filters: { minPopularity?: number; maxDifficulty?: number }
-): Promise<Awaited<ReturnType<typeof keywordPipelineService.run>>> {
+): Promise<KeywordFetchResult> {
   try {
     return await keywordPipelineService.run(country, keywords, {
       allowInteractiveAuthRecovery: false,
@@ -93,6 +102,80 @@ async function fetchKeywordsForStdout(
     allowInteractiveAuthRecovery: false,
     filters,
   });
+}
+
+function isExcludeExistingEnabled(argv: Record<string, unknown>): boolean {
+  return Boolean(
+    argv["exclude-existing"] ||
+      argv.excludeExisting ||
+      argv["exclude-associated"] ||
+      argv.excludeAssociated
+  );
+}
+
+function buildExistingKeywordFilter(
+  country: string,
+  keywords: string[],
+  appId: string | undefined,
+  excludeExisting: boolean
+): {
+  targetAppId: string | undefined;
+  keywordsToEvaluate: string[];
+  filteredOut: FilteredKeyword[];
+} {
+  if (!excludeExisting) {
+    return {
+      targetAppId: appId,
+      keywordsToEvaluate: keywords,
+      filteredOut: [],
+    };
+  }
+
+  const targetAppId = resolveKeywordAssociationAppId(appId);
+  const associatedKeywords = new Set(
+    listByApp(targetAppId, country)
+      .map((row) => normalizeKeyword(row.keyword))
+      .filter(Boolean)
+  );
+  const keywordsToEvaluate: string[] = [];
+  const filteredOut: FilteredKeyword[] = [];
+
+  for (const keyword of keywords) {
+    const normalized = normalizeKeyword(keyword);
+    if (associatedKeywords.has(normalized)) {
+      filteredOut.push({
+        keyword: normalized,
+        reason: "already_associated",
+      });
+      continue;
+    }
+    keywordsToEvaluate.push(keyword);
+  }
+
+  return {
+    targetAppId,
+    keywordsToEvaluate,
+    filteredOut,
+  };
+}
+
+async function runKeywordFetch(
+  stdout: boolean,
+  country: string,
+  keywords: string[],
+  filters: { minPopularity?: number; maxDifficulty?: number }
+): Promise<KeywordFetchResult> {
+  if (keywords.length === 0) {
+    return {
+      items: [],
+      failedKeywords: [],
+      filteredOut: [],
+    };
+  }
+
+  return stdout
+    ? fetchKeywordsForStdout(country, keywords, filters)
+    : keywordPipelineService.run(country, keywords, { filters });
 }
 
 const asoCommand: CommandModule = {
@@ -146,6 +229,14 @@ const asoCommand: CommandModule = {
         describe:
           "Optional local app id for keyword association. Defaults to the research app when omitted.",
       })
+      .option("exclude-existing", {
+        alias: "exclude-associated",
+        type: "boolean",
+        default: false,
+        demandOption: false,
+        describe:
+          "Skip keywords already associated with the target app/country and report them in filteredOut.",
+      })
       .option("associate", {
         type: "boolean",
         demandOption: false,
@@ -179,6 +270,7 @@ const asoCommand: CommandModule = {
         argv["min-popularity"] != null ||
         argv["max-difficulty"] != null ||
         argv["app-id"] != null ||
+        isExcludeExistingEnabled(argv as Record<string, unknown>) ||
         argv.associate != null
       ) {
         throw new Error(
@@ -197,6 +289,9 @@ const asoCommand: CommandModule = {
     }
 
     const targetAppId = argv["app-id"] as string | undefined;
+    const excludeExisting = isExcludeExistingEnabled(
+      argv as Record<string, unknown>
+    );
     const filters = {
       minPopularity: parseOptionalThreshold(
         argv["min-popularity"],
@@ -222,18 +317,46 @@ const asoCommand: CommandModule = {
       throw new Error(ASO_MAX_KEYWORDS_PER_CALL_ERROR);
     }
 
-    await resolveAsoAdamId({ adamId: primaryAppId, allowPrompt: !stdout });
+    const existingKeywordFilter = buildExistingKeywordFilter(
+      country,
+      keywords,
+      targetAppId,
+      excludeExisting
+    );
+    if (
+      existingKeywordFilter.keywordsToEvaluate.length > 0 ||
+      primaryAppId != null
+    ) {
+      await resolveAsoAdamId({ adamId: primaryAppId, allowPrompt: !stdout });
+    }
 
-    const result = stdout
-      ? await fetchKeywordsForStdout(country, keywords, filters)
-      : await keywordPipelineService.run(country, keywords, { filters });
+    const fetchedResult = await runKeywordFetch(
+      stdout,
+      country,
+      existingKeywordFilter.keywordsToEvaluate,
+      filters
+    );
+    const result = {
+      ...fetchedResult,
+      filteredOut: [
+        ...existingKeywordFilter.filteredOut,
+        ...fetchedResult.filteredOut,
+      ],
+    };
     if (shouldAssociate) {
-      const keywordsToPersist = filtersActive
+      const keywordsToPersist = filtersActive || excludeExisting
         ? result.items.map((item) => item.keyword)
         : keywords;
-      persistKeywordsToApp(keywordsToPersist, country, targetAppId, {
-        log: !stdout,
-      });
+      if (keywordsToPersist.length > 0) {
+        persistKeywordsToApp(
+          keywordsToPersist,
+          country,
+          existingKeywordFilter.targetAppId,
+          {
+            log: !stdout,
+          }
+        );
+      }
     }
     console.log(JSON.stringify(result, null, 2));
   },

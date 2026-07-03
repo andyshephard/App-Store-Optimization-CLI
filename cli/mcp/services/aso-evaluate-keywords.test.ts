@@ -166,6 +166,39 @@ describe("aso_evaluate_keywords service", () => {
     ]);
   });
 
+  it("forwards excludeExisting to CLI", async () => {
+    mockRunAsoCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        items: [{ keyword: "sleep", popularity: 30, difficulty: 20 }],
+        failedKeywords: [],
+        filteredOut: [
+          { keyword: "existing", reason: "already_associated" },
+        ],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await handleAsoEvaluateKeywords({
+      keywords: ["sleep", "existing"],
+      appId: "123456789",
+      excludeExisting: true,
+    });
+
+    expect(mockRunAsoCommand).toHaveBeenCalledWith([
+      "keywords",
+      "sleep,existing",
+      "--stdout",
+      "--min-popularity",
+      "6",
+      "--max-difficulty",
+      "70",
+      "--app-id",
+      "123456789",
+      "--exclude-existing",
+    ]);
+  });
+
   it("rejects minPopularity lower than 6 at MCP schema boundary", () => {
     const parsed = asoEvaluateKeywordsInputSchema.safeParse({
       keywords: ["sleep"],

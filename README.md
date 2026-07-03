@@ -108,12 +108,14 @@ aso
 - `--min-popularity <number>`: filters out low-popularity keywords before enrichment
 - `--max-difficulty <number>`: filters out high-difficulty keywords after enrichment
 - `--app-id <id>`: associates keywords to this local app id (default: `research`)
+- `--exclude-existing`: skips keywords already associated with the target app/country before evaluation
 - `--no-associate`: skips app-keyword association writes for the current `aso keywords` run
 
 Association behavior for `aso keywords`:
 - Association writes happen only after a successful command return.
 - Without filters, requested keywords are associated.
 - With `--min-popularity` and/or `--max-difficulty`, only accepted `items` are associated.
+- With `--exclude-existing`, already associated keywords are returned in `filteredOut` with `reason="already_associated"` and are not re-associated.
 - With `--no-associate`, no association write occurs.
 
 ## Output Example (`aso keywords "meditation"`)
@@ -166,6 +168,7 @@ This package also installs `aso-mcp` with tool: `aso_evaluate_keywords`.
 `aso_evaluate_keywords` runs `aso keywords ... --stdout` with default filters:
 - `minPopularity = 6` (floor: `6`)
 - `maxDifficulty = 70`
+- `excludeExisting = false`; set `true` to return only keywords not already associated with the target app/country
 
 MCP returns only accepted rows (`keyword`, `popularity`, `difficulty`, `minDifficultyScore`, `isBrandKeyword`).
 

@@ -25,14 +25,15 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
 
 ## Pipeline
 1. Normalize (`trim + lowercase + dedupe`).
-2. `POST /aso/cache-lookup` to get hits/misses.
-3. Classify misses:
+2. When `--exclude-existing` is set, resolve the target app (`--app-id` or default `research`), remove keywords already present in `app_keywords` for `(appId, country)`, and add those rows to `filteredOut(already_associated)`.
+3. `POST /aso/cache-lookup` to get hits/misses.
+4. Classify misses:
    - popularity missing/expired -> fetch popularity from Search Ads endpoint.
    - popularity fresh + difficulty incomplete -> reuse cached popularity and enrich.
    - popularity fresh + difficulty complete + order expired -> order-only refresh.
    - when `minPopularity` filter is set, rows below threshold are marked `filteredOut(low_popularity)` and skipped for enrichment/difficulty.
-4. Persist popularity-only local rows (`difficultyScore = null`) only for keywords that still need enrichment.
-5. `POST /aso/enrich` with `{ keyword, popularity }` for full-enrich keywords.
+5. Persist popularity-only local rows (`difficultyScore = null`) only for keywords that still need enrichment.
+6. `POST /aso/enrich` with `{ keyword, popularity }` for full-enrich keywords.
    - Enrichment must provide top-5 app docs when `appCount >= 5`; it backfills missing top ids from cache/lookup and retries unresolved ids once before local scoring.
    - If top-5 docs are still incomplete for `appCount >= 5`, the keyword is returned as an enrichment failure (`reasonCode=INSUFFICIENT_DOCS`) and no fallback score is persisted.
    - Enrichment also computes `isBrandKeyword` from top-doc publisher signals (`publisherName`) after hydration/backfill:
@@ -41,13 +42,13 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
      - else require independent runner-up median (`#2-#5`, different publisher) `userRatingCount >= 10000`
      - missing/insufficient publisher metadata defaults to `false`
    - `isBrandKeyword` is a flag only; difficulty/minDifficulty math is unchanged.
-6. Persist enriched keywords and returned app docs.
+7. Persist enriched keywords and returned app docs.
    - Enrichment persistence is progressive: each keyword success/failure is written as soon as that keyword finishes (bounded by enrichment concurrency), rather than waiting for the full enrich batch to complete.
-7. For order-only keywords, refresh `orderedAppIds` + `appCount` without refetching popularity.
+8. For order-only keywords, refresh `orderedAppIds` + `appCount` without refetching popularity.
    - This step does not upsert competitor app docs; any app metadata returned during order refresh is transient and competitor docs are hydrated by app-doc read flows (`/api/aso/top-apps`, `/api/aso/apps`, `/api/aso/apps/search`) when missing/expired.
-8. Persist terminal popularity/enrichment failures in `aso_keyword_failures`.
+9. Persist terminal popularity/enrichment failures in `aso_keyword_failures`.
    - Dashboard background enrichment safety: if the background enrichment call throws before emitting per-keyword failures, unresolved pending keywords are recorded as terminal `enrichment` failures so they are retryable in UI.
-9. Apply optional max-difficulty filter after difficulty is known:
+10. Apply optional max-difficulty filter after difficulty is known:
    - rows above threshold are marked `filteredOut(high_difficulty)` and excluded from accepted `items`.
 
 ## Machine-Friendly `--stdout` Contract
@@ -56,6 +57,7 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
   - `--min-popularity`
   - `--max-difficulty`
   - `--app-id` (association target; defaults to `research`)
+  - `--exclude-existing` (skip target-app-associated keywords before evaluation)
   - `--no-associate` (skip app-keyword association writes for this run)
 - Primary App ID resolution is non-interactive in this mode.
 - Primary App ID precedence is: `--primary-app-id` -> `ASO_PRIMARY_APP_ID` -> saved local Primary App ID.
@@ -68,7 +70,7 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
 - Success output contract is an envelope:
   - `items`: accepted keyword rows (after active filters)
   - `failedKeywords`: terminal failures with stage + reason metadata
-  - `filteredOut`: rows excluded by filters (`low_popularity` / `high_difficulty`)
+  - `filteredOut`: rows excluded by filters (`already_associated` / `low_popularity` / `high_difficulty`)
 - Accepted/filtered keyword rows include `isBrandKeyword` when available (`true` / `false` / `null` for not computed yet placeholders).
 - Failure output contract is a JSON error envelope on stdout:
   - `error.code`: `CLI_VALIDATION_ERROR` or `CLI_RUNTIME_ERROR`
@@ -174,8 +176,9 @@ Keyword-level difficulty:
   - `--no-associate`: skip association writes for the run
   - association runs only when the command returns successfully (no write on thrown failures)
   - no filters: associate requested keywords
-  - filters active: associate accepted `items` only
+  - filters active, including `--exclude-existing`: associate accepted `items` only
   - target app: `--app-id` when set, otherwise `research`
+  - existing keyword filtering checks `app_keywords` for the resolved target app/country, not the reusable `aso_keywords` metric cache
 - MCP `aso_evaluate_keywords` does not write directly; it delegates to the CLI command path above.
 - Dashboard keyword reads include app-associated failures even when no `aso_keywords` cache row exists yet, marking those rows as failed for retry UX.
 - Cache API repository is SQLite-backed and reuses local DB tables for keyword/app-doc cache lookups.
@@ -217,6 +220,7 @@ Keyword-level difficulty:
 - Country: always `US` (country is not user-configurable at MCP level)
 - Input: required `keywords` array (strings). Each item can be a single-word or long-tail phrase. Comma-separated entries are normalized and split.
 - Input: optional `appId` string. When provided, accepted keywords are associated to that local app id instead of the default research app.
+- Input: optional `excludeExisting` boolean. When true, MCP passes `--exclude-existing` so only keywords not already associated with the target app/country are evaluated and returned.
 - Input: optional `minPopularity` and `maxDifficulty`; defaults are `6` and `70` with absolute min-popularity floor `6`.
 - Max request size: `100` provided keywords (enforced by MCP handler)
 - Output is a JSON array of accepted keywords only (no rejected list). Each row includes:
