@@ -607,6 +607,7 @@ export class KeywordPipelineService {
       ])
     );
     const refreshed: AsoKeywordItem[] = [];
+    const positionCapturedAtByKeyword = new Map<string, string>();
 
     for (const keyword of normalized) {
       const existing = existingByNormalized.get(keyword);
@@ -627,7 +628,7 @@ export class KeywordPipelineService {
         continue;
       }
       if (!updatedOrder) continue;
-      const updatedAt = new Date().toISOString();
+      const positionCapturedAt = new Date().toISOString();
       const refreshedItem: AsoKeywordItem = {
         keyword: existing.keyword,
         normalizedKeyword: existing.normalizedKeyword,
@@ -640,11 +641,12 @@ export class KeywordPipelineService {
         keywordMatch: existing.keywordMatch,
         orderedAppIds: updatedOrder.orderedAppIds,
         createdAt: existing.createdAt,
-        updatedAt,
+        updatedAt: existing.updatedAt,
         orderExpiresAt: existing.orderExpiresAt,
         popularityExpiresAt: existing.popularityExpiresAt,
       };
       refreshed.push(refreshedItem);
+      positionCapturedAtByKeyword.set(existing.normalizedKeyword, positionCapturedAt);
     }
 
     if (refreshed.length > 0) {
@@ -662,6 +664,9 @@ export class KeywordPipelineService {
           orderedAppIds: item.orderedAppIds,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
+          positionCapturedAt: positionCapturedAtByKeyword.get(
+            item.normalizedKeyword ?? normalizeKeyword(item.keyword)
+          ),
           popularityExpiresAt: item.popularityExpiresAt,
         }))
       );

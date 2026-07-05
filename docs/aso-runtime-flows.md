@@ -57,7 +57,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
    - For `appCount>=5`, enrichment backfills missing top ids from cache/lookup and retries unresolved ids once; if still incomplete, keyword enrichment fails with `INSUFFICIENT_DOCS` instead of persisting fallback score `1`.
    - When the same top app id keeps returning incomplete lookup docs, enrichment applies a short in-process cooldown before trying that id again for nearby keywords.
    - During enrichment, brand classification is computed as `isBrandKeyword` from top-doc publisher signals (`publisherName`) after hydration/backfill; this is a flag only and does not adjust difficulty scores.
-6. Refresh order-only keywords and persist updated `orderedAppIds` + `appCount` without refetching popularity.
+6. Refresh order-only keywords and persist updated `orderedAppIds` + `appCount` without refetching popularity or changing the keyword `updated_at`.
    - Order refresh may include lightweight app metadata from search-page parsing, but Flow A persists only keyword order fields in this step; competitor doc cache (`aso_apps`) is hydrated later by Flow E endpoints when docs are missing/expired.
 7. Association write policy (`app_keywords`):
    - `--no-associate`: skip association writes.
@@ -163,7 +163,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
   - ensure default research app exists.
   - return `owned_apps` rows joined with `owned_app_country_ratings` for the hydration country (`kind`, rating snapshots, icons, fetch timestamps).
   - refresh stale `kind=owned` rows when `owned_app_country_ratings.last_fetched_at` exceeds `ASO_OWNED_APP_DOC_REFRESH_MAX_AGE_HOURS` (default `24`) using localized app-page `serialized-server-data` JSON.
-- `GET /api/aso/top-apps`: read ordered IDs from keyword; when keyword order TTL is stale, refresh order first, then return competitor docs and hydrate missing/expired competitor docs.
+- `GET /api/aso/top-apps`: read ordered IDs from keyword; when keyword order TTL is stale, refresh order first without changing the keyword `updated_at`, then return competitor docs and hydrate missing/expired competitor docs.
 - `GET /api/aso/apps`: competitor-doc endpoint for requested IDs (`aso_apps` only), hydrate missing/expired competitor docs (or force with `refresh=true`).
 - `GET /api/aso/apps/search`: resolve ordered IDs for a free-text term and hydrate competitor docs for the top IDs.
 

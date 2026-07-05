@@ -38,6 +38,7 @@ type KeywordWriteItem = {
   orderedAppIds: string[];
   createdAt?: string;
   updatedAt?: string;
+  positionCapturedAt?: string;
   orderExpiresAt?: string;
   popularityExpiresAt?: string;
 };
@@ -82,10 +83,12 @@ export class KeywordWriteRepository {
     if (items.length === 0) return;
 
     const now = new Date();
+    const nowIso = now.toISOString();
     const normalizedItems = items.map((item) => ({
       ...item,
       normalizedKeyword: item.normalizedKeyword ?? normalizeKeyword(item.keyword),
-      updatedAt: item.updatedAt ?? now.toISOString(),
+      updatedAt: item.updatedAt ?? nowIso,
+      positionCapturedAt: item.positionCapturedAt ?? item.updatedAt ?? nowIso,
     }));
     const positionHistoryPoints: Array<{
       appId: string;
@@ -121,7 +124,7 @@ export class KeywordWriteRepository {
             keyword: item.keyword,
             country,
             position: currentIdx + 1,
-            capturedAt: item.updatedAt,
+            capturedAt: item.positionCapturedAt,
           });
         }
       }

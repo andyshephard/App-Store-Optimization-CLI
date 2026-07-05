@@ -12,6 +12,7 @@ import {
   createAppKeywords,
   listByApp,
 } from "../../db/app-keywords";
+import { listAppKeywordPositionHistory } from "../../db/app-keyword-position-history";
 import { closeDbForTests } from "../../db/store";
 import {
   refreshAsoKeywordOrderLocal,
@@ -93,13 +94,19 @@ describe("keyword-pipeline-service", () => {
     });
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   afterAll(() => {
     closeDbForTests();
     cleanDbFiles();
     delete process.env.ASO_DB_PATH;
   });
 
-  it("updates previous positions from old order before order-only refresh upsert", async () => {
+  it("updates order state without changing updatedAt during order-only refresh", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-13T00:00:00.000Z"));
     upsertKeywords("US", [
       {
         keyword: "ranked",
@@ -109,6 +116,7 @@ describe("keyword-pipeline-service", () => {
         appCount: 2,
         keywordMatch: "titleExactPhrase",
         orderedAppIds: ["app-1", "app-2"],
+        updatedAt: "2026-04-01T00:00:00.000Z",
         orderExpiresAt: "2000-01-01T00:00:00.000Z",
         popularityExpiresAt: "2099-01-01T00:00:00.000Z",
       },
@@ -132,8 +140,23 @@ describe("keyword-pipeline-service", () => {
       "app-2",
       "app-1",
     ]);
+    expect(getKeyword("US", "ranked")?.updatedAt).toBe(
+      "2026-04-01T00:00:00.000Z"
+    );
+    expect(getKeyword("US", "ranked")?.orderExpiresAt).toBe(
+      "2026-04-14T00:00:00.000Z"
+    );
     expect(listByApp("app-1", "US")[0]?.previousPosition).toBe(1);
     expect(listByApp("app-2", "US")[0]?.previousPosition).toBe(2);
+    expect(listAppKeywordPositionHistory("app-1", "ranked", "US")).toEqual([
+      {
+        appId: "app-1",
+        keyword: "ranked",
+        country: "US",
+        position: 2,
+        capturedAt: "2026-04-13T00:00:00.000Z",
+      },
+    ]);
   });
 
   it("returns partial success and persists failed keywords", async () => {

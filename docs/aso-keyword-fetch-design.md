@@ -44,7 +44,7 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
    - `isBrandKeyword` is a flag only; difficulty/minDifficulty math is unchanged.
 7. Persist enriched keywords and returned app docs.
    - Enrichment persistence is progressive: each keyword success/failure is written as soon as that keyword finishes (bounded by enrichment concurrency), rather than waiting for the full enrich batch to complete.
-8. For order-only keywords, refresh `orderedAppIds` + `appCount` without refetching popularity.
+8. For order-only keywords, refresh `orderedAppIds` + `appCount` without refetching popularity or changing the keyword `updated_at`.
    - This step does not upsert competitor app docs; any app metadata returned during order refresh is transient and competitor docs are hydrated by app-doc read flows (`/api/aso/top-apps`, `/api/aso/apps`, `/api/aso/apps/search`) when missing/expired.
 9. Persist terminal popularity/enrichment failures in `aso_keyword_failures`.
    - Dashboard background enrichment safety: if the background enrichment call throws before emitting per-keyword failures, unresolved pending keywords are recorded as terminal `enrichment` failures so they are retryable in UI.
