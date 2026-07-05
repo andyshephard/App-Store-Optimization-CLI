@@ -14,6 +14,7 @@ export type SortKey =
   | "appCount"
   | "rank"
   | "change"
+  | "addedAt"
   | "updatedAt";
 export type SortDir = "asc" | "desc";
 
@@ -33,6 +34,7 @@ function isSortKey(value: unknown): value is SortKey {
     value === "appCount" ||
     value === "rank" ||
     value === "change" ||
+    value === "addedAt" ||
     value === "updatedAt"
   );
 }
@@ -143,6 +145,7 @@ type FilterableRow = {
   isBrandKeyword: boolean | null;
   isFavorite: boolean;
   appCount: number | null;
+  addedAt?: string | null;
   updatedAt?: string;
   previousPosition: number | null;
   currentPosition: number | null;
@@ -262,6 +265,11 @@ export function useFiltersSort(params: UseFiltersSortParams) {
           return compareNullable(
             a.updatedAt ? new Date(a.updatedAt).getTime() : null,
             b.updatedAt ? new Date(b.updatedAt).getTime() : null
+          );
+        case "addedAt":
+          return compareNullable(
+            a.addedAt ? new Date(a.addedAt).getTime() : null,
+            b.addedAt ? new Date(b.addedAt).getTime() : null
           );
         case "change":
           return compareNullable(getChange(a), getChange(b));

@@ -762,7 +762,7 @@ body {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 980px;
 }
 
 th,
@@ -2147,7 +2147,7 @@ body::before {
 }
 
 table {
-  min-width: 900px;
+  min-width: 980px;
 }
 
 th,
@@ -2745,7 +2745,7 @@ td.updated-value {
   }
 
   table {
-    min-width: 820px;
+    min-width: 900px;
   }
 
   .top-app-main {

@@ -234,7 +234,7 @@ function createPagedKeywordDbMock(params: {
     params.associations ?? [],
   ];
   return {
-    prepare: jest.fn(() => ({
+    prepare: jest.fn((_: string) => ({
       get: jest.fn(() => getResponses.shift()),
       all: jest.fn(() => allResponses.shift() ?? []),
     })),
@@ -743,6 +743,7 @@ describe("dashboard server routes", () => {
             ordered_app_ids: JSON.stringify(["app-1", "app-2"]),
             is_favorite: 0,
             created_at: "2026-03-12T00:00:00.000Z",
+            added_at: "2026-03-11T00:00:00.000Z",
             updated_at: "2026-03-12T00:00:00.000Z",
             order_expires_at: "2026-03-13T00:00:00.000Z",
             popularity_expires_at: "2026-03-13T00:00:00.000Z",
@@ -784,6 +785,7 @@ describe("dashboard server routes", () => {
         items: [
           expect.objectContaining({
             keyword: "term",
+            addedAt: "2026-03-11T00:00:00.000Z",
             keywordStatus: "failed",
             positions: [
               {
@@ -824,6 +826,7 @@ describe("dashboard server routes", () => {
             ordered_app_ids: JSON.stringify([]),
             is_favorite: 0,
             created_at: "2026-03-12T00:00:00.000Z",
+            added_at: "2026-03-10T00:00:00.000Z",
             updated_at: "2026-03-12T00:00:00.000Z",
             order_expires_at: "2026-03-12T00:00:00.000Z",
             popularity_expires_at: "2026-03-12T00:00:00.000Z",
@@ -867,6 +870,7 @@ describe("dashboard server routes", () => {
             keyword: "lost-term",
             popularity: null,
             difficultyScore: null,
+            addedAt: "2026-03-10T00:00:00.000Z",
             keywordStatus: "failed",
             positions: [
               {
@@ -883,6 +887,71 @@ describe("dashboard server routes", () => {
         ],
       })
     );
+  });
+
+  it("sorts keyword reads by app-specific added timestamp", async () => {
+    const dbMock = createPagedKeywordDbMock({
+      summary: {
+        total_count: 1,
+        failed_count: 0,
+        pending_count: 0,
+      },
+      filteredCount: 1,
+      rows: [
+        {
+          normalized_keyword: "term",
+          keyword: "term",
+          popularity: 42,
+          difficulty_score: 12,
+          min_difficulty_score: 10,
+          is_brand_keyword: 0,
+          app_count: 10,
+          keyword_match: "titleExactPhrase",
+          ordered_app_ids: JSON.stringify(["app-2"]),
+          is_favorite: 0,
+          created_at: "2026-03-12T00:00:00.000Z",
+          added_at: "2026-03-11T00:00:00.000Z",
+          updated_at: "2026-03-12T00:00:00.000Z",
+          order_expires_at: "2026-03-13T00:00:00.000Z",
+          popularity_expires_at: "2026-03-13T00:00:00.000Z",
+          current_position: 1,
+          failure_stage: null,
+          failure_reason_code: null,
+          failure_message: null,
+          failure_status_code: null,
+          failure_retryable: null,
+          failure_attempts: null,
+          failure_request_id: null,
+          failure_updated_at: null,
+        },
+      ],
+      associations: [
+        {
+          app_id: "app-2",
+          keyword: "term",
+          previous_position: 2,
+        },
+      ],
+    });
+    mockGetDb.mockReturnValue(dbMock as any);
+
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/keywords?country=US&appId=app-2&sortBy=addedAt&sortDir=asc",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json?.data.items[0]).toEqual(
+      expect.objectContaining({
+        keyword: "term",
+        addedAt: "2026-03-11T00:00:00.000Z",
+      })
+    );
+    expect(
+      dbMock.prepare.mock.calls.some(([sql]) =>
+        String(sql).includes("ORDER BY added_at IS NULL ASC, added_at ASC")
+      )
+    ).toBe(true);
   });
 
   it("requires appId for keyword reads", async () => {

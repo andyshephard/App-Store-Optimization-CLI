@@ -211,6 +211,16 @@ function buildKeywordPagedPayloadForQuery(
         comparison = compareNullable(leftChange, rightChange);
         break;
       }
+      case "addedAt":
+        comparison = compareNullable(
+          typeof left.addedAt === "string"
+            ? new Date(left.addedAt).getTime()
+            : null,
+          typeof right.addedAt === "string"
+            ? new Date(right.addedAt).getTime()
+            : null
+        );
+        break;
       case "updatedAt":
       default:
         comparison = compareNullable(
@@ -324,6 +334,7 @@ describe("dashboard keyword columns", () => {
             popularity: 50,
             difficultyScore: 32,
             appCount: 120,
+            addedAt: "2026-03-09T10:00:00.000Z",
             updatedAt: "2026-03-10T10:00:00.000Z",
             positions: [],
           },
@@ -339,6 +350,7 @@ describe("dashboard keyword columns", () => {
     expect(screen.queryByRole("columnheader", { name: "Rank" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Change" })).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Brand/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Added" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Updated" })).toBeInTheDocument();
     expect(
       Array.from(document.querySelectorAll("thead th")).map((header) =>
@@ -351,6 +363,7 @@ describe("dashboard keyword columns", () => {
       "appCount",
       "brand",
       "favorite",
+      "addedAt",
       "updatedAt",
     ]);
   });
@@ -370,6 +383,7 @@ describe("dashboard keyword columns", () => {
             popularity: 72,
             difficultyScore: 40,
             appCount: 88,
+            addedAt: "2026-03-09T11:00:00.000Z",
             updatedAt: "2026-03-10T11:00:00.000Z",
             positions: [{ appId: "123456789", previousPosition: 8, currentPosition: 5 }],
           },
@@ -385,6 +399,7 @@ describe("dashboard keyword columns", () => {
     expect(screen.getByRole("columnheader", { name: "Rank" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Change" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Brand/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Added" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Updated" })).toBeInTheDocument();
     expect(
       Array.from(document.querySelectorAll("thead th")).map((header) =>
@@ -399,6 +414,7 @@ describe("dashboard keyword columns", () => {
       "appCount",
       "brand",
       "favorite",
+      "addedAt",
       "updatedAt",
     ]);
   });
@@ -447,6 +463,55 @@ describe("dashboard keyword columns", () => {
     expect(screen.getByRole("columnheader", { name: "Popularity" })).toHaveAttribute(
       "aria-sort",
       "ascending"
+    );
+  });
+
+  it("sorts by added date when selected", async () => {
+    localStorage.setItem("aso-dashboard:selected-app-id", "123456789");
+    localStorage.setItem(
+      "aso-dashboard:keyword-sort",
+      JSON.stringify({ key: "addedAt", dir: "desc" })
+    );
+
+    const fetchMock = buildFetchMock({
+      apps: [
+        { id: DEFAULT_RESEARCH_APP_ID, name: "Research" },
+        { id: "123456789", name: "Owned App" },
+      ],
+      keywordsByAppId: {
+        "123456789": [
+          {
+            keyword: "added-older",
+            popularity: 80,
+            difficultyScore: 31,
+            appCount: 71,
+            addedAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-12T12:00:00.000Z",
+            positions: [{ appId: "123456789", previousPosition: 8, currentPosition: 4 }],
+          },
+          {
+            keyword: "added-newer",
+            popularity: 10,
+            difficultyScore: 25,
+            appCount: 64,
+            addedAt: "2026-03-10T11:00:00.000Z",
+            updatedAt: "2026-03-10T11:00:00.000Z",
+            positions: [{ appId: "123456789", previousPosition: 10, currentPosition: 7 }],
+          },
+        ],
+      },
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+    await screen.findByText("added-older");
+    await screen.findByText("added-newer");
+
+    const rows = Array.from(document.querySelectorAll("#keywords-tbody tr"));
+    expect(rows[0]).toHaveAttribute("data-keyword", "added-newer");
+    expect(screen.getByRole("columnheader", { name: "Added" })).toHaveAttribute(
+      "aria-sort",
+      "descending"
     );
   });
 

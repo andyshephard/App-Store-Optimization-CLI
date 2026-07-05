@@ -205,7 +205,7 @@ Keyword-level difficulty:
 - `POST /aso/app-docs` (max `50` IDs)
 - `GET /api/aso/keywords`
   - App-scoped reads are paginated and require `appId`.
-  - Supported query params: `page`, `pageSize`, `sortBy`, `sortDir`, `keyword`, `minPopularity`, `maxDifficulty`, `brand`, `favorite`, `minRank`, `maxRank`.
+  - Supported query params: `page`, `pageSize`, `sortBy`, `sortDir`, `keyword`, `minPopularity`, `maxDifficulty`, `brand`, `favorite`, `minRank`, `maxRank`; `sortBy` includes `addedAt` from `app_keywords.added_at`.
   - Paginated response: `{ items, page, pageSize, totalCount, totalPages, hasPrevPage, hasNextPage, associatedCount, failedCount, pendingCount }`.
 - `GET /api/aso/keywords/history`
   - Required query params: `appId`, `keyword`; optional `country` (defaults to `US`).

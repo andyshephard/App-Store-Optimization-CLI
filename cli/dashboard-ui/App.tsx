@@ -79,6 +79,7 @@ type KeywordItem = {
   isBrandKeyword?: boolean | null;
   isFavorite?: boolean;
   appCount: number | null;
+  addedAt?: string | null;
   updatedAt?: string;
   keywordStatus?: "ok" | "pending" | "failed";
   orderedAppIds?: string[];
@@ -167,6 +168,7 @@ type Row = {
   isBrandKeyword: boolean | null;
   isFavorite: boolean;
   appCount: number | null;
+  addedAt?: string | null;
   updatedAt?: string;
   previousPosition: number | null;
   currentPosition: number | null;
@@ -183,6 +185,7 @@ const DEFAULT_SORT_DIRECTION_BY_KEY: Record<SortKey, SortDir> = {
   appCount: "desc",
   rank: "asc",
   change: "asc",
+  addedAt: "desc",
   updatedAt: "desc",
 };
 const SORT_LABEL_BY_KEY: Record<SortKey, string> = {
@@ -192,6 +195,7 @@ const SORT_LABEL_BY_KEY: Record<SortKey, string> = {
   appCount: "App Count",
   rank: "Rank",
   change: "Change",
+  addedAt: "Added",
   updatedAt: "Updated",
 };
 
@@ -787,6 +791,7 @@ export function App() {
         isBrandKeyword: item.isBrandKeyword ?? null,
         isFavorite: item.isFavorite === true,
         appCount: item.appCount,
+        addedAt: item.addedAt,
         updatedAt: item.updatedAt,
         previousPosition: p?.previousPosition ?? null,
         currentPosition: p?.currentPosition ?? null,
@@ -2878,6 +2883,14 @@ export function App() {
                     </div>
                   </th>
                   <th
+                    className={`sortable ${sortBy === "addedAt" ? "active" : ""}`}
+                    data-sort-key="addedAt"
+                    aria-sort={sortBy === "addedAt" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                    onClick={() => onSortHeader("addedAt")}
+                  >
+                    {renderSortLabel("addedAt")}
+                  </th>
+                  <th
                     className={`sortable ${sortBy === "updatedAt" ? "active" : ""}`}
                     data-sort-key="updatedAt"
                     aria-sort={sortBy === "updatedAt" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
@@ -2984,6 +2997,9 @@ export function App() {
                         >
                           <HeartIcon filled={row.isFavorite} />
                         </button>
+                      </td>
+                      <td className="updated-value">
+                        {formatDate(row.addedAt ?? undefined, displayLocale)}
                       </td>
                       <td className="updated-value">
                         {formatDate(row.updatedAt, displayLocale)}

@@ -33,6 +33,7 @@ type KeywordSortKey =
   | "appCount"
   | "rank"
   | "change"
+  | "addedAt"
   | "updatedAt";
 type KeywordSortDir = "asc" | "desc";
 type KeywordBrandFilter = "all" | "brand" | "non_brand";
@@ -63,6 +64,7 @@ type KeywordPagedRow = {
   keyword_match: string | null;
   ordered_app_ids: string;
   created_at: string;
+  added_at: string | null;
   updated_at: string;
   order_expires_at: string;
   popularity_expires_at: string;
@@ -112,6 +114,7 @@ function parseKeywordSortKey(value: string | undefined): KeywordSortKey {
     case "appCount":
     case "rank":
     case "change":
+    case "addedAt":
     case "updatedAt":
       return value;
     default:
@@ -262,6 +265,8 @@ function buildPagedKeywordOrderClause(
       return `current_position IS NULL ASC, current_position ${dir}, keyword COLLATE NOCASE ASC`;
     case "change":
       return `position_change IS NULL ASC, position_change ${dir}, keyword COLLATE NOCASE ASC`;
+    case "addedAt":
+      return `added_at IS NULL ASC, added_at ${dir}, keyword COLLATE NOCASE ASC`;
     case "updatedAt":
     default:
       return `updated_at IS NULL ASC, updated_at ${dir}, keyword COLLATE NOCASE ASC`;
@@ -772,6 +777,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
           COALESCE(k.ordered_app_ids, '[]') AS ordered_app_ids,
           COALESCE(ak.is_favorite, 0) AS is_favorite,
           COALESCE(k.created_at, f.updated_at, ak.added_at, '') AS created_at,
+          ak.added_at AS added_at,
           COALESCE(k.updated_at, f.updated_at, ak.added_at, '') AS updated_at,
           COALESCE(k.order_expires_at, f.updated_at, ak.added_at, '') AS order_expires_at,
           COALESCE(k.popularity_expires_at, f.updated_at, ak.added_at, '') AS popularity_expires_at,
@@ -845,6 +851,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
            ordered_app_ids,
            is_favorite,
            created_at,
+           added_at,
            updated_at,
            order_expires_at,
            popularity_expires_at,
@@ -934,6 +941,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
         orderedAppIds,
         isFavorite: row.is_favorite === 1,
         createdAt: row.created_at,
+        addedAt: row.added_at,
         updatedAt: row.updated_at,
         orderExpiresAt: row.order_expires_at,
         popularityExpiresAt: row.popularity_expires_at,

@@ -97,7 +97,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 5. Return `201` immediately with `{ cachedCount, pendingCount, failedCount }`.
 6. Persist any popularity-stage failures in `aso_keyword_failures`.
 7. `GET /api/aso/keywords` (app-scoped) keeps app-associated failed keywords visible with `keywordStatus="failed"` even when no `aso_keywords` row exists yet (for example, popularity-stage failures).
-   - App-scoped keyword reads are always paginated and require `appId`, with server-side search/filter/sort (`keyword`, `minPopularity`, `maxDifficulty`, `brand`, `favorite`, `minRank`, `maxRank`, `sortBy`, `sortDir`, `page`, `pageSize`).
+   - App-scoped keyword reads are always paginated and require `appId`, with server-side search/filter/sort (`keyword`, `minPopularity`, `maxDifficulty`, `brand`, `favorite`, `minRank`, `maxRank`, `sortBy`, `sortDir`, `page`, `pageSize`); `sortBy=addedAt` uses the app-specific association timestamp.
    - Paginated response shape is `{ items, page, pageSize, totalCount, totalPages, hasPrevPage, hasNextPage, associatedCount, failedCount, pendingCount }`.
 8. Run background keyword work for misses:
    - full enrichment for `pendingItems`

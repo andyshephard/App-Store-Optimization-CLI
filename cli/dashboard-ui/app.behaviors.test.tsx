@@ -201,6 +201,16 @@ function buildKeywordPagedPayloadForQuery(
         comparison = compareNullable(leftChange, rightChange);
         break;
       }
+      case "addedAt":
+        comparison = compareNullable(
+          typeof left.addedAt === "string"
+            ? new Date(left.addedAt).getTime()
+            : null,
+          typeof right.addedAt === "string"
+            ? new Date(right.addedAt).getTime()
+            : null
+        );
+        break;
       case "updatedAt":
       default:
         comparison = compareNullable(

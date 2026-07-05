@@ -36,6 +36,7 @@ export type Row = {
   popularity: number;
   difficultyScore: number | null;
   appCount: number | null;
+  addedAt?: string | null;
   updatedAt?: string;
   previousPosition: number | null;
   currentPosition: number | null;
