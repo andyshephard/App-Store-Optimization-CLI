@@ -234,7 +234,9 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     }
     if (!isStoredKeywordOrderFresh(keywordRow, Date.now())) {
       try {
-        await keywordPipelineService.refreshOrder(country, [decoded]);
+        await keywordPipelineService.refreshOrder(country, [decoded], {
+          preserveUpdatedAt: true,
+        });
         const refreshed = getKeyword(country, decoded);
         if (refreshed) {
           keywordRow = refreshed;

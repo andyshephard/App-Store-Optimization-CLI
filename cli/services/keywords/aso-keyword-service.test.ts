@@ -104,7 +104,7 @@ describe("keyword-pipeline-service", () => {
     delete process.env.ASO_DB_PATH;
   });
 
-  it("updates order state without changing updatedAt during order-only refresh", async () => {
+  it("updates previous positions from old order before order-only refresh upsert", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-04-13T00:00:00.000Z"));
     upsertKeywords("US", [
@@ -141,7 +141,7 @@ describe("keyword-pipeline-service", () => {
       "app-1",
     ]);
     expect(getKeyword("US", "ranked")?.updatedAt).toBe(
-      "2026-04-01T00:00:00.000Z"
+      "2026-04-13T00:00:00.000Z"
     );
     expect(getKeyword("US", "ranked")?.orderExpiresAt).toBe(
       "2026-04-14T00:00:00.000Z"
@@ -152,6 +152,56 @@ describe("keyword-pipeline-service", () => {
       {
         appId: "app-1",
         keyword: "ranked",
+        country: "US",
+        position: 2,
+        capturedAt: "2026-04-13T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("can preserve updatedAt during top-app order-only refresh", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-13T00:00:00.000Z"));
+    upsertKeywords("US", [
+      {
+        keyword: "top apps ranked",
+        popularity: 50,
+        difficultyScore: 10,
+        minDifficultyScore: 5,
+        appCount: 2,
+        keywordMatch: "titleExactPhrase",
+        orderedAppIds: ["app-1", "app-2"],
+        updatedAt: "2026-04-01T00:00:00.000Z",
+        orderExpiresAt: "2000-01-01T00:00:00.000Z",
+        popularityExpiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
+    createAppKeyword("app-1", "top apps ranked", "US");
+
+    mockRefreshAsoKeywordOrderLocal.mockResolvedValue({
+      keyword: "top apps ranked",
+      normalizedKeyword: "top apps ranked",
+      appCount: 2,
+      orderedAppIds: ["app-2", "app-1"],
+    });
+
+    const refreshed = await keywordPipelineService.refreshOrder(
+      "US",
+      ["top apps ranked"],
+      { preserveUpdatedAt: true }
+    );
+
+    expect(refreshed).toHaveLength(1);
+    expect(getKeyword("US", "top apps ranked")?.updatedAt).toBe(
+      "2026-04-01T00:00:00.000Z"
+    );
+    expect(getKeyword("US", "top apps ranked")?.orderExpiresAt).toBe(
+      "2026-04-14T00:00:00.000Z"
+    );
+    expect(listAppKeywordPositionHistory("app-1", "top apps ranked", "US")).toEqual([
+      {
+        appId: "app-1",
+        keyword: "top apps ranked",
         country: "US",
         position: 2,
         capturedAt: "2026-04-13T00:00:00.000Z",

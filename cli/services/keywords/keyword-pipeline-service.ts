@@ -58,6 +58,10 @@ export type KeywordFilterOptions = {
   maxDifficulty?: number;
 };
 
+type RefreshOrderOptions = {
+  preserveUpdatedAt?: boolean;
+};
+
 type EnrichmentOutcome = {
   item: AsoKeywordItem | null;
   failedKeyword: FailedKeyword | null;
@@ -596,7 +600,8 @@ export class KeywordPipelineService {
 
   async refreshOrder(
     country: string,
-    keywords: string[]
+    keywords: string[],
+    options: RefreshOrderOptions = {}
   ): Promise<AsoKeywordItem[]> {
     if (keywords.length === 0) return [];
     const normalized = this.normalizeKeywords(keywords);
@@ -641,7 +646,9 @@ export class KeywordPipelineService {
         keywordMatch: existing.keywordMatch,
         orderedAppIds: updatedOrder.orderedAppIds,
         createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
+        updatedAt: options.preserveUpdatedAt
+          ? existing.updatedAt
+          : positionCapturedAt,
         orderExpiresAt: existing.orderExpiresAt,
         popularityExpiresAt: existing.popularityExpiresAt,
       };

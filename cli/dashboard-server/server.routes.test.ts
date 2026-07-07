@@ -1135,7 +1135,9 @@ describe("dashboard server routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(mockRefreshOrder).toHaveBeenCalledWith("US", ["term"]);
+    expect(mockRefreshOrder).toHaveBeenCalledWith("US", ["term"], {
+      preserveUpdatedAt: true,
+    });
     expect(mockGetCompetitorAppDocs).toHaveBeenCalledWith("US", ["a1", "a2"]);
   });
 
