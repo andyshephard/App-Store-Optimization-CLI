@@ -544,6 +544,23 @@ describe("dashboard app interactions", () => {
       name: 'Top apps for meditation',
     });
     await within(dialog).findByText("Calm App");
+    expect(within(dialog).getAllByText("N/A")).toHaveLength(2);
+    expect(within(dialog).getByText("DOWNLOADS")).toHaveAttribute(
+      "title",
+      "Estimated downloads in the last 30 days"
+    );
+    expect(within(dialog).getByText("REVENUE")).toHaveAttribute(
+      "title",
+      "Estimated revenue in the last 30 days"
+    );
+    expect(within(dialog).getAllByText("N/A")[0]).toHaveAttribute(
+      "title",
+      "Estimated downloads in the last 30 days"
+    );
+    expect(within(dialog).getAllByText("N/A")[1]).toHaveAttribute(
+      "title",
+      "Estimated revenue in the last 30 days"
+    );
 
     const appStoreLink = within(dialog).getByRole("link", { name: "Open in App Store" });
     expect(appStoreLink).toHaveAttribute("href", expect.stringContaining("apps.apple.com"));

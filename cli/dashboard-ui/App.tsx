@@ -71,6 +71,8 @@ type AppDoc = {
   iconArtwork?: { url?: string; [key: string]: unknown };
   artworkUrl100?: string;
   artworkUrl512?: string;
+  lastMonthDownloads?: string;
+  lastMonthRevenue?: string;
 };
 type KeywordItem = {
   keyword: string;
@@ -3102,7 +3104,12 @@ export function App() {
                             maximumFractionDigits: 1,
                           }).format(app.averageUserRating)
                         : "-";
-                    const metricPairs = [
+                    const metricPairs: Array<{
+                      label: string;
+                      value: string;
+                      pairClassName?: string;
+                      tooltip?: string;
+                    }> = [
                       {
                         label: "RATING",
                         value: ratingValue,
@@ -3114,6 +3121,16 @@ export function App() {
                           typeof app.userRatingCount === "number"
                             ? formatCount(app.userRatingCount, displayLocale)
                             : "-",
+                      },
+                      {
+                        label: "DOWNLOADS",
+                        value: app.lastMonthDownloads ?? "N/A",
+                        tooltip: "Estimated downloads in the last 30 days",
+                      },
+                      {
+                        label: "REVENUE",
+                        value: app.lastMonthRevenue ?? "N/A",
+                        tooltip: "Estimated revenue in the last 30 days",
                       },
                       { label: "FIRST RELEASE", value: releaseDate },
                       { label: "LAST UPDATE", value: lastUpdateDate },
@@ -3145,8 +3162,12 @@ export function App() {
                                     <div
                                       className={`top-app-metric-pair${metric.pairClassName ? ` ${metric.pairClassName}` : ""}`}
                                     >
-                                      <span className="top-app-metric-label">{metric.label}</span>
-                                      <span className="top-app-metric-value">{metric.value}</span>
+                                      <span className="top-app-metric-label" title={metric.tooltip}>
+                                        {metric.label}
+                                      </span>
+                                      <span className="top-app-metric-value" title={metric.tooltip}>
+                                        {metric.value}
+                                      </span>
                                     </div>
                                   </div>
                                 ))}

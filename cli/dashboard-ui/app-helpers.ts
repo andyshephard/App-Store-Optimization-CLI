@@ -29,6 +29,8 @@ export type AppDoc = {
   iconArtwork?: { url?: string; [key: string]: unknown };
   artworkUrl100?: string;
   artworkUrl512?: string;
+  lastMonthDownloads?: string;
+  lastMonthRevenue?: string;
 };
 
 export type Row = {

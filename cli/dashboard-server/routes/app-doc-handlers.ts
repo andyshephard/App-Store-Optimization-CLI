@@ -16,6 +16,10 @@ import {
 } from "../../domain/keywords/policy";
 import type { AsoApiAppDoc, AsoRouteDeps } from "./aso-route-types";
 import { isStoredKeywordOrderFresh } from "../../shared/aso-keyword-validity";
+import {
+  fetchSensorTowerMetricsForApps,
+  type SensorTowerAppMetrics,
+} from "../../services/sensortower/sensortower-app-service";
 
 const ASO_APP_DOCS_MAX_BATCH_SIZE = 50;
 const ASO_APP_SEARCH_DEFAULT_LIMIT = 20;
@@ -296,9 +300,38 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       }
     }
     appDocs = getCompetitorAppDocs(country, topIds);
+    let sensorTowerMetrics: Map<string, SensorTowerAppMetrics> = new Map();
+    try {
+      sensorTowerMetrics = await fetchSensorTowerMetricsForApps(
+        appDocs.map((doc) => doc.appId),
+        (error, appId) => {
+          deps.reportDashboardError(error, {
+            method: "GET",
+            path: "/api/aso/top-apps",
+            country,
+            appId,
+            context: "top-apps-sensortower-enrichment",
+          });
+        }
+      );
+    } catch (error) {
+      deps.reportDashboardError(error, {
+        method: "GET",
+        path: "/api/aso/top-apps",
+        country,
+        appIdsCount: appDocs.length,
+        context: "top-apps-sensortower-enrichment",
+      });
+    }
     deps.sendJson(res, 200, {
       success: true,
-      data: { keyword: keywordRow.keyword, appDocs },
+      data: {
+        keyword: keywordRow.keyword,
+        appDocs: appDocs.map((doc) => ({
+          ...doc,
+          ...(sensorTowerMetrics.get(doc.appId) ?? {}),
+        })),
+      },
     });
   }
 

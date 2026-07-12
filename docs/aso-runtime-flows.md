@@ -167,6 +167,12 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 - `GET /api/aso/apps`: competitor-doc endpoint for requested IDs (`aso_apps` only), hydrate missing/expired competitor docs (or force with `refresh=true`).
 - `GET /api/aso/apps/search`: resolve ordered IDs for a free-text term and hydrate competitor docs for the top IDs.
 
+## Flow E1: Top-App Market Metrics
+- `GET /api/aso/top-apps` fetches Sensor Tower metrics only after the displayed top-app documents have been resolved.
+- The server requests the displayed numeric iOS app IDs from Sensor Tower and maps the response’s worldwide last-month download and revenue display strings onto the response for the dashboard.
+- These metrics are best-effort: each app request is isolated, failures are reported diagnostically, and the dashboard uses its missing-value fallback when data is unavailable.
+- Sensor Tower metrics are response-only and are not written to or read from the local app-doc cache. Reopening Top Apps performs fresh requests for the displayed apps.
+
 ## Flow E2: Dashboard Add Apps
 1. User opens add-app dialog and types a search term.
 2. UI debounces search requests and calls `GET /api/aso/apps/search`.

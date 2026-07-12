@@ -36,6 +36,7 @@ import { fetchOwnedAppSnapshotsFromApi } from "./owned-app-details";
 import { createServerRequestHandler } from "./server";
 import { DEFAULT_RESEARCH_APP_ID } from "../shared/aso-research";
 import { logger } from "../utils/logger";
+import { fetchSensorTowerMetricsForApps } from "../services/sensortower/sensortower-app-service";
 
 let mockAsoConfig: Record<string, unknown> = {};
 
@@ -157,6 +158,12 @@ jest.mock("../utils/logger", () => ({
     error: jest.fn(),
   },
 }));
+
+jest.mock("../services/sensortower/sensortower-app-service", () => ({
+  fetchSensorTowerMetricsForApps: jest.fn(async () => new Map()),
+}));
+
+const mockFetchSensorTowerMetricsForApps = jest.mocked(fetchSensorTowerMetricsForApps);
 
 async function request(params: {
   method: string;
@@ -1094,6 +1101,47 @@ describe("dashboard server routes", () => {
     expect(hydrated.json?.data.keyword).toBe("term");
     expect(hydrated.json?.data.appDocs).toHaveLength(2);
     expect(mockUpsertCompetitorAppDocs).toHaveBeenCalled();
+  });
+
+  it("adds fresh Sensor Tower metrics to displayed top apps without caching them", async () => {
+    mockGetKeyword.mockReturnValue({
+      keyword: "term",
+      orderedAppIds: ["6759623397"],
+    } as any);
+    mockGetCompetitorAppDocs.mockReturnValue([
+      {
+        appId: "6759623397",
+        name: "Top App",
+        averageUserRating: 4.5,
+        userRatingCount: 10,
+      },
+    ] as any);
+    mockFetchSensorTowerMetricsForApps.mockResolvedValue(
+      new Map([
+        [
+          "6759623397",
+          { lastMonthDownloads: "100k", lastMonthRevenue: "$50k" },
+        ],
+      ])
+    );
+
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/top-apps?country=US&keyword=term&limit=1",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json?.data.appDocs).toEqual([
+      expect.objectContaining({
+        appId: "6759623397",
+        lastMonthDownloads: "100k",
+        lastMonthRevenue: "$50k",
+      }),
+    ]);
+    expect(mockFetchSensorTowerMetricsForApps).toHaveBeenCalledWith(
+      ["6759623397"],
+      expect.any(Function)
+    );
   });
 
   it("refreshes stale top-app keyword order before reading app docs", async () => {

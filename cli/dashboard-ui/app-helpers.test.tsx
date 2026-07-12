@@ -334,12 +334,18 @@ describe("app-helpers", () => {
     const rows = buildTopAppRows({
       keyword: "term",
       appDocs: [
-        { appId: "a1", name: "A1" },
+        { appId: "a1", name: "A1", lastMonthDownloads: "100k", lastMonthRevenue: "$50k" },
         { appId: "a2", name: "A2" },
       ],
     });
     expect(rows).toEqual([
-      { rank: 1, appId: "a1", name: "A1" },
+      {
+        rank: 1,
+        appId: "a1",
+        name: "A1",
+        lastMonthDownloads: "100k",
+        lastMonthRevenue: "$50k",
+      },
       { rank: 2, appId: "a2", name: "A2" },
     ]);
   });
