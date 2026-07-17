@@ -5,6 +5,7 @@ export * from "./owned-apps";
 export * from "./aso-keywords";
 export * from "./aso-keyword-failures";
 export * from "./aso-apps";
+export * from "./sensor-tower-app-metrics";
 export * from "./app-keywords";
 export * from "./app-keyword-position-history";
 export * from "./metadata";

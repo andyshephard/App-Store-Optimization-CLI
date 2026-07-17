@@ -168,10 +168,11 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 - `GET /api/aso/apps/search`: resolve ordered IDs for a free-text term and hydrate competitor docs for the top IDs.
 
 ## Flow E1: Top-App Market Metrics
-- `GET /api/aso/top-apps` fetches Sensor Tower metrics only after the displayed top-app documents have been resolved.
-- The server requests the displayed numeric iOS app IDs from Sensor Tower and maps the response’s worldwide last-month download and revenue display strings onto the response for the dashboard.
-- These metrics are best-effort: each app request is isolated, failures are reported diagnostically, and the dashboard uses its missing-value fallback when data is unavailable.
-- Sensor Tower metrics are response-only and are not written to or read from the local app-doc cache. Reopening Top Apps performs fresh requests for the displayed apps.
+- `GET /api/aso/top-apps` reads Sensor Tower metrics only after the displayed top-app documents have been resolved; no startup or background flow reads or refreshes this cache.
+- Cache entries are global by numeric iOS app ID and remain fresh for seven days. Only displayed IDs with missing or expired entries are sent to Sensor Tower in one batch.
+- The server maps the unordered response by app ID, persists complete successful metrics, and adds the worldwide last-month download and revenue display strings to the dashboard response.
+- These metrics are best-effort: a rate-limited batch gets one bounded retry, terminal failures are reported diagnostically, and the dashboard uses its missing-value fallback when data is unavailable.
+- If refresh fails, an expired cached value remains the response fallback and its timestamp is not advanced, so the next Top Apps opening retries it.
 
 ## Flow E2: Dashboard Add Apps
 1. User opens add-app dialog and types a search term.

@@ -20,11 +20,24 @@ import {
   fetchSensorTowerMetricsForApps,
   type SensorTowerAppMetrics,
 } from "../../services/sensortower/sensortower-app-service";
+import {
+  getSensorTowerAppMetrics,
+  upsertSensorTowerAppMetrics,
+} from "../../db/sensor-tower-app-metrics";
 
 const ASO_APP_DOCS_MAX_BATCH_SIZE = 50;
 const ASO_APP_SEARCH_DEFAULT_LIMIT = 20;
 const ASO_APP_SEARCH_MAX_LIMIT = 50;
 const ASO_APP_SEARCH_FALLBACK_WARNING = "Search failed";
+const SENSOR_TOWER_METRICS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isSensorTowerMetricsFresh(fetchedAt: string, nowMs: number): boolean {
+  const fetchedAtMs = Date.parse(fetchedAt);
+  return (
+    Number.isFinite(fetchedAtMs) &&
+    nowMs - fetchedAtMs < SENSOR_TOWER_METRICS_CACHE_TTL_MS
+  );
+}
 
 function mergeHydratedCompetitorDoc(
   existing: AsoApiAppDoc | undefined,
@@ -300,28 +313,90 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       }
     }
     appDocs = getCompetitorAppDocs(country, topIds);
-    let sensorTowerMetrics: Map<string, SensorTowerAppMetrics> = new Map();
+    const metricAppIds = appDocs.map((doc) => doc.appId);
+    let cachedSensorTowerMetrics: ReturnType<
+      typeof getSensorTowerAppMetrics
+    > = [];
     try {
-      sensorTowerMetrics = await fetchSensorTowerMetricsForApps(
-        appDocs.map((doc) => doc.appId),
-        (error, appId) => {
-          deps.reportDashboardError(error, {
-            method: "GET",
-            path: "/api/aso/top-apps",
-            country,
-            appId,
-            context: "top-apps-sensortower-enrichment",
-          });
-        }
-      );
+      cachedSensorTowerMetrics = getSensorTowerAppMetrics(metricAppIds);
     } catch (error) {
       deps.reportDashboardError(error, {
         method: "GET",
         path: "/api/aso/top-apps",
         country,
-        appIdsCount: appDocs.length,
-        context: "top-apps-sensortower-enrichment",
+        appIdsCount: metricAppIds.length,
+        context: "top-apps-sensortower-cache-read",
       });
+    }
+    const sensorTowerMetrics = new Map<string, SensorTowerAppMetrics>(
+      cachedSensorTowerMetrics.map((metrics) => [
+        metrics.appId,
+        {
+          lastMonthDownloads: metrics.lastMonthDownloads,
+          lastMonthRevenue: metrics.lastMonthRevenue,
+        },
+      ])
+    );
+    const cachedByAppId = new Map(
+      cachedSensorTowerMetrics.map((metrics) => [metrics.appId, metrics] as const)
+    );
+    const nowMs = Date.now();
+    const appIdsToRefresh = metricAppIds.filter((appId) => {
+      const cached = cachedByAppId.get(appId);
+      return !cached || !isSensorTowerMetricsFresh(cached.fetchedAt, nowMs);
+    });
+
+    if (appIdsToRefresh.length > 0) {
+      try {
+        const fetchedMetrics = await fetchSensorTowerMetricsForApps(
+          appIdsToRefresh,
+          (error, appIds) => {
+            deps.reportDashboardError(error, {
+              method: "GET",
+              path: "/api/aso/top-apps",
+              country,
+              appIds,
+              appIdsCount: appIds.length,
+              context: "top-apps-sensortower-enrichment",
+            });
+          }
+        );
+        for (const [appId, metrics] of fetchedMetrics) {
+          sensorTowerMetrics.set(appId, {
+            ...(sensorTowerMetrics.get(appId) ?? {}),
+            ...metrics,
+          });
+        }
+        const completeMetrics = Array.from(fetchedMetrics.entries()).flatMap(
+          ([appId, metrics]) => {
+            const lastMonthDownloads = metrics.lastMonthDownloads;
+            const lastMonthRevenue = metrics.lastMonthRevenue;
+            if (!lastMonthDownloads || !lastMonthRevenue) return [];
+            return [{ appId, lastMonthDownloads, lastMonthRevenue }];
+          }
+        );
+        if (completeMetrics.length > 0) {
+          try {
+            upsertSensorTowerAppMetrics(completeMetrics);
+          } catch (error) {
+            deps.reportDashboardError(error, {
+              method: "GET",
+              path: "/api/aso/top-apps",
+              country,
+              appIdsCount: completeMetrics.length,
+              context: "top-apps-sensortower-cache-write",
+            });
+          }
+        }
+      } catch (error) {
+        deps.reportDashboardError(error, {
+          method: "GET",
+          path: "/api/aso/top-apps",
+          country,
+          appIdsCount: appIdsToRefresh.length,
+          context: "top-apps-sensortower-enrichment",
+        });
+      }
     }
     deps.sendJson(res, 200, {
       success: true,

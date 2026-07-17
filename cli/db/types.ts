@@ -68,6 +68,13 @@ export interface StoredAsoApp {
   country: string;
 }
 
+export interface StoredSensorTowerAppMetrics {
+  appId: string;
+  lastMonthDownloads: string;
+  lastMonthRevenue: string;
+  fetchedAt: string;
+}
+
 export interface StoredAppKeyword {
   appId: string;
   keyword: string;
@@ -89,5 +96,6 @@ export interface AsoDbSchema {
   ownedApps: StoredOwnedApp[];
   asoKeywords: Record<string, StoredAsoKeyword>;
   asoApps: Record<string, StoredAsoApp>;
+  sensorTowerAppMetrics: Record<string, StoredSensorTowerAppMetrics>;
   appKeywords: StoredAppKeyword[];
 }

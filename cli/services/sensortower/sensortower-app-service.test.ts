@@ -22,6 +22,10 @@ describe("sensortower app service", () => {
     jest.clearAllMocks();
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("maps worldwide last-month display strings from the Sensor Tower response", async () => {
     mockGet.mockResolvedValueOnce({
       data: {
@@ -48,9 +52,46 @@ describe("sensortower app service", () => {
     );
   });
 
-  it("isolates failures and skips non-iOS app IDs", async () => {
-    const onError = jest.fn();
+  it("fetches valid app IDs in one batch and maps an unordered partial response", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: {
+        apps: [
+          {
+            app_id: 2,
+            humanized_worldwide_last_month_revenue: { string: "$8k" },
+          },
+          {
+            app_id: 1,
+            humanized_worldwide_last_month_downloads: { string: "2k" },
+          },
+        ],
+      },
+    });
+
+    await expect(
+      fetchSensorTowerMetricsForApps(["1", "2", "com.example.app", "1"])
+    ).resolves.toEqual(
+      new Map([
+        ["2", { lastMonthRevenue: "$8k" }],
+        ["1", { lastMonthDownloads: "2k" }],
+      ])
+    );
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith(
+      "https://app.sensortower.com/api/ios/apps",
+      {
+        params: { app_ids: "1,2" },
+        timeout: 10_000,
+      }
+    );
+  });
+
+  it("retries a rate-limited batch once", async () => {
+    jest.useFakeTimers();
     mockGet
+      .mockRejectedValueOnce({
+        response: { status: 429, headers: { "retry-after": "0" } },
+      })
       .mockResolvedValueOnce({
         data: {
           apps: [
@@ -60,16 +101,27 @@ describe("sensortower app service", () => {
             },
           ],
         },
-      })
-      .mockRejectedValueOnce(new Error("Sensor Tower unavailable"));
+      });
+
+    const result = fetchSensorTowerMetricsForApps(["1"]);
+    await jest.runOnlyPendingTimersAsync();
+
+    await expect(result).resolves.toEqual(
+      new Map([["1", { lastMonthDownloads: "2k" }]])
+    );
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports one terminal batch failure without retrying non-429 errors", async () => {
+    const onError = jest.fn();
+    const error = { response: { status: 503 } };
+    mockGet.mockRejectedValueOnce(error);
 
     await expect(
       fetchSensorTowerMetricsForApps(["1", "2", "com.example.app"], onError)
-    ).resolves.toEqual(new Map([["1", { lastMonthDownloads: "2k" }]]));
-    expect(mockGet).toHaveBeenCalledTimes(2);
-    expect(onError).toHaveBeenCalledWith(
-      expect.any(Error),
-      "2"
-    );
+    ).resolves.toEqual(new Map());
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(error, ["1", "2"]);
   });
 });

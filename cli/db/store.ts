@@ -91,6 +91,13 @@ function initializeDatabase(database: Database.Database): void {
       PRIMARY KEY (country, app_id)
     );
 
+    CREATE TABLE IF NOT EXISTS sensor_tower_app_metrics (
+      app_id TEXT PRIMARY KEY,
+      last_month_downloads TEXT NOT NULL,
+      last_month_revenue TEXT NOT NULL,
+      fetched_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS app_keywords (
       app_id TEXT NOT NULL,
       keyword TEXT NOT NULL,

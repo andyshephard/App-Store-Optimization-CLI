@@ -57,6 +57,13 @@ erDiagram
     TEXT expires_at
   }
 
+  SENSOR_TOWER_APP_METRICS {
+    TEXT app_id PK
+    TEXT last_month_downloads
+    TEXT last_month_revenue
+    TEXT fetched_at
+  }
+
   APP_KEYWORDS {
     TEXT app_id PK
     TEXT keyword PK
@@ -179,6 +186,19 @@ Competitor app-doc cache only (country-scoped).
 
 Indexes:
 - PK: (`country`, `app_id`)
+
+### `sensor_tower_app_metrics`
+Worldwide Sensor Tower metrics cache, independent of storefront.
+
+| Column | SQLite Type | TS Type | Nullable | Notes |
+|---|---|---|---|---|
+| `app_id` | `TEXT` | `string` | No | PK; numeric iOS app ID |
+| `last_month_downloads` | `TEXT` | `string` | No | Sensor Tower humanized worldwide last-month downloads |
+| `last_month_revenue` | `TEXT` | `string` | No | Sensor Tower humanized worldwide last-month revenue |
+| `fetched_at` | `TEXT` | `string` | No | ISO datetime of the successful fetch |
+
+Indexes:
+- PK: (`app_id`)
 
 ### `app_keywords`
 | Column | SQLite Type | TS Type | Nullable | Notes |

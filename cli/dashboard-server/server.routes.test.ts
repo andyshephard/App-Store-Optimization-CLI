@@ -37,6 +37,10 @@ import { createServerRequestHandler } from "./server";
 import { DEFAULT_RESEARCH_APP_ID } from "../shared/aso-research";
 import { logger } from "../utils/logger";
 import { fetchSensorTowerMetricsForApps } from "../services/sensortower/sensortower-app-service";
+import {
+  getSensorTowerAppMetrics,
+  upsertSensorTowerAppMetrics,
+} from "../db/sensor-tower-app-metrics";
 
 let mockAsoConfig: Record<string, unknown> = {};
 
@@ -72,6 +76,11 @@ jest.mock("../db/aso-keywords", () => ({
 jest.mock("../db/aso-apps", () => ({
   getCompetitorAppDocs: jest.fn(() => []),
   upsertCompetitorAppDocs: jest.fn(),
+}));
+
+jest.mock("../db/sensor-tower-app-metrics", () => ({
+  getSensorTowerAppMetrics: jest.fn(() => []),
+  upsertSensorTowerAppMetrics: jest.fn(),
 }));
 
 jest.mock("../db/aso-keyword-failures", () => ({
@@ -270,6 +279,10 @@ describe("dashboard server routes", () => {
   const mockGetKeyword = jest.mocked(getKeyword);
   const mockGetCompetitorAppDocs = jest.mocked(getCompetitorAppDocs);
   const mockUpsertCompetitorAppDocs = jest.mocked(upsertCompetitorAppDocs);
+  const mockGetSensorTowerAppMetrics = jest.mocked(getSensorTowerAppMetrics);
+  const mockUpsertSensorTowerAppMetrics = jest.mocked(
+    upsertSensorTowerAppMetrics
+  );
   const mockFetchOwnedAppSnapshotsFromApi = jest.mocked(fetchOwnedAppSnapshotsFromApi);
   const mockGetAsoAppDocsLocal = jest.mocked(getAsoAppDocsLocal);
   const mockRefreshAsoKeywordOrderLocal = jest.mocked(refreshAsoKeywordOrderLocal);
@@ -304,6 +317,8 @@ describe("dashboard server routes", () => {
     mockListAppKeywordPositionHistory.mockReturnValue([]);
     mockGetKeyword.mockReturnValue(null);
     mockGetCompetitorAppDocs.mockReturnValue([]);
+    mockGetSensorTowerAppMetrics.mockReturnValue([]);
+    mockFetchSensorTowerMetricsForApps.mockResolvedValue(new Map());
     mockFetchOwnedAppSnapshotsFromApi.mockResolvedValue([]);
     mockUpsertOwnedAppSnapshots.mockImplementation(() => {});
     mockGetAsoAppDocsLocal.mockResolvedValue([]);
@@ -1103,7 +1118,7 @@ describe("dashboard server routes", () => {
     expect(mockUpsertCompetitorAppDocs).toHaveBeenCalled();
   });
 
-  it("adds fresh Sensor Tower metrics to displayed top apps without caching them", async () => {
+  it("fetches and caches missing Sensor Tower metrics for displayed top apps", async () => {
     mockGetKeyword.mockReturnValue({
       keyword: "term",
       orderedAppIds: ["6759623397"],
@@ -1142,6 +1157,158 @@ describe("dashboard server routes", () => {
       ["6759623397"],
       expect.any(Function)
     );
+    expect(mockUpsertSensorTowerAppMetrics).toHaveBeenCalledWith([
+      {
+        appId: "6759623397",
+        lastMonthDownloads: "100k",
+        lastMonthRevenue: "$50k",
+      },
+    ]);
+  });
+
+  it("reuses fresh Sensor Tower metrics without making an API request", async () => {
+    mockGetKeyword.mockReturnValue({
+      keyword: "term",
+      orderedAppIds: ["6759623397"],
+    } as any);
+    mockGetCompetitorAppDocs.mockReturnValue([
+      {
+        appId: "6759623397",
+        name: "Top App",
+        averageUserRating: 4.5,
+        userRatingCount: 10,
+      },
+    ] as any);
+    mockGetSensorTowerAppMetrics.mockReturnValue([
+      {
+        appId: "6759623397",
+        lastMonthDownloads: "90k",
+        lastMonthRevenue: "$40k",
+        fetchedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/top-apps?country=US&keyword=term&limit=1",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json?.data.appDocs[0]).toEqual(
+      expect.objectContaining({
+        lastMonthDownloads: "90k",
+        lastMonthRevenue: "$40k",
+      })
+    );
+    expect(mockFetchSensorTowerMetricsForApps).not.toHaveBeenCalled();
+    expect(mockUpsertSensorTowerAppMetrics).not.toHaveBeenCalled();
+  });
+
+  it("refreshes only stale Sensor Tower metrics and preserves fresh entries", async () => {
+    mockGetKeyword.mockReturnValue({
+      keyword: "term",
+      orderedAppIds: ["1", "2"],
+    } as any);
+    mockGetCompetitorAppDocs.mockReturnValue([
+      {
+        appId: "1",
+        name: "Fresh App",
+        averageUserRating: 4.5,
+        userRatingCount: 10,
+      },
+      {
+        appId: "2",
+        name: "Stale App",
+        averageUserRating: 4.4,
+        userRatingCount: 20,
+      },
+    ] as any);
+    mockGetSensorTowerAppMetrics.mockReturnValue([
+      {
+        appId: "1",
+        lastMonthDownloads: "10k",
+        lastMonthRevenue: "$5k",
+        fetchedAt: "2099-01-01T00:00:00.000Z",
+      },
+      {
+        appId: "2",
+        lastMonthDownloads: "20k",
+        lastMonthRevenue: "$8k",
+        fetchedAt: "2000-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockFetchSensorTowerMetricsForApps.mockResolvedValue(
+      new Map([
+        ["2", { lastMonthDownloads: "30k", lastMonthRevenue: "$12k" }],
+      ])
+    );
+
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/top-apps?country=US&keyword=term&limit=2",
+    });
+
+    expect(mockFetchSensorTowerMetricsForApps).toHaveBeenCalledWith(
+      ["2"],
+      expect.any(Function)
+    );
+    expect(response.json?.data.appDocs).toEqual([
+      expect.objectContaining({
+        appId: "1",
+        lastMonthDownloads: "10k",
+        lastMonthRevenue: "$5k",
+      }),
+      expect.objectContaining({
+        appId: "2",
+        lastMonthDownloads: "30k",
+        lastMonthRevenue: "$12k",
+      }),
+    ]);
+    expect(mockUpsertSensorTowerAppMetrics).toHaveBeenCalledWith([
+      {
+        appId: "2",
+        lastMonthDownloads: "30k",
+        lastMonthRevenue: "$12k",
+      },
+    ]);
+  });
+
+  it("falls back to stale Sensor Tower metrics when refresh fails", async () => {
+    mockGetKeyword.mockReturnValue({
+      keyword: "term",
+      orderedAppIds: ["6759623397"],
+    } as any);
+    mockGetCompetitorAppDocs.mockReturnValue([
+      {
+        appId: "6759623397",
+        name: "Top App",
+        averageUserRating: 4.5,
+        userRatingCount: 10,
+      },
+    ] as any);
+    mockGetSensorTowerAppMetrics.mockReturnValue([
+      {
+        appId: "6759623397",
+        lastMonthDownloads: "80k",
+        lastMonthRevenue: "$35k",
+        fetchedAt: "2000-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockFetchSensorTowerMetricsForApps.mockResolvedValue(new Map());
+
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/top-apps?country=US&keyword=term&limit=1",
+    });
+
+    expect(response.json?.data.appDocs[0]).toEqual(
+      expect.objectContaining({
+        lastMonthDownloads: "80k",
+        lastMonthRevenue: "$35k",
+      })
+    );
+    expect(mockFetchSensorTowerMetricsForApps).toHaveBeenCalled();
+    expect(mockUpsertSensorTowerAppMetrics).not.toHaveBeenCalled();
   });
 
   it("refreshes stale top-app keyword order before reading app docs", async () => {
