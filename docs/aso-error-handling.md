@@ -90,7 +90,7 @@ Define failure boundaries, retry rules, and recovery behavior across CLI, dashbo
 - Runtime telemetry startup resolves PostHog settings before shared init: API key from `ASO_POSTHOG_API_KEY` (or packaged fallback when unset) plus optional `ASO_POSTHOG_HOST` override; `posthog-shared` passes host only when explicitly provided and otherwise relies on the PostHog SDK default host, and initialization is skipped in development mode.
 - CLI usage tracking persists a stable PostHog `distinctId` in `~/.aso/config.json` (`userId`) and emits `cli_started` with `$set_once.first_seen_at` plus `$set.last_seen_at/cli_version/node_version` on each process start.
 - CLI process exit paths explicitly call PostHog shutdown before exiting so short-lived command runs flush queued analytics events.
-- Release pipeline enforces packaged-key integrity by requiring the secret, replacing exactly one source placeholder, and failing if placeholder text remains in built artifacts.
+- Release pipeline pins its npm toolchain to a Node-compatible version and enforces packaged-key integrity by requiring the secret, replacing exactly one source placeholder, and failing if placeholder text remains in built artifacts.
 - Dashboard Bugsnag startup enables browser session tracking and includes `request`/`navigation` breadcrumbs; CLI/MCP keep stricter defaults.
 - Dashboard server reports failures with structured metadata (path, phase, counts).
 - Dashboard server suppresses debug request/response logging for `GET` API routes to reduce dashboard poll noise; mutation (`POST`/`DELETE`) debug logging remains enabled.
