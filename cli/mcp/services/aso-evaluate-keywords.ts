@@ -3,10 +3,10 @@ import { runAsoCommand, toMcpToolResult } from "../execute-aso-cli";
 import { reportBugsnagError } from "../../services/telemetry/error-reporter";
 import { ASO_MAX_KEYWORDS } from "../../shared/aso-keyword-limits";
 import { sanitizeKeywords } from "../../domain/keywords/policy";
+import { ASO_ENV } from "../../shared/aso-env";
 
-const DEFAULT_MIN_POPULARITY = 6;
 const DEFAULT_MAX_DIFFICULTY = 70;
-const ABSOLUTE_MIN_POPULARITY = 6;
+const MIN_POPULARITY_FLOOR = ASO_ENV.minPopularityFloor;
 
 type AsoToolKeywordItem = {
   keyword?: unknown;
@@ -32,7 +32,7 @@ export const asoEvaluateKeywordsInputSchema = z.object({
     .describe(
       "List of ASO search term candidates. Comma-separated entries are split and normalized."
     ),
-  minPopularity: z.number().min(ABSOLUTE_MIN_POPULARITY).optional(),
+  minPopularity: z.number().min(MIN_POPULARITY_FLOOR).optional(),
   maxDifficulty: z.number().optional(),
   appId: z
     .string()
@@ -167,8 +167,8 @@ function buildFailureResult(message: string) {
 
 export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
   const minPopularity = Math.max(
-    args.minPopularity ?? DEFAULT_MIN_POPULARITY,
-    ABSOLUTE_MIN_POPULARITY
+    args.minPopularity ?? MIN_POPULARITY_FLOOR,
+    MIN_POPULARITY_FLOOR
   );
   const maxDifficulty = args.maxDifficulty ?? DEFAULT_MAX_DIFFICULTY;
   const appId = args.appId;

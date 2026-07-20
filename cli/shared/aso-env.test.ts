@@ -34,6 +34,7 @@ describe("aso-env", () => {
     expect(ASO_ENV.ownedAppDocRefreshMaxAgeMs).toBe(
       ASO_DEFAULTS.ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000
     );
+    expect(ASO_ENV.minPopularityFloor).toBe(6);
   });
 
   it("parses optional ASO runtime env settings", () => {

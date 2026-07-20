@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { beforeEach, afterEach, describe, expect, it, jest } from "@jest/globals";
 
 jest.mock("../execute-aso-cli", () => ({
   runAsoCommand: jest.fn(),
@@ -199,13 +199,59 @@ describe("aso_evaluate_keywords service", () => {
     ]);
   });
 
-  it("rejects minPopularity lower than 6 at MCP schema boundary", () => {
+  it("rejects minPopularity lower than the configured floor (default 6)", () => {
     const parsed = asoEvaluateKeywordsInputSchema.safeParse({
       keywords: ["sleep"],
       minPopularity: 5,
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  describe("with ASO_MIN_POPULARITY_FLOOR lowered", () => {
+    let isolatedSchema: typeof asoEvaluateKeywordsInputSchema;
+
+    beforeEach(() => {
+      jest.isolateModules(() => {
+        process.env.ASO_MIN_POPULARITY_FLOOR = "1";
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        isolatedSchema = require("./aso-evaluate-keywords")
+          .asoEvaluateKeywordsInputSchema;
+      });
+    });
+
+    afterEach(() => {
+      delete process.env.ASO_MIN_POPULARITY_FLOOR;
+    });
+
+    it("accepts minPopularity 1 at the schema boundary", () => {
+      const parsed = isolatedSchema.safeParse({
+        keywords: ["sleep"],
+        minPopularity: 1,
+      });
+
+      expect(parsed.success).toBe(true);
+    });
+
+    it("accepts minPopularity equal to the configured floor", () => {
+      // floor = 1, value = 1 should be accepted
+      const parsed = isolatedSchema.safeParse({
+        keywords: ["sleep"],
+        minPopularity: 1,
+      });
+
+      expect(parsed.success).toBe(true);
+    });
+
+    it("rejects minPopularity below the configured floor", () => {
+      // floor = 1, value = 0 should be rejected
+      const parsed = isolatedSchema.safeParse({
+        keywords: ["sleep"],
+        minPopularity: 0,
+      });
+
+      expect(parsed.success).toBe(false);
+    });
   });
 
   it("returns MCP error when stdout is not strict envelope payload", async () => {
