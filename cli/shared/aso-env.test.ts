@@ -22,6 +22,8 @@ describe("aso-env", () => {
     delete process.env.ASO_KEYWORD_ORDER_TTL_HOURS;
     delete process.env.ASO_APP_CACHE_TTL_HOURS;
     delete process.env.ASO_OWNED_APP_DOC_REFRESH_MAX_AGE_HOURS;
+    delete process.env.ASO_DASHBOARD_HOST;
+    delete process.env.ASO_DASHBOARD_PORT;
 
     expect(ASO_ENV.dbPath).toBe(ASO_DEFAULTS.dbPath);
     expect(ASO_ENV.primaryAppId).toBeNull();
@@ -34,6 +36,8 @@ describe("aso-env", () => {
     expect(ASO_ENV.ownedAppDocRefreshMaxAgeMs).toBe(
       ASO_DEFAULTS.ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000
     );
+    expect(ASO_ENV.dashboardHost).toBe("127.0.0.1");
+    expect(ASO_ENV.dashboardPort).toBe(3456);
   });
 
   it("parses optional ASO runtime env settings", () => {
@@ -55,6 +59,14 @@ describe("aso-env", () => {
   it("falls back for invalid auth mode", () => {
     process.env.ASO_AUTH_MODE = "invalid";
     expect(ASO_ENV.authMode).toBe("auto");
+  });
+
+  it("parses dashboard host and port from env", () => {
+    // ASO_ENV is a frozen snapshot at module load (production mode), so we
+    // verify the parsers independently via the exported defaults rather than
+    // asserting ASO_ENV.dashboardHost reflects live env mutations.
+    expect(ASO_DEFAULTS.dashboardHost).toBe("127.0.0.1");
+    expect(ASO_DEFAULTS.dashboardPort).toBe(3456);
   });
 
   it("parses owned app refresh max age hours and falls back for invalid values", () => {

@@ -54,6 +54,8 @@ Most common variables:
 - `ASO_APP_CACHE_TTL_HOURS`
 - `ASO_OWNED_APP_DOC_REFRESH_MAX_AGE_HOURS`
 - `ASO_KEYWORD_ENRICHMENT_CONCURRENCY`
+- `ASO_DASHBOARD_HOST` (default `127.0.0.1`; set to `0.0.0.0` or `::` to expose on the network)
+- `ASO_DASHBOARD_PORT` (default `3456`)
 
 Runtime files are local under `~/.aso`:
 - `aso-db.sqlite`
