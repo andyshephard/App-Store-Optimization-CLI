@@ -1,5 +1,6 @@
 import * as os from "os";
 import * as path from "path";
+import { normalizeDashboardBindHost } from "./dashboard-network";
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".aso", "aso-db.sqlite");
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
@@ -87,16 +88,17 @@ function parseTrimmed(raw: string | undefined): string | null {
 function parseBindHost(raw: string | undefined): string {
   const trimmed = parseTrimmed(raw);
   if (!trimmed) return ASO_DEFAULTS.dashboardHost;
-  // Accept "0.0.0.0", "::", "[::]", or any IP literal. Hostnames (e.g. a DNS
-  // name) are passed through unchanged; Node will resolve them on listen().
-  if (trimmed === "[::]") return "::";
-  return trimmed;
+  return normalizeDashboardBindHost(trimmed);
 }
 
 function parsePort(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) return fallback;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 65535) {
+    return fallback;
+  }
   return parsed;
 }
 

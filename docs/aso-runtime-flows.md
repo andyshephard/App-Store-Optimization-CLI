@@ -15,7 +15,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
   - App ID for primary ASO popularity context
 
 ## Trigger Map
-- `aso`: resolve Primary App ID, start dashboard server (`3456` by default, auto-fallback to a free local port when occupied), start startup refresh manager.
+- `aso`: resolve Primary App ID, start dashboard server (`127.0.0.1:3456` by default, configurable through `ASO_DASHBOARD_HOST` and `ASO_DASHBOARD_PORT`, with auto-fallback to a free port when occupied), start startup refresh manager.
 - `aso keywords "..."`: run full keyword pipeline and print envelope result (`items`, `failedKeywords`, `filteredOut`); accepted/filtered rows include brand classification (`isBrandKeyword`) when available.
 - `aso keywords "..." --exclude-existing`: skip keywords already associated with the target app/country before metric evaluation and report them as `filteredOut(already_associated)`.
 - `aso keywords "..." --stdout`: machine-friendly mode; emits JSON-only stdout, attempts silent reauth, and fails when interactive user input is required.
@@ -199,6 +199,7 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 ## Guardrails
 - Country must be `US`.
 - Keyword limit is `100`.
+- Dashboard requests have no built-in network authentication. Non-loopback binding emits a startup warning and is supported only on trusted private networks or behind an authenticated reverse proxy; the dashboard port must not be published directly to the internet.
 - Dashboard JSON request payloads are capped at `1 MiB`.
 - Dashboard paginated keyword reads use app-scoped SQL joins so keyword rows are filtered/sorted in storage before page slicing.
 - In dashboard research workspace, `Rank` and `Change` columns remain hidden; `Updated` stays visible.

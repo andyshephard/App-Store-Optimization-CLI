@@ -57,6 +57,8 @@ Most common variables:
 - `ASO_DASHBOARD_HOST` (default `127.0.0.1`; set to `0.0.0.0` or `::` to expose on the network)
 - `ASO_DASHBOARD_PORT` (default `3456`)
 
+The dashboard has no built-in network authentication. Use a non-loopback bind only on a trusted private network or behind an authenticated reverse proxy, and do not publish its port directly to the internet.
+
 Runtime files are local under `~/.aso`:
 - `aso-db.sqlite`
 - `aso-cookies.json`

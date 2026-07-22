@@ -57,6 +57,11 @@ import {
 } from "./apps-handler";
 import { fetchOwnedAppSnapshotsFromApi } from "./owned-app-details";
 import { ASO_ENV } from "../shared/aso-env";
+import {
+  formatDashboardHttpUrl,
+  getDashboardBrowserUrl,
+  getDashboardExposureWarning,
+} from "../shared/dashboard-network";
 import type {
   AsoInteractivePrompt,
   AsoInteractivePromptResponse,
@@ -793,22 +798,20 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
         address && typeof address === "object" && "port" in address
           ? address.port
           : boundPort;
-      const url = `http://${dashboardHost}:${activePort}`;
+      const url = formatDashboardHttpUrl(dashboardHost, activePort);
       logger.info(`ASO Dashboard: ${url}`);
+      const exposureWarning = getDashboardExposureWarning(
+        dashboardHost,
+        activePort
+      );
+      if (exposureWarning) logger.warn(exposureWarning);
       if (getConfiguredAsoAdamId()) {
         startConfiguredKeywordRefresh();
       } else {
         dashboardSetupStateManager.start();
       }
       if (openBrowser) {
-        // Wildcard bind addresses (0.0.0.0, ::) are not valid browser targets.
-        // The browser will refuse to navigate to them and silently 404, so
-        // launch the loopback URL instead — it routes back to the same listener.
-        const isWildcard =
-          dashboardHost === "0.0.0.0" || dashboardHost === "::";
-        const launchUrl = isWildcard
-          ? `http://127.0.0.1:${activePort}`
-          : url;
+        const launchUrl = getDashboardBrowserUrl(dashboardHost, activePort);
         try {
           const { exec } = require("child_process");
           const open = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";

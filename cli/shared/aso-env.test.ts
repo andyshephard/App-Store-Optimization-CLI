@@ -62,11 +62,24 @@ describe("aso-env", () => {
   });
 
   it("parses dashboard host and port from env", () => {
-    // ASO_ENV is a frozen snapshot at module load (production mode), so we
-    // verify the parsers independently via the exported defaults rather than
-    // asserting ASO_ENV.dashboardHost reflects live env mutations.
-    expect(ASO_DEFAULTS.dashboardHost).toBe("127.0.0.1");
-    expect(ASO_DEFAULTS.dashboardPort).toBe(3456);
+    process.env.ASO_DASHBOARD_HOST = " [::1] ";
+    process.env.ASO_DASHBOARD_PORT = "4807";
+
+    expect(ASO_ENV.dashboardHost).toBe("::1");
+    expect(ASO_ENV.dashboardPort).toBe(4807);
+  });
+
+  it.each(["4807oops", "12.5", "0x10", "-1", "65536", ""])(
+    "falls back for invalid dashboard port %p",
+    (value) => {
+      process.env.ASO_DASHBOARD_PORT = value;
+      expect(ASO_ENV.dashboardPort).toBe(ASO_DEFAULTS.dashboardPort);
+    }
+  );
+
+  it("allows port zero for an automatically assigned port", () => {
+    process.env.ASO_DASHBOARD_PORT = "0";
+    expect(ASO_ENV.dashboardPort).toBe(0);
   });
 
   it("parses owned app refresh max age hours and falls back for invalid values", () => {
