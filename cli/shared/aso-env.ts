@@ -2,7 +2,6 @@ import * as os from "os";
 import * as path from "path";
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".aso", "aso-db.sqlite");
-const DEFAULT_MIN_POPULARITY_FLOOR = 6;
 
 export const ASO_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,
@@ -19,7 +18,6 @@ export const ASO_DEFAULTS = {
   popularityCacheTtlHours: 720,
   appCacheTtlHours: 168,
   ownedAppDocRefreshMaxAgeHours: 24,
-  minPopularityFloor: DEFAULT_MIN_POPULARITY_FLOOR,
 } as const;
 
 export type AsoEnvConfig = {
@@ -40,7 +38,6 @@ export type AsoEnvConfig = {
   popularityCacheTtlHours: number;
   appCacheTtlHours: number;
   ownedAppDocRefreshMaxAgeMs: number;
-  minPopularityFloor: number;
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -54,12 +51,6 @@ function parseNonNegativeInt(raw: string | undefined, fallback: number): number 
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return parsed;
-}
-
-function parsePopularityFloor(raw: string | undefined, fallback: number): number {
-  const parsed = parseNonNegativeInt(raw, Number.NaN);
-  if (!Number.isFinite(parsed) || parsed > 100) return fallback;
   return parsed;
 }
 
@@ -153,10 +144,6 @@ function readAsoEnv(
       ASO_DEFAULTS.appCacheTtlHours
     ),
     ownedAppDocRefreshMaxAgeMs: ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000,
-    minPopularityFloor: parsePopularityFloor(
-      env.ASO_MIN_POPULARITY_FLOOR,
-      ASO_DEFAULTS.minPopularityFloor
-    ),
   };
 }
 

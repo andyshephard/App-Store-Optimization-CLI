@@ -54,7 +54,6 @@ Most common variables:
 - `ASO_APP_CACHE_TTL_HOURS`
 - `ASO_OWNED_APP_DOC_REFRESH_MAX_AGE_HOURS`
 - `ASO_KEYWORD_ENRICHMENT_CONCURRENCY`
-- `ASO_MIN_POPULARITY_FLOOR` (default `6`; lowers the MCP `minPopularity` schema floor for niches where index terms cluster below 6)
 
 Runtime files are local under `~/.aso`:
 - `aso-db.sqlite`
