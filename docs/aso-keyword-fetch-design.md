@@ -55,7 +55,7 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
 ## Machine-Friendly `--stdout` Contract
 - `aso keywords "<comma-separated-keywords>" --stdout` is keyword-only and intended for agents/machine calls.
 - Optional filters are available directly on CLI:
-  - `--min-popularity`
+  - `--min-popularity` (defaults to 6 if excluded, valid values are 0-100)
   - `--max-difficulty`
   - `--app-id` (association target; defaults to `research`)
   - `--exclude-existing` (skip target-app-associated keywords before evaluation)

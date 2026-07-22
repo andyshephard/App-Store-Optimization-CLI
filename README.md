@@ -105,7 +105,7 @@ aso
 
 - `--country <code>`: currently `US` only
 - `--primary-app-id <id>`: saved locally for future runs
-- `--min-popularity <number>`: filters out low-popularity keywords before enrichment
+- `--min-popularity <number>`: filters out low-popularity keywords before enrichment (values of 0-100 accepted, default of 6)
 - `--max-difficulty <number>`: filters out high-difficulty keywords after enrichment
 - `--app-id <id>`: associates keywords to this local app id (default: `research`)
 - `--exclude-existing`: skips keywords already associated with the target app/country before evaluation
