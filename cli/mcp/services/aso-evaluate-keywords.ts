@@ -6,7 +6,8 @@ import { sanitizeKeywords } from "../../domain/keywords/policy";
 
 const DEFAULT_MIN_POPULARITY = 6;
 const DEFAULT_MAX_DIFFICULTY = 70;
-const ABSOLUTE_MIN_POPULARITY = 6;
+const ABSOLUTE_MIN_POPULARITY = 0;
+const ABSOLUTE_MAX_POPULARITY = 100;
 
 type AsoToolKeywordItem = {
   keyword?: unknown;
@@ -32,8 +33,14 @@ export const asoEvaluateKeywordsInputSchema = z.object({
     .describe(
       "List of ASO search term candidates. Comma-separated entries are split and normalized."
     ),
-  minPopularity: z.number().min(ABSOLUTE_MIN_POPULARITY).optional(),
-  maxDifficulty: z.number().optional(),
+  minPopularity: z
+    .number()
+    .min(ABSOLUTE_MIN_POPULARITY)
+    .max(ABSOLUTE_MAX_POPULARITY)
+    .optional(),
+  maxDifficulty: z
+    .number()
+    .optional(),
   appId: z
     .string()
     .trim()
@@ -166,11 +173,9 @@ function buildFailureResult(message: string) {
 }
 
 export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
-  const minPopularity = Math.max(
-    args.minPopularity ?? DEFAULT_MIN_POPULARITY,
-    ABSOLUTE_MIN_POPULARITY
-  );
+  const minPopularity = args.minPopularity ?? DEFAULT_MIN_POPULARITY;
   const maxDifficulty = args.maxDifficulty ?? DEFAULT_MAX_DIFFICULTY;
+
   const appId = args.appId;
   const excludeExisting = args.excludeExisting ?? args.excludeAssociated ?? false;
   const providedKeywords = splitKeywords(args.keywords);

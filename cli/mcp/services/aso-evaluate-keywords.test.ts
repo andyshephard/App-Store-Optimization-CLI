@@ -199,13 +199,56 @@ describe("aso_evaluate_keywords service", () => {
     ]);
   });
 
-  it("rejects minPopularity lower than 6 at MCP schema boundary", () => {
-    const parsed = asoEvaluateKeywordsInputSchema.safeParse({
-      keywords: ["sleep"],
-      minPopularity: 5,
+  // test boundaries for minPopularity
+  describe.each`
+    minPopularity | expectedResult
+    ${-1}         | ${false}
+    ${0}          | ${true}
+    ${100}        | ${true}
+    ${101}        | ${false}
+  `('With a minPopularity of $minPopularity', ({ minPopularity, expectedResult }) => {
+    it(`returns ${expectedResult ? "valid" : "invalid"} schema result`, () => {
+      const parsed = asoEvaluateKeywordsInputSchema.safeParse({
+        keywords: ["sleep"],
+        minPopularity,
+      });
+
+      expect(parsed.success).toBe(expectedResult); 
+    });
+  });
+
+  it("returns default minPopularity when not provided", async () => {
+    mockRunAsoCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        items: [{ keyword: "sleep", popularity: 30, difficulty: 20 }],
+        failedKeywords: [],
+        filteredOut: [
+          { keyword: "existing", reason: "already_associated" },
+        ],
+      }),
+      stderr: "",
+      exitCode: 0,
     });
 
-    expect(parsed.success).toBe(false);
+    await handleAsoEvaluateKeywords({
+      keywords: ["sleep", "existing"],
+      appId: "123456789",
+      excludeExisting: true,
+      minPopularity: undefined, // explicitly undefined to test default behavior
+    });
+
+    expect(mockRunAsoCommand).toHaveBeenCalledWith([
+      "keywords",
+      "sleep,existing",
+      "--stdout",
+      "--min-popularity",
+      "6",
+      "--max-difficulty",
+      "70",
+      "--app-id",
+      "123456789",
+      "--exclude-existing",
+    ]);
   });
 
   it("returns MCP error when stdout is not strict envelope payload", async () => {
