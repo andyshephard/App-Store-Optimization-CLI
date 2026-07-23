@@ -1,7 +1,10 @@
 import * as os from "os";
 import * as path from "path";
+import { normalizeDashboardBindHost } from "./dashboard-network";
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".aso", "aso-db.sqlite");
+const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+const DEFAULT_DASHBOARD_PORT = 3456;
 
 export const ASO_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,
@@ -18,6 +21,8 @@ export const ASO_DEFAULTS = {
   popularityCacheTtlHours: 720,
   appCacheTtlHours: 168,
   ownedAppDocRefreshMaxAgeHours: 24,
+  dashboardHost: DEFAULT_DASHBOARD_HOST,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
 } as const;
 
 export type AsoEnvConfig = {
@@ -38,6 +43,8 @@ export type AsoEnvConfig = {
   popularityCacheTtlHours: number;
   appCacheTtlHours: number;
   ownedAppDocRefreshMaxAgeMs: number;
+  dashboardHost: string;
+  dashboardPort: number;
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -76,6 +83,23 @@ function parseTrimmed(raw: string | undefined): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function parseBindHost(raw: string | undefined): string {
+  const trimmed = parseTrimmed(raw);
+  if (!trimmed) return ASO_DEFAULTS.dashboardHost;
+  return normalizeDashboardBindHost(trimmed);
+}
+
+function parsePort(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 65535) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function parseEnabled(raw: string | undefined): boolean {
@@ -144,6 +168,8 @@ function readAsoEnv(
       ASO_DEFAULTS.appCacheTtlHours
     ),
     ownedAppDocRefreshMaxAgeMs: ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000,
+    dashboardHost: parseBindHost(env.ASO_DASHBOARD_HOST),
+    dashboardPort: parsePort(env.ASO_DASHBOARD_PORT, ASO_DEFAULTS.dashboardPort),
   };
 }
 

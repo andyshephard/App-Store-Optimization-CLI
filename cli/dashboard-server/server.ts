@@ -57,12 +57,16 @@ import {
 } from "./apps-handler";
 import { fetchOwnedAppSnapshotsFromApi } from "./owned-app-details";
 import { ASO_ENV } from "../shared/aso-env";
+import {
+  formatDashboardHttpUrl,
+  getDashboardBrowserUrl,
+  getDashboardExposureWarning,
+} from "../shared/dashboard-network";
 import type {
   AsoInteractivePrompt,
   AsoInteractivePromptResponse,
 } from "../shared/aso-interactive-prompts";
 
-const DEFAULT_PORT = 3456;
 const DEFAULT_APP_DOCS_HYDRATION_COUNTRY = DEFAULT_ASO_COUNTRY;
 const DASHBOARD_PUBLIC_DIR = path.resolve(__dirname, "dashboard-public");
 const DASHBOARD_RUNTIME_CONFIG_PATH = "/runtime-config.js";
@@ -747,7 +751,9 @@ export function createServer(): http.Server {
 export function startDashboard(openBrowser: boolean = true): Promise<never> {
   return new Promise((_, reject) => {
     const server = createServer();
-    let boundPort = DEFAULT_PORT;
+    const dashboardHost = ASO_ENV.dashboardHost;
+    const dashboardPort = ASO_ENV.dashboardPort;
+    let boundPort = dashboardPort;
     let retriedWithDynamicPort = false;
 
     server.on("error", (err: NodeJS.ErrnoException) => {
@@ -755,9 +761,9 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
         retriedWithDynamicPort = true;
         boundPort = 0;
         logger.debug(
-          `ASO dashboard port ${DEFAULT_PORT} is busy; retrying with an available local port.`
+          `ASO dashboard port ${dashboardPort} is busy; retrying with an available local port.`
         );
-        server.listen(0, "127.0.0.1");
+        server.listen(0, dashboardHost);
         return;
       }
 
@@ -774,11 +780,11 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       }
       if (err.code === "EACCES" || err.code === "EPERM") {
         logger.error(
-          `ASO dashboard failed to start: cannot bind to 127.0.0.1:${boundPort} (${err.code}).`
+          `ASO dashboard failed to start: cannot bind to ${dashboardHost}:${boundPort} (${err.code}).`
         );
         reject(
           new Error(
-            `Cannot bind dashboard to 127.0.0.1:${boundPort} (${err.code}).`
+            `Cannot bind dashboard to ${dashboardHost}:${boundPort} (${err.code}).`
           )
         );
         return;
@@ -786,24 +792,30 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       reject(err);
     });
 
-    server.listen(DEFAULT_PORT, "127.0.0.1", () => {
+    server.listen(dashboardPort, dashboardHost, () => {
       const address = server.address();
       const activePort =
         address && typeof address === "object" && "port" in address
           ? address.port
           : boundPort;
-      const url = `http://127.0.0.1:${activePort}`;
+      const url = formatDashboardHttpUrl(dashboardHost, activePort);
       logger.info(`ASO Dashboard: ${url}`);
+      const exposureWarning = getDashboardExposureWarning(
+        dashboardHost,
+        activePort
+      );
+      if (exposureWarning) logger.warn(exposureWarning);
       if (getConfiguredAsoAdamId()) {
         startConfiguredKeywordRefresh();
       } else {
         dashboardSetupStateManager.start();
       }
       if (openBrowser) {
+        const launchUrl = getDashboardBrowserUrl(dashboardHost, activePort);
         try {
           const { exec } = require("child_process");
           const open = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-          exec(`${open} ${url}`);
+          exec(`${open} ${launchUrl}`);
         } catch {
           // ignore
         }
