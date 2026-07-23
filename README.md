@@ -166,7 +166,7 @@ Failure example:
 This package also installs `aso-mcp` with tool: `aso_evaluate_keywords`.
 
 `aso_evaluate_keywords` runs `aso keywords ... --stdout` with default filters:
-- `minPopularity = 6` (floor: `6`)
+- `minPopularity = 6` when omitted; accepts explicit values from `0` to `100`
 - `maxDifficulty = 70`
 - `excludeExisting = false`; set `true` to return only keywords not already associated with the target app/country
 

@@ -199,13 +199,47 @@ describe("aso_evaluate_keywords service", () => {
     ]);
   });
 
-  it("rejects minPopularity lower than 6 at MCP schema boundary", () => {
-    const parsed = asoEvaluateKeywordsInputSchema.safeParse({
+  describe.each`
+    minPopularity | expectedResult
+    ${-1}         | ${false}
+    ${0}          | ${true}
+    ${100}        | ${true}
+    ${101}        | ${false}
+  `('With a minPopularity of $minPopularity', ({ minPopularity, expectedResult }) => {
+    it(`returns ${expectedResult ? "valid" : "invalid"} schema result`, () => {
+      const parsed = asoEvaluateKeywordsInputSchema.safeParse({
+        keywords: ["sleep"],
+        minPopularity,
+      });
+
+      expect(parsed.success).toBe(expectedResult);
+    });
+  });
+
+  it("forwards explicit minPopularity below the default", async () => {
+    mockRunAsoCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        items: [{ keyword: "sleep", popularity: 30, difficulty: 20 }],
+        failedKeywords: [],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await handleAsoEvaluateKeywords({
       keywords: ["sleep"],
       minPopularity: 5,
     });
 
-    expect(parsed.success).toBe(false);
+    expect(mockRunAsoCommand).toHaveBeenCalledWith([
+      "keywords",
+      "sleep",
+      "--stdout",
+      "--min-popularity",
+      "5",
+      "--max-difficulty",
+      "70",
+    ]);
   });
 
   it("returns MCP error when stdout is not strict envelope payload", async () => {

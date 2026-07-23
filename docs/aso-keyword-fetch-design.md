@@ -222,7 +222,7 @@ Keyword-level difficulty:
 - Input: required `keywords` array (strings). Each item can be a single-word or long-tail phrase. Comma-separated entries are normalized and split.
 - Input: optional `appId` string. When provided, accepted keywords are associated to that local app id instead of the default research app.
 - Input: optional `excludeExisting` boolean. When true, MCP passes `--exclude-existing` so only keywords not already associated with the target app/country are evaluated and returned.
-- Input: optional `minPopularity` and `maxDifficulty`; defaults are `6` and `70` with absolute min-popularity floor `6`.
+- Input: optional `minPopularity` and `maxDifficulty`; defaults are `6` and `70`. Explicit `minPopularity` values from `0` to `100` are accepted.
 - Max request size: `100` provided keywords (enforced by MCP handler)
 - Output is a JSON array of accepted keywords only (no rejected list). Each row includes:
   - `keyword`: normalized keyword phrase.

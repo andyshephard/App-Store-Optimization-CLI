@@ -5,7 +5,7 @@ Use `aso_evaluate_keywords` to evaluate explicit ASO keyword candidates (US stor
 ## Tool Input
 
 - `keywords`: array of ASO search term candidates (single-word or long-tail phrases).
-- `minPopularity` (optional): minimum popularity threshold.
+- `minPopularity` (optional): minimum popularity threshold from `0` to `100`; defaults to `6`.
 - `maxDifficulty` (optional): maximum difficulty threshold.
 - `appId` (optional): local app id for association (defaults to research app when omitted).
 - `excludeExisting` (optional): when true, return only keywords not already associated with the target app/country.
