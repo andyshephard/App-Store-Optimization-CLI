@@ -105,7 +105,7 @@ aso
 
 - `--country <code>`: currently `US` only
 - `--primary-app-id <id>`: saved locally for future runs
-- `--min-popularity <number>`: filters out low-popularity keywords before enrichment (values of 0-100 accepted, default of 6)
+- `--min-popularity <number>`: filters out low-popularity keywords before enrichment
 - `--max-difficulty <number>`: filters out high-difficulty keywords after enrichment
 - `--app-id <id>`: associates keywords to this local app id (default: `research`)
 - `--exclude-existing`: skips keywords already associated with the target app/country before evaluation
@@ -166,7 +166,7 @@ Failure example:
 This package also installs `aso-mcp` with tool: `aso_evaluate_keywords`.
 
 `aso_evaluate_keywords` runs `aso keywords ... --stdout` with default filters:
-- `minPopularity = 6` (floor: `6`)
+- `minPopularity = 6` when omitted; accepts explicit values from `0` to `100`
 - `maxDifficulty = 70`
 - `excludeExisting = false`; set `true` to return only keywords not already associated with the target app/country
 

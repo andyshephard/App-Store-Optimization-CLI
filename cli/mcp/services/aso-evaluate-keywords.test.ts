@@ -199,7 +199,6 @@ describe("aso_evaluate_keywords service", () => {
     ]);
   });
 
-  // test boundaries for minPopularity
   describe.each`
     minPopularity | expectedResult
     ${-1}         | ${false}
@@ -213,41 +212,33 @@ describe("aso_evaluate_keywords service", () => {
         minPopularity,
       });
 
-      expect(parsed.success).toBe(expectedResult); 
+      expect(parsed.success).toBe(expectedResult);
     });
   });
 
-  it("returns default minPopularity when not provided", async () => {
+  it("forwards explicit minPopularity below the default", async () => {
     mockRunAsoCommand.mockResolvedValue({
       stdout: JSON.stringify({
         items: [{ keyword: "sleep", popularity: 30, difficulty: 20 }],
         failedKeywords: [],
-        filteredOut: [
-          { keyword: "existing", reason: "already_associated" },
-        ],
       }),
       stderr: "",
       exitCode: 0,
     });
 
     await handleAsoEvaluateKeywords({
-      keywords: ["sleep", "existing"],
-      appId: "123456789",
-      excludeExisting: true,
-      minPopularity: undefined, // explicitly undefined to test default behavior
+      keywords: ["sleep"],
+      minPopularity: 5,
     });
 
     expect(mockRunAsoCommand).toHaveBeenCalledWith([
       "keywords",
-      "sleep,existing",
+      "sleep",
       "--stdout",
       "--min-popularity",
-      "6",
+      "5",
       "--max-difficulty",
       "70",
-      "--app-id",
-      "123456789",
-      "--exclude-existing",
     ]);
   });
 
