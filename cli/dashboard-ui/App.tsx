@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card, Input } from "./ui-react";
 import { DEFAULT_RESEARCH_APP_ID } from "../shared/aso-research";
 import {
-  DEFAULT_ASO_COUNTRY,
   apiGet,
   apiWrite,
   buildAppStoreUrl,
   buildTopAppRows,
+  countryFlagEmoji,
   copyTextToClipboard,
   formatCalendarDate,
   formatCount,
@@ -30,6 +30,8 @@ import { sanitizeKeywords } from "../domain/keywords/policy";
 import { useAuthFlow } from "./hooks/use-auth-flow";
 import { usePrimaryAppSetupFlow } from "./hooks/use-primary-app-setup-flow";
 import { useAddAppSearch } from "./hooks/use-add-app-search";
+import { useStorefronts } from "./hooks/use-storefronts";
+import { useTheme } from "./hooks/use-theme";
 import { StatusBanners } from "./components/status-banners";
 import { AsoPromptDialog } from "./components/aso-prompt-dialog";
 import { KeywordActionMenu } from "./components/keyword-action-menu";
@@ -174,6 +176,7 @@ type Row = {
   updatedAt?: string;
   previousPosition: number | null;
   currentPosition: number | null;
+  orderedAppIds: string[];
   keywordStatus: "ok" | "pending" | "failed";
 };
 type TopAppRow = AppDoc & {
@@ -213,13 +216,15 @@ const DEFAULT_BRAND_FILTER = DASHBOARD_FILTER_DEFAULTS.brand;
 const DEFAULT_FAVORITE_FILTER = DASHBOARD_FILTER_DEFAULTS.favorite;
 const DEFAULT_MIN_RANK = DASHBOARD_FILTER_DEFAULTS.minRank;
 const DEFAULT_MAX_RANK = DASHBOARD_FILTER_DEFAULTS.maxRank;
-const TOP_APPS_DIALOG_LIMIT = 10;
+const TOP_APPS_DIALOG_LIMIT = 100;
 const SELECTED_APP_STORAGE_KEY = "aso-dashboard:selected-app-id";
 const MOBILE_BREAKPOINT = "(max-width: 980px)";
 const STATUS_MESSAGE_TIMEOUT_MS = 4000;
 const STARTUP_REFRESH_STATUS_POLL_INTERVAL_SECONDS = 10;
 const SIDEBAR_SELECTION_CONTROL_SELECTOR = ".app-id-copy-target, .app-id-copy-icon";
 const KEYWORDS_PAGE_SIZE = 100;
+const TOP_APPS_IN_TABLE = 5;
+const APP_ICON_FETCH_LIMIT = 120;
 const POSITION_HISTORY_CHART_WIDTH = 760;
 const POSITION_HISTORY_CHART_HEIGHT = 250;
 const POSITION_HISTORY_RANK_MIN = 1;
@@ -380,6 +385,115 @@ function SettingsIcon() {
   );
 }
 
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 2.6v2.2M12 19.2v2.2M4.2 12H2M22 12h-2.2M6.1 6.1 4.6 4.6M19.4 19.4l-1.5-1.5M17.9 6.1l1.5-1.5M4.6 19.4l1.5-1.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path
+        d="M20.5 14.4A8.6 8.6 0 0 1 9.6 3.5a8.6 8.6 0 1 0 10.9 10.9Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function MetricBar({
+  value,
+  tone,
+}: {
+  value: number | null;
+  tone: "popularity" | "difficulty";
+}) {
+  if (value == null) return <span className="metric-empty">-</span>;
+  const clamped = Math.max(0, Math.min(100, value));
+  // For popularity a low score is the weak one, for difficulty a high score is.
+  const severity = tone === "difficulty" ? clamped : 100 - clamped;
+  const band = severity >= 66 ? "high" : severity >= 33 ? "mid" : "low";
+  return (
+    <span className="metric">
+      <span className="metric-value">{Math.round(value)}</span>
+      <span className="metric-track">
+        <span
+          className={`metric-fill metric-fill--${band}`}
+          style={{ width: `${clamped}%` }}
+        />
+      </span>
+    </span>
+  );
+}
+
+function TopAppsCell({
+  keyword,
+  appIds,
+  iconsById,
+  onOpen,
+}: {
+  keyword: string;
+  appIds: string[];
+  iconsById: Record<string, string | null>;
+  onOpen: (keyword: string) => void | Promise<void>;
+}) {
+  const top = appIds.slice(0, TOP_APPS_IN_TABLE);
+  // A keyword still being enriched has no ranked ids yet; keep the dialog
+  // reachable rather than rendering a dead cell.
+  if (top.length === 0) {
+    return (
+      <button
+        type="button"
+        className="top-apps-empty"
+        aria-label={`Show top apps for ${keyword}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void onOpen(keyword);
+        }}
+      >
+        View
+      </button>
+    );
+  }
+  return (
+    <span className="top-apps-icons">
+      {top.map((appId, index) => {
+        const icon = iconsById[appId];
+        return (
+          <button
+            key={appId}
+            type="button"
+            className="top-apps-icon"
+            title={`Top apps for "${keyword}"`}
+            aria-label={`Show top apps for ${keyword}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onOpen(keyword);
+            }}
+          >
+            {icon ? (
+              <img src={icon} alt="" loading="lazy" />
+            ) : (
+              <span className="top-apps-icon-fallback">{index + 1}</span>
+            )}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 function isSidebarSelectionControlTarget(target: EventTarget | null): boolean {
   if (target instanceof Element) {
     return target.closest(SIDEBAR_SELECTION_CONTROL_SELECTOR) !== null;
@@ -391,6 +505,9 @@ function isSidebarSelectionControlTarget(target: EventTarget | null): boolean {
 }
 
 export function App() {
+  const { storefronts, country, setCountry, hasMultipleStorefronts } =
+    useStorefronts();
+  const { isDark, toggleTheme } = useTheme();
   const [apps, setApps] = useState<AppItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_RESEARCH_APP_ID;
@@ -462,6 +579,9 @@ export function App() {
     useState<PositionHistoryHoverPoint | null>(null);
   const [startupRefreshState, setStartupRefreshState] =
     useState<StartupRefreshStatusPayload | null>(null);
+  const [appIconsById, setAppIconsById] = useState<Record<string, string | null>>(
+    {}
+  );
   const [displayLocale] = useState(() => getBrowserLocale());
   const isInitializedRef = useRef(false);
   const addKeywordsInputRef = useRef<HTMLInputElement | null>(null);
@@ -569,7 +689,7 @@ export function App() {
     closeAddAppPopover,
     toggleAddCandidateSelection,
     removeSelectedCandidates,
-  } = useAddAppSearch();
+  } = useAddAppSearch(country);
   const researchApps = apps.filter((app) => app.kind === "research");
   const ownedApps = apps.filter((app) => app.kind === "owned");
   const existingOwnedAppIds = useMemo(
@@ -607,10 +727,12 @@ export function App() {
   );
 
   const loadApps = useCallback(async (): Promise<AppItem[]> => {
-    const list = await apiGet<AppItem[]>(`/api/apps`);
+    const list = await apiGet<AppItem[]>(
+      `/api/apps?country=${encodeURIComponent(country)}`
+    );
     setApps(list);
     return list;
-  }, []);
+  }, [country]);
 
   const restartStartupRefresh = useCallback(async (options?: {
     showCompletionFeedback?: boolean;
@@ -722,6 +844,7 @@ export function App() {
     const normalizedMinRank = showRankingColumns ? minRank : DEFAULT_MIN_RANK;
     const normalizedMaxRank = showRankingColumns ? maxRank : DEFAULT_MAX_RANK;
     return [
+      country,
       appId,
       normalizedKeywordFilter,
       String(minPopularity),
@@ -734,6 +857,7 @@ export function App() {
       sortDir,
     ].join("|");
   }, [
+    country,
     brandFilter,
     favoriteFilter,
     keywordFilter,
@@ -754,7 +878,7 @@ export function App() {
   const loadKeywords = useCallback(async (appId: string, requestedPage: number = 1) => {
     const requestId = ++keywordLoadRequestIdRef.current;
     const params = new URLSearchParams({
-      country: DEFAULT_ASO_COUNTRY,
+      country,
       appId,
       page: String(Math.max(1, requestedPage)),
       pageSize: String(KEYWORDS_PAGE_SIZE),
@@ -797,6 +921,7 @@ export function App() {
         updatedAt: item.updatedAt,
         previousPosition: p?.previousPosition ?? null,
         currentPosition: p?.currentPosition ?? null,
+        orderedAppIds: item.orderedAppIds ?? [],
         keywordStatus,
       } satisfies Row;
     });
@@ -824,6 +949,7 @@ export function App() {
         : rows.filter((row) => row.keywordStatus === "pending").length
     );
   }, [
+    country,
     brandFilter,
     favoriteFilter,
     keywordFilter,
@@ -836,9 +962,15 @@ export function App() {
     sortDir,
   ]);
 
+  // Also re-runs when the storefront changes, because `loadApps` closes over
+  // it: switching storefront is a full reload of apps and keywords. Loading
+  // starts with the persisted storefront rather than waiting for the storefront
+  // list; if that storefront is no longer enabled the server answers 400 and
+  // useStorefronts corrects the selection, which re-runs this effect.
   useEffect(() => {
     void (async () => {
       try {
+        setErrorText("");
         setLoadingText("Loading dashboard...");
         const list = await loadApps();
         setHasCachedData(true);
@@ -893,6 +1025,48 @@ export function App() {
     loadKeywords,
     selectedAppId,
   ]);
+
+  useEffect(() => {
+    const wanted = new Set<string>();
+    for (const row of keywords) {
+      for (const appId of row.orderedAppIds.slice(0, TOP_APPS_IN_TABLE)) {
+        if (appId && !(appId in appIconsById)) wanted.add(appId);
+      }
+    }
+    if (wanted.size === 0) return;
+
+    let cancelled = false;
+    const ids = Array.from(wanted).slice(0, APP_ICON_FETCH_LIMIT);
+    void apiGet<AppDoc[]>(
+      `/api/aso/apps?country=${encodeURIComponent(country)}&ids=${ids
+        .map((id) => encodeURIComponent(id))
+        .join(",")}`
+    )
+      .then((docs) => {
+        if (cancelled) return;
+        setAppIconsById((prev) => {
+          const next = { ...prev };
+          // Record every id asked for, including ones the API had no doc for,
+          // so a missing icon is not retried on every render.
+          for (const id of ids) next[id] = next[id] ?? null;
+          for (const doc of docs ?? []) {
+            if (doc?.appId) next[doc.appId] = getIconUrl(doc);
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAppIconsById((prev) => {
+          const next = { ...prev };
+          for (const id of ids) next[id] = next[id] ?? null;
+          return next;
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appIconsById, country, keywords]);
 
   useEffect(() => {
     document.title = `ASO Dashboard - ${selectedAppName}`;
@@ -1172,7 +1346,7 @@ export function App() {
         await apiWrite("DELETE", "/api/aso/keywords", {
           appId,
           keywords: selected,
-          country: DEFAULT_ASO_COUNTRY,
+          country,
         });
         setSelectedKeywords(new Set());
         setSelectionAnchor(null);
@@ -1185,7 +1359,7 @@ export function App() {
         setLoadingText("");
       }
     },
-    [keywordPage, loadApps, loadKeywords, setSelectionAnchor]
+    [country, keywordPage, loadApps, loadKeywords, setSelectionAnchor]
   );
 
   const onContextDelete = useCallback(
@@ -1210,7 +1384,7 @@ export function App() {
           appId: selectedAppId,
           keyword: rowKeyword,
           isFavorite: nextIsFavorite,
-          country: DEFAULT_ASO_COUNTRY,
+          country,
         });
         setKeywords((prev) =>
           prev.map((row) =>
@@ -1230,7 +1404,7 @@ export function App() {
         });
       }
     },
-    [keywordPage, loadKeywords, selectedAppId]
+    [country, keywordPage, loadKeywords, selectedAppId]
   );
 
   const deleteSidebarApp = useCallback(
@@ -1570,7 +1744,7 @@ export function App() {
 
     await submitKeywords({
       appId: selectedAppId,
-      country: DEFAULT_ASO_COUNTRY,
+      country,
       keywords: kwsToAdd,
       inputKeywords: normalizedKeywords,
     });
@@ -1645,10 +1819,10 @@ export function App() {
   const onRetryFailedKeywords = useCallback(async () => {
     await retryFailedKeywords({
       appId: selectedAppId,
-      country: DEFAULT_ASO_COUNTRY,
+      country,
       failedCount: failedKeywordCount,
     });
-  }, [failedKeywordCount, retryFailedKeywords, selectedAppId]);
+  }, [country, failedKeywordCount, retryFailedKeywords, selectedAppId]);
 
   useEffect(() => {
     if (authStatus !== "succeeded") return;
@@ -1740,6 +1914,7 @@ export function App() {
             const added = await apiWrite<AddedAppPayload>("POST", "/api/apps", {
               type: "app",
               appId,
+              country,
             });
             addedIds.push(added.id);
             succeededKeys.push(candidate.key);
@@ -1804,7 +1979,7 @@ export function App() {
     setTopAppsLoading(true);
     try {
       const data = await apiGet<KeywordDetails>(
-        `/api/aso/top-apps?country=${DEFAULT_ASO_COUNTRY}&keyword=${encodeURIComponent(rowKeyword)}&limit=${TOP_APPS_DIALOG_LIMIT}`
+        `/api/aso/top-apps?country=${encodeURIComponent(country)}&keyword=${encodeURIComponent(rowKeyword)}&limit=${TOP_APPS_DIALOG_LIMIT}`
       );
       setTopAppsRows(buildTopAppRows(data));
     } catch (error) {
@@ -1822,7 +1997,7 @@ export function App() {
     setPositionHistoryLoading(true);
     try {
       const data = await apiGet<KeywordPositionHistoryPayload>(
-        `/api/aso/keywords/history?country=${DEFAULT_ASO_COUNTRY}&appId=${encodeURIComponent(
+        `/api/aso/keywords/history?country=${encodeURIComponent(country)}&appId=${encodeURIComponent(
           selectedAppId
         )}&keyword=${encodeURIComponent(rowKeyword)}`
       );
@@ -2340,31 +2515,70 @@ export function App() {
               <img src="/aso-sidebar-icon.png" alt="" className="sidebar-brand-icon" aria-hidden="true" />
               <h1>ASO Dashboard</h1>
             </div>
-            <Button
-              id="dashboard-settings-toggle"
-              variant="outline"
-              size="sm"
-              type="button"
-              aria-label="Open settings"
-              title="Settings"
-              onClick={openDashboardSettings}
-            >
-              <SettingsIcon />
-            </Button>
+            <div className="sidebar-header-actions">
+              {hasMultipleStorefronts ? (
+                <select
+                  id="storefront-select"
+                  className="storefront-select"
+                  aria-label="Storefront"
+                  title="Storefront"
+                  value={country}
+                  disabled={isInitialLoad}
+                  onChange={(event) => setCountry(event.target.value)}
+                >
+                  {storefronts.map((storefront) => (
+                    <option
+                      key={storefront.country}
+                      value={storefront.country}
+                      title={storefront.name}
+                    >
+                      {`${countryFlagEmoji(storefront.country)} ${storefront.country}`}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <Button
+                id="theme-toggle"
+                variant="outline"
+                size="sm"
+                type="button"
+                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                title={isDark ? "Light mode" : "Dark mode"}
+                onClick={toggleTheme}
+              >
+                {isDark ? <SunIcon /> : <MoonIcon />}
+              </Button>
+              <Button
+                id="dashboard-settings-toggle"
+                variant="outline"
+                size="sm"
+                type="button"
+                aria-label="Open settings"
+                title="Settings"
+                onClick={openDashboardSettings}
+              >
+                <SettingsIcon />
+              </Button>
+            </div>
           </div>
           <p className="sidebar-subtitle"></p>
           <div className="sidebar-actions">
             <div className="onboarding-target-slot">
-              <Button
-                id="add-app-toggle"
-                type="button"
-                className={showAddAppOnboardingHighlight ? "onboarding-highlight" : ""}
-                aria-expanded={isAddAppPopoverOpen}
-                aria-label="Add app"
-                onClick={openAddAppPopover}
-              >
-                +
-              </Button>
+              <span className="add-app-tooltip-anchor">
+                <Button
+                  id="add-app-toggle"
+                  type="button"
+                  className={showAddAppOnboardingHighlight ? "onboarding-highlight" : ""}
+                  aria-expanded={isAddAppPopoverOpen}
+                  aria-label="Add new app"
+                  onClick={openAddAppPopover}
+                >
+                  +
+                </Button>
+                <span className="add-app-tooltip" role="tooltip">
+                  Add new app
+                </span>
+              </span>
             </div>
           </div>
         </div>
@@ -2864,17 +3078,6 @@ export function App() {
                   </th>
                   <th
                     className="col-middle"
-                    data-sort-key="brand"
-                  >
-                    <div className="column-filter-header">
-                      <span className="sort-label">
-                        <span>Brand</span>
-                      </span>
-                      {renderFilterDropdown("brand", "Brand")}
-                    </div>
-                  </th>
-                  <th
-                    className="col-middle"
                     data-sort-key="favorite"
                   >
                     <div className="column-filter-header">
@@ -2900,6 +3103,9 @@ export function App() {
                   >
                     {renderSortLabel("updatedAt")}
                   </th>
+                  <th className="col-top-apps" data-sort-key="topApps">
+                    Top Apps
+                  </th>
                 </tr>
               </thead>
               <tbody id="keywords-tbody">
@@ -2917,27 +3123,22 @@ export function App() {
                       <td className="col-keyword">
                         <div className="keyword-cell-content">
                           <span className="keyword-cell-label">{row.keyword}</span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="top-apps-trigger"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void onOpenTopApps(row.keyword);
-                            }}
-                          >
-                            Top Apps
-                          </Button>
                         </div>
                       </td>
-                      <td className="num col-middle">{row.popularity > 0 ? row.popularity : "-"}</td>
                       <td className="num col-middle">
-                        {row.keywordStatus === "failed"
-                          ? "-"
-                          : row.difficultyScore == null
-                            ? "Calculating..."
-                            : Math.round(row.difficultyScore)}
+                        <MetricBar
+                          value={row.popularity > 0 ? row.popularity : null}
+                          tone="popularity"
+                        />
+                      </td>
+                      <td className="num col-middle">
+                        {row.keywordStatus === "failed" ? (
+                          <span className="metric-empty">-</span>
+                        ) : row.difficultyScore == null ? (
+                          <span className="metric-pending">Calculating...</span>
+                        ) : (
+                          <MetricBar value={row.difficultyScore} tone="difficulty" />
+                        )}
                       </td>
                       {showRankingColumns ? (
                         <>
@@ -2982,9 +3183,6 @@ export function App() {
                         </>
                       ) : null}
                       <td className="num col-middle">{row.appCount ?? "-"}</td>
-                      <td className="col-middle">
-                        {row.isBrandKeyword ? "✓" : "-"}
-                      </td>
                       <td className="col-middle favorite-column">
                         <button
                           type="button"
@@ -3005,6 +3203,14 @@ export function App() {
                       </td>
                       <td className="updated-value">
                         {formatDate(row.updatedAt, displayLocale)}
+                      </td>
+                      <td className="col-top-apps">
+                        <TopAppsCell
+                          keyword={row.keyword}
+                          appIds={row.orderedAppIds ?? []}
+                          iconsById={appIconsById}
+                          onOpen={onOpenTopApps}
+                        />
                       </td>
                     </tr>
                   );
@@ -3093,7 +3299,7 @@ export function App() {
                   {topAppsRows.map((app) => {
                     const iconUrl = getIconUrl(app);
                     const subtitle = app.subtitle?.trim();
-                    const appStoreUrl = buildAppStoreUrl(app.appId, DEFAULT_ASO_COUNTRY);
+                    const appStoreUrl = buildAppStoreUrl(app.appId, country);
                     const releaseDate = formatCalendarDate(app.releaseDate, displayLocale) || "-";
                     const lastUpdateDate =
                       formatCalendarDate(app.currentVersionReleaseDate, displayLocale) || "-";

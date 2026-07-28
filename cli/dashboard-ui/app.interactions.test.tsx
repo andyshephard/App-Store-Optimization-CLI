@@ -104,7 +104,17 @@ function buildFetchMock(params: {
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
 
-    if (method === "GET" && url === "/api/apps") {
+    if (method === "GET" && url === "/api/aso/storefronts") {
+      return jsonResponse(200, {
+        success: true,
+        data: {
+          storefronts: [{ country: "US", name: "United States", isDefault: true }],
+          defaultCountry: "US",
+        },
+      });
+    }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
       appsCallCount += 1;
       return jsonResponse(200, {
         success: true,
@@ -236,7 +246,7 @@ function buildFetchMock(params: {
       });
     }
 
-    if (method === "POST" && url === "/api/apps") {
+    if (method === "POST" && url.split("?")[0] === "/api/apps") {
       params.onPostApps?.(body);
       return jsonResponse(201, {
         success: true,
@@ -247,7 +257,7 @@ function buildFetchMock(params: {
       });
     }
 
-    if (method === "DELETE" && url === "/api/apps") {
+    if (method === "DELETE" && url.split("?")[0] === "/api/apps") {
       params.onDeleteApps?.(body);
       return jsonResponse(200, {
         success: true,
@@ -337,10 +347,10 @@ describe("dashboard app interactions", () => {
     expect(
       screen.getByPlaceholderText("Add keywords (comma-separated)")
     ).toHaveClass("onboarding-highlight");
-    expect(screen.getByRole("button", { name: "Add app" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Add new app" })).toHaveClass(
       "onboarding-highlight"
     );
-    fireEvent.click(screen.getByRole("button", { name: "Add app" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add new app" }));
     await screen.findByRole("dialog", { name: "Add app" });
 
     fireEvent.change(
@@ -355,10 +365,10 @@ describe("dashboard app interactions", () => {
     fireEvent.click(appResult);
     fireEvent.click(screen.getByRole("button", { name: "Add Selected (1)" }));
 
-    await waitFor(() => expect(postedPayload).toEqual({ type: "app", appId: "123" }));
+    await waitFor(() => expect(postedPayload).toEqual({ type: "app", appId: "123", country: "US" }));
     await screen.findByText("Added 1 item.");
     expect(screen.getByText("Owned App")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add app" })).not.toHaveClass(
+    expect(screen.getByRole("button", { name: "Add new app" })).not.toHaveClass(
       "onboarding-highlight"
     );
     expect(
@@ -539,7 +549,7 @@ describe("dashboard app interactions", () => {
     render(<App />);
 
     const keywordCell = await screen.findByText("meditation");
-    fireEvent.click(screen.getByRole("button", { name: "Top Apps" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Show top apps for/ })[0]);
     const dialog = await screen.findByRole("dialog", {
       name: 'Top apps for meditation',
     });

@@ -265,7 +265,22 @@ function buildFetchMock(options: FetchMockOptions) {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
 
-    if (method === "GET" && url === "/api/apps") {
+    if (method === "GET" && url === "/api/aso/storefronts") {
+      return jsonResponse({
+        status: 200,
+        body: {
+          success: true,
+          data: {
+            storefronts: [
+              { country: "US", name: "United States", isDefault: true },
+            ],
+            defaultCountry: "US",
+          },
+        },
+      });
+    }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
       return jsonResponse({
         status: 200,
         body: { success: true, data: withAppKinds(options.apps) },
@@ -349,7 +364,12 @@ describe("dashboard keyword columns", () => {
 
     expect(screen.queryByRole("columnheader", { name: "Rank" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Change" })).not.toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: /Brand/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /Brand/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Top Apps" })
+    ).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Added" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Updated" })).toBeInTheDocument();
     expect(
@@ -361,10 +381,10 @@ describe("dashboard keyword columns", () => {
       "popularity",
       "difficulty",
       "appCount",
-      "brand",
       "favorite",
       "addedAt",
       "updatedAt",
+      "topApps",
     ]);
   });
 
@@ -398,7 +418,12 @@ describe("dashboard keyword columns", () => {
 
     expect(screen.getByRole("columnheader", { name: "Rank" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Change" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: /Brand/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /Brand/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Top Apps" })
+    ).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Added" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Updated" })).toBeInTheDocument();
     expect(
@@ -412,10 +437,10 @@ describe("dashboard keyword columns", () => {
       "rank",
       "change",
       "appCount",
-      "brand",
       "favorite",
       "addedAt",
       "updatedAt",
+      "topApps",
     ]);
   });
 
@@ -611,7 +636,22 @@ describe("dashboard keyword columns", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+      return jsonResponse({
+        status: 200,
+        body: {
+          success: true,
+          data: {
+            storefronts: [
+              { country: "US", name: "United States", isDefault: true },
+            ],
+            defaultCountry: "US",
+          },
+        },
+      });
+    }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({
           status: 200,
           body: {

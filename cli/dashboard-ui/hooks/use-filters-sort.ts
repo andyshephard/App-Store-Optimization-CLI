@@ -106,10 +106,10 @@ function getStoredFilterState(): typeof DEFAULT_FILTER_STATE {
       DASHBOARD_FILTER_BOUNDS.maxRank.min,
       DASHBOARD_FILTER_BOUNDS.maxRank.max
     );
-    const parsedBrand = (parsed as { brand?: unknown }).brand;
-    const brand = isBrandFilter(parsedBrand)
-      ? parsedBrand
-      : DEFAULT_FILTER_STATE.brand;
+    // The Brand column and its filter control were removed from the table, so
+    // a brand filter persisted by an older build would silently hide rows with
+    // no way to see why. Always start from the default.
+    const brand = DEFAULT_FILTER_STATE.brand;
     const parsedFavorite = (parsed as { favorite?: unknown }).favorite;
     const favorite = isFavoriteFilter(parsedFavorite)
       ? parsedFavorite
@@ -150,6 +150,7 @@ type FilterableRow = {
   previousPosition: number | null;
   currentPosition: number | null;
   keywordStatus: "ok" | "pending" | "failed";
+  orderedAppIds?: string[];
 };
 
 type UseFiltersSortParams = {

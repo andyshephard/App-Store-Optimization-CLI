@@ -1,24 +1,114 @@
-:root {
+/*
+ * Light is the default; dark is opt-in via `data-theme="dark"` on <html>,
+ * which useTheme() sets from localStorage. Both blocks define the same
+ * variable names, so nothing downstream needs to know which theme is active.
+ *
+ * `color-scheme` matters as much as the custom properties: it is what makes
+ * native controls (the storefront <select>, scrollbars, focus rings) render
+ * light or dark to match.
+ */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
   --radius: 0.625rem;
-  --background: oklch(0.145 0.0207 219.48);
-  --foreground: oklch(0.98 0.01 250);
-  --card: oklch(0.15 0.02 250);
-  --card-foreground: oklch(0.98 0.01 250);
-  --popover: oklch(0.12 0.02 250);
-  --popover-foreground: oklch(0.98 0.01 250);
-  --primary: oklch(0.8603 0.0809 210.7);
-  --primary-foreground: oklch(0.09 0.02 250);
-  --secondary: oklch(0.8253 0.1706 79.94);
-  --secondary-foreground: oklch(0.1046 0 0);
-  --muted: oklch(0.2046 0 0);
-  --muted-foreground: oklch(0.9 0.015 250);
-  --accent: oklch(0.2692 0.0424 262.7);
-  --accent-foreground: oklch(0.98 0.01 250);
-  --destructive: oklch(0.65 0.2 15);
-  --border: oklch(0.25 0.02 250);
-  --input: oklch(0.25 0.02 250);
-  --ring: oklch(0.7 0.15 250);
-  --sidebar: oklch(0.12 0.02 250);
-  --sidebar-foreground: oklch(0.98 0.01 250);
-  --sidebar-border: oklch(0.25 0.02 250);
+  --background: oklch(0.985 0.0015 250);
+  --foreground: oklch(0.23 0.012 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.23 0.012 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.23 0.012 250);
+  --primary: oklch(0.58 0.192 262);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.79 0.147 76);
+  --secondary-foreground: oklch(0.28 0.05 76);
+  --muted: oklch(0.965 0.002 250);
+  --muted-foreground: oklch(0.53 0.014 250);
+  --accent: oklch(0.955 0.012 250);
+  --accent-foreground: oklch(0.28 0.02 250);
+  --destructive: oklch(0.58 0.21 25);
+  --border: oklch(0.915 0.004 250);
+  --input: oklch(0.9 0.005 250);
+  --ring: oklch(0.58 0.192 262);
+  --sidebar: oklch(0.968 0.002 250);
+  --sidebar-foreground: oklch(0.23 0.012 250);
+  --sidebar-border: oklch(0.915 0.004 250);
+
+  --surface-shadow: 0 1px 2px rgba(15, 23, 42, 0.06),
+    0 8px 24px rgba(15, 23, 42, 0.05);
+  --row-hover: oklch(0.972 0.004 250);
+  --row-selected: oklch(0.945 0.028 262);
+
+  /* Surface ramp. styles.css builds the shell out of these. */
+  --bg-0: oklch(0.985 0.0015 250);
+  --bg-1: oklch(1 0 0);
+  --bg-2: oklch(1 0 0);
+  --bg-3: oklch(0.972 0.002 250);
+  --bg-4: oklch(0.955 0.003 250);
+  --divider: oklch(0.925 0.004 250);
+  --row-odd: oklch(0.988 0.001 250);
+  --grid-line: rgba(15, 23, 42, 0.03);
+  --scrim: rgba(15, 23, 42, 0.32);
+  --ok: oklch(0.62 0.17 148);
+  --danger: oklch(0.58 0.21 25);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+
+  /* Metric bars: good -> middling -> bad. Kept separate from --secondary,
+     which is a blue in dark and would render "middling" as blue. */
+  --metric-track: oklch(0.9 0.004 250);
+  --metric-low: oklch(0.68 0.17 148);
+  --metric-mid: oklch(0.79 0.147 76);
+  --metric-high: oklch(0.62 0.2 25);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: #0b0b0f;
+  --foreground: #a0a0a0;
+  --card: #0f0f15;
+  --card-foreground: #e0e0e0;
+  --popover: #0f0f15;
+  --popover-foreground: #e0e0e0;
+  --primary: #70ace7;
+  --primary-foreground: #ffffff;
+  --secondary: #306197;
+  --secondary-foreground: #ffffff;
+  --muted: #121219;
+  --muted-foreground: #666666;
+  --accent: #87bdef;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: rgba(112, 172, 231, 0.34);
+  --sidebar: #0d0d12;
+  --sidebar-foreground: #a0a0a0;
+  --sidebar-border: rgba(255, 255, 255, 0.11);
+
+  --surface-shadow: 0 12px 42px rgba(0, 0, 0, 0.28);
+  --row-hover: #162336;
+  --row-selected: #1e3048;
+
+  --bg-0: #0b0b0f;
+  --bg-1: #0d0d12;
+  --bg-2: #0f0f15;
+  --bg-3: #121219;
+  --bg-4: #15151d;
+  --divider: rgba(255, 255, 255, 0.06);
+  --row-odd: #15181d;
+  --grid-line: rgba(255, 255, 255, 0.015);
+  --scrim: rgba(0, 0, 0, 0.62);
+  --ok: #22c55e;
+  --danger: #ef4444;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  --metric-track: rgba(255, 255, 255, 0.14);
+  --metric-low: #22c55e;
+  --metric-mid: #eab308;
+  --metric-high: #ef4444;
 }

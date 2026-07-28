@@ -1,27 +1,25 @@
 .ui-card {
-  background: linear-gradient(165deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
-    color-mix(in oklab, var(--card) 84%, transparent);
-  border: 2px solid var(--border);
-  border-radius: calc(var(--radius) + 4px);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 12px 42px rgba(0, 0, 0, 0.28);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: var(--surface-shadow);
 }
 
 .ui-btn {
-  border: 2px solid transparent;
-  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: var(--primary);
   color: var(--primary-foreground);
-  padding: 0.56rem 0.82rem;
+  padding: 0.42rem 0.78rem;
   font-family: inherit;
-  font-weight: 600;
+  font-size: 0.85rem;
+  font-weight: 590;
   cursor: pointer;
   transition: transform 120ms ease, filter 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
 .ui-btn:hover {
-  filter: brightness(1.03);
-  transform: translateY(-1px);
+  filter: brightness(1.04);
 }
 
 .ui-btn:disabled {
@@ -30,7 +28,7 @@
 }
 
 .ui-btn--outline {
-  background: color-mix(in oklab, var(--background) 76%, transparent);
+  background: var(--card);
   color: var(--foreground);
   border-color: var(--border);
 }
@@ -47,7 +45,7 @@
 }
 
 .ui-input {
-  border: 2px solid var(--input);
+  border: 1px solid var(--input);
   border-radius: var(--radius);
   padding: 0.56rem 0.62rem;
   background: color-mix(in oklab, var(--background) 90%, transparent);

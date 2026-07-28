@@ -59,7 +59,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -163,7 +178,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -264,7 +294,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -391,7 +436,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -495,7 +555,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -609,7 +684,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -705,7 +795,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -819,7 +924,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -940,7 +1060,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1056,7 +1191,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1159,7 +1309,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1281,7 +1446,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1411,7 +1591,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1563,7 +1758,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1695,7 +1905,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1820,7 +2045,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -1960,7 +2200,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -2018,7 +2273,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -2153,7 +2423,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -2242,7 +2527,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
@@ -2361,7 +2661,22 @@ describe("dashboard auth modal UI flow", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
-      if (method === "GET" && url === "/api/apps") {
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
         return jsonResponse({ status: 200, body: { success: true, data: [] } });
       }
       if (method === "GET" && url.startsWith("/api/aso/keywords?")) {

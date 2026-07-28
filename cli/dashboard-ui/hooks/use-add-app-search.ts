@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  DEFAULT_ASO_COUNTRY,
-  apiGet,
-  toActionableErrorMessage,
-} from "../app-helpers";
+import { DEFAULT_ASO_COUNTRY, apiGet, toActionableErrorMessage } from "../app-helpers";
 
 const APP_SEARCH_DEBOUNCE_MS = 350;
 const APP_SEARCH_LIMIT = 20;
@@ -31,7 +27,7 @@ export type AddCandidate = {
   iconArtwork?: { url?: string; [key: string]: unknown };
 };
 
-export function useAddAppSearch() {
+export function useAddAppSearch(country: string = DEFAULT_ASO_COUNTRY) {
   const [isAddAppPopoverOpen, setIsAddAppPopoverOpen] = useState(false);
   const [addAppSearchTerm, setAddAppSearchTerm] = useState("");
   const [addAppSearchResults, setAddAppSearchResults] = useState<AppSearchDoc[]>([]);
@@ -150,7 +146,7 @@ export function useAddAppSearch() {
 
     const debounceTimer = window.setTimeout(() => {
       void apiGet<AppSearchResponsePayload>(
-        `/api/aso/apps/search?country=${DEFAULT_ASO_COUNTRY}&term=${encodeURIComponent(term)}&limit=${APP_SEARCH_LIMIT}`
+        `/api/aso/apps/search?country=${encodeURIComponent(country)}&term=${encodeURIComponent(term)}&limit=${APP_SEARCH_LIMIT}`
       )
         .then((payload) => {
           if (requestId !== addAppSearchRequestIdRef.current) return;
@@ -170,7 +166,7 @@ export function useAddAppSearch() {
     }, APP_SEARCH_DEBOUNCE_MS);
 
     return () => window.clearTimeout(debounceTimer);
-  }, [isAddAppPopoverOpen, trimmedAddAppSearchTerm]);
+  }, [country, isAddAppPopoverOpen, trimmedAddAppSearchTerm]);
 
   return {
     isAddAppPopoverOpen,

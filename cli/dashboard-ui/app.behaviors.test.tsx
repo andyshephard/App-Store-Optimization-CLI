@@ -265,7 +265,17 @@ function buildFetchMock(params: {
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
 
-    if (method === "GET" && url === "/api/apps") {
+    if (method === "GET" && url === "/api/aso/storefronts") {
+      return jsonResponse(200, {
+        success: true,
+        data: {
+          storefronts: [{ country: "US", name: "United States", isDefault: true }],
+          defaultCountry: "US",
+        },
+      });
+    }
+
+    if (method === "GET" && url.split("?")[0] === "/api/apps") {
       appsCallCount += 1;
       return jsonResponse(200, {
         success: true,
@@ -690,85 +700,6 @@ describe("dashboard app behaviors", () => {
     });
   });
 
-  it("applies, persists, and resets brand filter", async () => {
-    localStorage.setItem("aso-dashboard:selected-app-id", "111");
-    const fetchMock = buildFetchMock({
-      apps: [
-        { id: DEFAULT_RESEARCH_APP_ID, name: "Research" },
-        { id: "111", name: "Owned App" },
-      ],
-      keywordsByAppId: {
-        "111": [
-          {
-            keyword: "brand-term",
-            popularity: 70,
-            difficultyScore: 30,
-            isBrandKeyword: true,
-            appCount: 80,
-            positions: [{ appId: "111", previousPosition: 12, currentPosition: 10 }],
-            updatedAt: "2026-03-12T08:00:00.000Z",
-          },
-          {
-            keyword: "non-brand-term",
-            popularity: 75,
-            difficultyScore: 32,
-            isBrandKeyword: false,
-            appCount: 85,
-            positions: [{ appId: "111", previousPosition: 20, currentPosition: 14 }],
-            updatedAt: "2026-03-12T08:05:00.000Z",
-          },
-          {
-            keyword: "unknown-term",
-            popularity: 60,
-            difficultyScore: null,
-            isBrandKeyword: null,
-            appCount: null,
-            positions: [{ appId: "111", previousPosition: null, currentPosition: null }],
-            updatedAt: "2026-03-12T08:10:00.000Z",
-          },
-        ],
-      },
-    });
-    global.fetch = fetchMock as typeof fetch;
-
-    const { unmount } = render(<App />);
-    await screen.findByText("brand-term");
-    await screen.findByText("non-brand-term");
-    await screen.findByText("unknown-term");
-
-    fireEvent.click(screen.getByLabelText("Brand filter"));
-    const menu = await screen.findByText("Brand", {
-      selector: ".filter-menu-label",
-    });
-    fireEvent.click(
-      within(menu.closest(".filter-menu-content") as HTMLElement).getByRole("button", {
-        name: "Brand",
-      })
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("brand-term")).toBeInTheDocument();
-      expect(screen.queryByText("non-brand-term")).not.toBeInTheDocument();
-      expect(screen.queryByText("unknown-term")).not.toBeInTheDocument();
-    });
-
-    unmount();
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText("brand-term")).toBeInTheDocument();
-      expect(screen.queryByText("non-brand-term")).not.toBeInTheDocument();
-      expect(screen.queryByText("unknown-term")).not.toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
-    await waitFor(() => {
-      expect(screen.getByText("brand-term")).toBeInTheDocument();
-      expect(screen.getByText("non-brand-term")).toBeInTheDocument();
-      expect(screen.getByText("unknown-term")).toBeInTheDocument();
-    });
-  });
-
   it("toggles keyword favorites and filters by favorite status", async () => {
     localStorage.setItem("aso-dashboard:selected-app-id", "111");
     let favoritePayload: any = null;
@@ -966,12 +897,23 @@ describe("dashboard app behaviors", () => {
 
     render(<App />);
 
-    await screen.findByText("empty-case");
-    fireEvent.click(screen.getAllByRole("button", { name: "Top Apps" })[0]);
+    const emptyRow = (await screen.findByText("empty-case")).closest(
+      "tr"
+    ) as HTMLElement;
+    fireEvent.click(
+      within(emptyRow).getAllByRole("button", {
+        name: "Show top apps for empty-case",
+      })[0]
+    );
     expect(await screen.findByText("No app data found for this keyword.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Top Apps" })[1]);
+    const errorRow = screen.getByText("error-case").closest("tr") as HTMLElement;
+    fireEvent.click(
+      within(errorRow).getAllByRole("button", {
+        name: "Show top apps for error-case",
+      })[0]
+    );
     expect(await screen.findByText("Failed to load top apps")).toBeInTheDocument();
   });
 

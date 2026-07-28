@@ -458,3 +458,19 @@ export const buildTopAppRows = (data: KeywordDetails): TopAppRow[] =>
     rank: index + 1,
     ...doc,
   }));
+
+const REGIONAL_INDICATOR_A = 0x1f1e6;
+const LATIN_A = "A".charCodeAt(0);
+
+/**
+ * Flag emoji for a two-letter country code, built from regional indicator
+ * symbols. Returns "" for anything that is not two ASCII letters, so callers
+ * can render it unconditionally without producing mojibake.
+ */
+export const countryFlagEmoji = (country: string): string => {
+  const code = (country ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "";
+  return String.fromCodePoint(
+    ...Array.from(code, (char) => REGIONAL_INDICATOR_A + char.charCodeAt(0) - LATIN_A)
+  );
+};
