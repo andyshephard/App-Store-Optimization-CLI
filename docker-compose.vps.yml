@@ -1,0 +1,45 @@
+# Deployment onto the existing n8n VPS, where Caddy already owns 80/443.
+#
+# Differences from docker-compose.yml (which is self-contained for local use):
+#   - no Caddy service; the existing n8n-docker-caddy stack proxies this
+#   - joins that stack's network so Caddy and n8n can reach it by name
+#   - runs a prebuilt image rather than building, because the box has 2GB RAM
+#     shared with n8n, Ghost and MySQL
+#
+#   docker compose -f docker-compose.vps.yml up -d
+services:
+  asocli:
+    image: asocli:latest
+    container_name: asocli
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file: [.env]
+    environment:
+      ASO_DASHBOARD_HOST: "0.0.0.0"
+      ASO_DASHBOARD_PORT: "3456"
+      ASO_OPEN_BROWSER: "0"
+      ASO_DISABLE_UPDATE_CHECK: "1"
+      ASO_DISABLE_CREDENTIAL_STORE: "1"
+      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT"
+      ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
+      # Apple throttles the app-detail endpoint per storefront; keep bursts small.
+      ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+    volumes:
+      - aso-data:/home/node/.aso
+    # No ports. Caddy reaches this over the shared network as http://asocli:3456,
+    # and so does n8n. Publishing a port would bypass UFW, since Docker writes
+    # its own iptables rules.
+    expose: ["3456"]
+    networks: [n8n]
+    # A crawl must never be able to starve n8n on a 2GB box.
+    mem_limit: 512m
+    memswap_limit: 768m
+
+volumes:
+  aso-data:
+
+networks:
+  n8n:
+    external: true
+    name: n8n-docker-caddy_default

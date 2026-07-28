@@ -118,6 +118,46 @@ slot: an unattended start parks on the credentials prompt and holds it, and your
 later attempt in the browser is refused with "Another interactive prompt is
 already pending" until the container restarts. Alert, then log in yourself.
 
+## Deploying alongside an existing stack
+
+Where a reverse proxy already owns 80/443 — the n8n VPS is the case this was
+written for — use `docker-compose.vps.yml` instead. It drops the bundled Caddy,
+joins the existing Docker network, and runs a prebuilt image.
+
+**Build on a workstation, not the server.** `npm ci` pulls devDependencies
+including Playwright, and `better-sqlite3` may compile from source; that is a
+poor fit for a 2GB box already running other services. Ship the finished image
+over SSH instead — no registry required:
+
+```bash
+# on the workstation, targeting the server's architecture
+docker buildx build --platform linux/amd64 -t asocli:latest --load .
+docker save asocli:latest | gzip | ssh root@<host> 'gunzip | docker load'
+```
+
+Then on the server, in a directory holding `docker-compose.vps.yml` and `.env`:
+
+```bash
+docker compose -f docker-compose.vps.yml up -d
+docker compose -f docker-compose.vps.yml logs -f
+```
+
+Add the site block from `caddy-snippet.txt` to the existing Caddyfile and
+reload: `docker exec <caddy-container> caddy reload --config /etc/caddy/Caddyfile`.
+An A record for the new subdomain must resolve before Caddy will issue a
+certificate.
+
+Serve it on its own subdomain rather than a path on an existing one. The
+dashboard requests `/api/*`, `/runtime-config.js` and `/assets/*` as absolute
+paths, so a sub-path deployment would need rewriting inbound and would still
+generate wrong URLs outbound.
+
+**Automation should use the internal network, not the public hostname.** With
+both containers on the same Docker network, n8n calls `http://asocli:3456`
+directly with its bearer token — no TLS handshake, no public round trip, and it
+keeps working if the certificate or DNS has a problem. The public subdomain is
+then only for your browser.
+
 ## Operating notes
 
 - **One instance only.** SQLite is single-writer and the auth/setup managers are

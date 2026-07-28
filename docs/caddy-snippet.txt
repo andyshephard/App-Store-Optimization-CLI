@@ -1,0 +1,52 @@
+# Add this block to the existing Caddyfile on the VPS, below the
+# runner.chunks.app block. Replace the two placeholders.
+#
+#   PASTE_BCRYPT_HASH  docker run --rm caddy:latest caddy hash-password --plaintext 'your-password'
+#   PASTE_API_TOKEN    the ASO_API_TOKEN value from the asocli .env
+#
+# The token is written here in clear text. That is deliberate: it keeps it out
+# of the browser entirely, and the Caddyfile is already a root-owned secret
+# (chmod 600). Alternatively add ASO_API_TOKEN to the caddy service's
+# environment and use {$ASO_API_TOKEN} below.
+
+keywords.chunks.app {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Mirrors the app's own 1MB request body cap.
+	request_body {
+		max_size 1MB
+	}
+
+	# Uptime probes: no credentials. Touches neither the database nor Apple.
+	handle /health {
+		reverse_proxy asocli:3456
+	}
+
+	# Clients that bring their own bearer token (n8n, curl) are passed straight
+	# through for the app to validate. A forged token skips the basic auth
+	# challenge here but still gets a 401 from the app, so this weakens nothing.
+	@bearer header Authorization Bearer*
+	handle @bearer {
+		reverse_proxy asocli:3456
+	}
+
+	# Browsers: password prompt at the edge, then inject the API token upstream.
+	# The dashboard fetches /api/* with no auth header of its own, so this keeps
+	# the token out of the browser and needs no frontend changes.
+	handle {
+		basic_auth {
+			owner PASTE_BCRYPT_HASH
+		}
+		reverse_proxy asocli:3456 {
+			header_up Authorization "Bearer PASTE_API_TOKEN"
+		}
+	}
+}
