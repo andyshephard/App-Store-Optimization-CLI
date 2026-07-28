@@ -684,7 +684,8 @@ export class KeywordPipelineService {
 
   async refreshStartup(
     country: string,
-    items: PendingKeywordPopularityItem[]
+    items: PendingKeywordPopularityItem[],
+    options: { force?: boolean } = {}
   ): Promise<AsoKeywordItem[]> {
     if (items.length === 0) return [];
     const seen = new Set<string>();
@@ -695,6 +696,15 @@ export class KeywordPipelineService {
       if (!normalizedKeyword || seen.has(normalizedKeyword)) continue;
       seen.add(normalizedKeyword);
       keywords.push(normalizedKeyword);
+    }
+
+    // `run` short-circuits on the cache, which is what the scheduled pass wants.
+    // A forced refresh has to reach Apple, so it goes through refreshOrder,
+    // which re-crawls the ranking unconditionally. Popularity is deliberately
+    // left alone: it is account-level with a 30-day TTL, so re-fetching it here
+    // would hammer the Search Ads API for a value that has not moved.
+    if (options.force) {
+      return this.refreshOrder(country, keywords);
     }
 
     const result = await this.run(country, keywords, {

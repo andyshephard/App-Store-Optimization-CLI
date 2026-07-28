@@ -60,7 +60,8 @@ type StartupRefreshDeps = {
   listOrderRelevantAppIds: () => Set<string>;
   enrichKeywords: (
     country: string,
-    items: KeywordRefreshItem[]
+    items: KeywordRefreshItem[],
+    options: { force: boolean }
   ) => Promise<unknown>;
   isForegroundBusy: () => boolean;
   /**
@@ -298,7 +299,7 @@ export function createStartupRefreshManager(
       if (stopRequested) break;
       try {
         await withOneRetry(async () => {
-          await deps.enrichKeywords(country, batch);
+          await deps.enrichKeywords(country, batch, { force });
         }, sleep, (error) => {
           if (deps.isAuthReauthRequiredError?.(error) === true) {
             return false;

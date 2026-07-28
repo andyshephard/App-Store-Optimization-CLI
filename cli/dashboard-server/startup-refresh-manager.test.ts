@@ -337,6 +337,38 @@ describe("startup-refresh-manager", () => {
     expect(forced.map((item) => item.keyword)).toEqual(["stale", "fresh"]);
   });
 
+  it("tells the pipeline a run is forced, so it re-crawls instead of using the cache", async () => {
+    const seen: Array<{ force: boolean }> = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listKeywords: () => [
+        buildKeyword({
+          keyword: "fresh",
+          normalizedKeyword: "fresh",
+          orderExpiresAt: "2099-01-01T00:00:00.000Z",
+        }),
+      ],
+      listAppKeywords: () => [
+        buildAssociation({ keyword: "fresh", appId: "app-1" }),
+      ],
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async (_country, _items, options) => {
+        seen.push(options);
+      },
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async () => {},
+    });
+
+    manager.start({ force: true });
+    await waitForManagerToFinish(manager);
+
+    expect(seen).toEqual([{ force: true }]);
+  });
+
   it("passes force through from start() to the crawl", async () => {
     const enriched: string[] = [];
     const now = Date.parse("2026-03-10T00:00:00.000Z");

@@ -173,8 +173,8 @@ const startupRefreshManager = createStartupRefreshManager({
     return new Set(appIds);
   },
   listOrderRelevantAppIds: () => new Set(listOwnedAppIdsByKind("owned")),
-  enrichKeywords: (country, items) =>
-    keywordPipelineService.refreshStartup(country, items),
+  enrichKeywords: (country, items, options) =>
+    keywordPipelineService.refreshStartup(country, items, options),
   isForegroundBusy: () => foregroundMutationCount > 0,
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
   interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
