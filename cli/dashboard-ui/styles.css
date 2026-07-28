@@ -2963,3 +2963,16 @@ td.updated-value {
   color: var(--foreground);
   border-color: color-mix(in oklab, var(--primary) 55%, transparent);
 }
+
+/* Manual refresh control, with the next scheduled run beside it. */
+.refresh-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-next {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}

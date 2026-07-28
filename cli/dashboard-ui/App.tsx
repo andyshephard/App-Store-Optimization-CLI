@@ -283,6 +283,14 @@ type StartupRefreshStatusPayload = {
     eligibleKeywordCount: number;
     refreshedKeywordCount: number;
     failedKeywordCount: number;
+    skippedCountries?: string[];
+  };
+  schedule?: {
+    enabled: boolean;
+    dailyAt: string | null;
+    timeZone: string;
+    nextRunAt: string | null;
+    lastRunAt: string | null;
   };
 };
 
@@ -2404,6 +2412,28 @@ export function App() {
     ? "Refreshing failed keywords"
     : `Refresh failed keywords (${failedKeywordCount})`;
   const isRefreshRunning = startupRefreshState?.status === "running";
+
+  // The server runs the crawl on its own schedule, so surface when that is due
+  // rather than leaving "is this data current?" to guesswork.
+  const schedule = startupRefreshState?.schedule;
+  const nextScheduledRefreshLabel = (() => {
+    if (!schedule?.enabled || !schedule.nextRunAt) return null;
+    const dueMs = Date.parse(schedule.nextRunAt);
+    if (!Number.isFinite(dueMs)) return null;
+    const minutes = Math.round((dueMs - Date.now()) / 60000);
+    if (minutes <= 0) return "next refresh due";
+    if (minutes < 60) return `next in ${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `next in ${hours}h`;
+    return `next in ${Math.round(hours / 24)}d`;
+  })();
+  const nextScheduledRefreshTitle =
+    schedule?.enabled && schedule.nextRunAt
+      ? `Scheduled daily at ${schedule.dailyAt} ${schedule.timeZone} (next: ${formatDate(
+          schedule.nextRunAt,
+          displayLocale
+        )})`
+      : "No automatic refresh is scheduled";
   const isRefreshStopPending =
     isRefreshRunning &&
     (isStoppingStartupRefresh || startupRefreshState?.stopRequested === true);
@@ -2928,6 +2958,37 @@ export function App() {
           >
             Clear selection ({selectedKeywords.size})
           </Button>
+
+          <div className="refresh-control">
+            <Button
+              id="refresh-all-now"
+              variant="outline"
+              size="sm"
+              type="button"
+              disabled={
+                isRestartingStartupRefresh ||
+                isRefreshRunning ||
+                isKeywordMutationBlockedByStartupReauth
+              }
+              title={
+                isKeywordMutationBlockedByStartupReauth
+                  ? "Finish Apple reauthentication first"
+                  : "Refresh every enabled storefront now"
+              }
+              onClick={() => {
+                void restartStartupRefresh({ showCompletionFeedback: true });
+              }}
+            >
+              {isRefreshRunning || isRestartingStartupRefresh
+                ? "Refreshing..."
+                : "Refresh all"}
+            </Button>
+            {nextScheduledRefreshLabel ? (
+              <span className="refresh-next" title={nextScheduledRefreshTitle}>
+                {nextScheduledRefreshLabel}
+              </span>
+            ) : null}
+          </div>
 
           <Badge id="stats-pill">
             {keywordCountLabelValue} keyword{keywordCountLabelValue === 1 ? "" : "s"}
