@@ -45,7 +45,9 @@ if (isDebugEnabled) {
 
 async function main() {
   trackCliStarted({ command: commandName });
-  checkVersionUpdateSync({ allowStdoutMessage: !stdoutKeywordsRun });
+  if (process.env.ASO_DISABLE_UPDATE_CHECK !== "1") {
+    checkVersionUpdateSync({ allowStdoutMessage: !stdoutKeywordsRun });
+  }
 
   const parser = yargs(hideBin(process.argv))
     .command(asoCmd)

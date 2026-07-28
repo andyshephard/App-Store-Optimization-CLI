@@ -171,8 +171,23 @@ export function getDb(): Database.Database {
   return db;
 }
 
-export function closeDbForTests(): void {
+/**
+ * Checkpoint and close the database. Safe to call when nothing is open.
+ *
+ * WAL means an abrupt kill is not corrupting, so this is about leaving a tidy
+ * single file behind on shutdown rather than about durability.
+ */
+export function closeDb(): void {
   if (!db) return;
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // A checkpoint failure must not prevent the close below.
+  }
   db.close();
   db = null;
+}
+
+export function closeDbForTests(): void {
+  closeDb();
 }

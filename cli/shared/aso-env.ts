@@ -1,6 +1,9 @@
 import * as os from "os";
 import * as path from "path";
-import { normalizeDashboardBindHost } from "./dashboard-network";
+import {
+  isLoopbackDashboardHost,
+  normalizeDashboardBindHost,
+} from "./dashboard-network";
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".aso", "aso-db.sqlite");
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
@@ -45,6 +48,12 @@ export type AsoEnvConfig = {
   ownedAppDocRefreshMaxAgeMs: number;
   dashboardHost: string;
   dashboardPort: number;
+  /** Shared secret required on every request when set. See dashboard-server/request-auth.ts. */
+  apiToken: string | null;
+  /** Origin allowed to make state-changing requests from a browser. */
+  allowedOrigin: string | null;
+  /** Whether to open a browser at startup; never in a container. */
+  openBrowser: boolean;
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -170,6 +179,16 @@ function readAsoEnv(
     ownedAppDocRefreshMaxAgeMs: ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000,
     dashboardHost: parseBindHost(env.ASO_DASHBOARD_HOST),
     dashboardPort: parsePort(env.ASO_DASHBOARD_PORT, ASO_DEFAULTS.dashboardPort),
+    apiToken: parseTrimmed(env.ASO_API_TOKEN),
+    allowedOrigin: parseTrimmed(env.ASO_ALLOWED_ORIGIN),
+    // Explicit setting wins; otherwise only when bound to loopback, which keeps
+    // a container from shelling out to a browser opener that does not exist.
+    openBrowser:
+      env.ASO_OPEN_BROWSER === "0"
+        ? false
+        : env.ASO_OPEN_BROWSER === "1"
+          ? true
+          : isLoopbackDashboardHost(parseBindHost(env.ASO_DASHBOARD_HOST)),
   };
 }
 

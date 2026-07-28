@@ -1,6 +1,7 @@
 import type { CommandModule } from "yargs";
 import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
 import { startDashboard } from "../dashboard-server";
+import { ASO_ENV } from "../shared/aso-env";
 import { asoKeychainService } from "../services/auth/aso-keychain-service";
 import { asoCookieStoreService } from "../services/auth/aso-cookie-store-service";
 import { resolveAsoAdamId } from "../services/keywords/aso-adam-id-service";
@@ -281,7 +282,7 @@ const asoCommand: CommandModule = {
       if (primaryAppId != null) {
         await resolveAsoAdamId({ adamId: primaryAppId, allowPrompt: false });
       }
-      await startDashboard(true);
+      await startDashboard(ASO_ENV.openBrowser);
       return;
     }
 

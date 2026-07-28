@@ -178,6 +178,7 @@ async function request(params: {
   method: string;
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }): Promise<{
   statusCode: number;
   json: any | null;
@@ -193,6 +194,7 @@ async function request(params: {
     req.headers = {
       "content-type": "application/json",
       "content-length": Buffer.byteLength(payload),
+      ...(params.headers ?? {}),
     };
 
     const res = new PassThrough() as any;
@@ -464,6 +466,119 @@ describe("dashboard server routes", () => {
       { id: DEFAULT_RESEARCH_APP_ID, kind: "research", name: "Research" },
     ]);
     expect(response.json?.data.map((item: any) => item.id)).toEqual(["2", "1"]);
+  });
+
+  describe("API token", () => {
+    const TOKEN = "y".repeat(32);
+    const previousToken = process.env.ASO_API_TOKEN;
+
+    afterEach(() => {
+      if (previousToken === undefined) {
+        delete process.env.ASO_API_TOKEN;
+      } else {
+        process.env.ASO_API_TOKEN = previousToken;
+      }
+      delete process.env.ASO_ALLOWED_ORIGIN;
+    });
+
+    it("leaves every route open when no token is configured", async () => {
+      delete process.env.ASO_API_TOKEN;
+
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+      });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it("rejects a request with no token", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+      });
+
+      expect(response.statusCode).toBe(401);
+      expect(response.json?.errorCode).toBe("AUTH_REQUIRED");
+    });
+
+    it("rejects a wrong token, including one of a different length", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      const wrong = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+        headers: { authorization: `Bearer ${"z".repeat(32)}` },
+      });
+      expect(wrong.statusCode).toBe(401);
+
+      // Guards the timingSafeEqual length trap: comparing buffers of unequal
+      // length throws, which would surface as a 500 rather than a 401.
+      const shorter = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+        headers: { authorization: "Bearer short" },
+      });
+      expect(shorter.statusCode).toBe(401);
+      expect(shorter.json?.errorCode).toBe("AUTH_REQUIRED");
+    });
+
+    it("accepts the correct token", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data.defaultCountry).toBe("US");
+    });
+
+    it("keeps /health open so uptime checks work", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      const response = await request({ method: "GET", path: "/health" });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it("covers the static bundle, not just /api", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      const response = await request({ method: "GET", path: "/" });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("rejects a cross-origin write but allows one with no Origin", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+      process.env.ASO_ALLOWED_ORIGIN = "https://aso.example.com";
+
+      const forged = await request({
+        method: "PATCH",
+        path: "/api/dashboard/settings",
+        body: { refreshMode: "manual" },
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          origin: "https://evil.example.com",
+        },
+      });
+      expect(forged.statusCode).toBe(403);
+      expect(forged.json?.errorCode).toBe("AUTHORIZATION_FAILED");
+
+      // n8n and curl send no Origin; they must not be blocked.
+      const serverToServer = await request({
+        method: "PATCH",
+        path: "/api/dashboard/settings",
+        body: { refreshMode: "manual" },
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(serverToServer.statusCode).toBe(200);
+    });
   });
 
   it("lists only enabled storefronts", async () => {

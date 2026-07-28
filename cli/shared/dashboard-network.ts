@@ -54,9 +54,13 @@ export function getDashboardBrowserUrl(host: string, port: number): string {
 
 export function getDashboardExposureWarning(
   host: string,
-  port: number
+  port: number,
+  hasApiToken: boolean = false
 ): string | null {
   if (isLoopbackDashboardHost(host)) return null;
+  // A remote bind behind a required API token is the intended deployment, not
+  // something to warn about on every boot.
+  if (hasApiToken) return null;
   return (
     `WARNING: ASO dashboard is listening on ${formatDashboardHttpUrl(host, port)} without authentication. ` +
     "Use this only on a trusted private network or behind an authenticated reverse proxy. " +

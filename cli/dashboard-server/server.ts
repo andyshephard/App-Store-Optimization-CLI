@@ -51,6 +51,9 @@ import {
   parseJsonBody,
   resolveRequestCountry,
 } from "./http-utils";
+import { enforceRequestAuth } from "./request-auth";
+import { closeDb } from "../db/store";
+import { shutdownPostHog } from "../services/telemetry/posthog-usage-tracking";
 import {
   resolveStaticPath,
   sendDashboardRuntimeConfig,
@@ -69,6 +72,7 @@ import {
   formatDashboardHttpUrl,
   getDashboardBrowserUrl,
   getDashboardExposureWarning,
+  isLoopbackDashboardHost,
 } from "../shared/dashboard-network";
 import type {
   AsoInteractivePrompt,
@@ -78,6 +82,8 @@ import type {
 const DEFAULT_APP_DOCS_HYDRATION_COUNTRY = DEFAULT_ASO_COUNTRY;
 const DASHBOARD_PUBLIC_DIR = path.resolve(__dirname, "dashboard-public");
 const DASHBOARD_RUNTIME_CONFIG_PATH = "/runtime-config.js";
+const MIN_API_TOKEN_LENGTH = 32;
+const SHUTDOWN_TIMEOUT_MS = 8000;
 
 let foregroundMutationCount = 0;
 
@@ -512,6 +518,7 @@ export function createServerRequestHandler(): http.RequestListener {
   return async (req, res) => {
     const url = req.url ?? "/";
     const [pathname] = url.split("?");
+    if (!enforceRequestAuth(req, res, pathname)) return;
     try {
       const query = parseQuery(url);
 
@@ -778,16 +785,85 @@ export function createServer(): http.Server {
   return http.createServer(createServerRequestHandler());
 }
 
+/**
+ * Stop cleanly on the signals a container runtime sends.
+ *
+ * `stopStartupRefresh()` sets the flag the batch loop already checks, so a
+ * crawl in flight finishes its current batch instead of being cut off
+ * mid-request to Apple.
+ */
+function registerShutdownHandlers(server: http.Server): void {
+  let shuttingDown = false;
+
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`Received ${signal}; shutting down ASO dashboard.`);
+
+    // Backstop: never hang past the runtime's grace period.
+    const force = setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS);
+    force.unref();
+
+    stopStartupRefresh();
+    server.close(() => {
+      try {
+        closeDb();
+      } catch {
+        // Already reported by the DB layer; exiting regardless.
+      }
+      void shutdownPostHog().finally(() => process.exit(0));
+    });
+    server.closeIdleConnections?.();
+  };
+
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
+}
+
 export function startDashboard(openBrowser: boolean = true): Promise<never> {
   return new Promise((_, reject) => {
-    const server = createServer();
     const dashboardHost = ASO_ENV.dashboardHost;
     const dashboardPort = ASO_ENV.dashboardPort;
+    const apiToken = ASO_ENV.apiToken;
+    const isLoopback = isLoopbackDashboardHost(dashboardHost);
+
+    // Refuse to be reachable without a token rather than merely warning about
+    // it. Anything that reaches this port can delete tracked data and drive the
+    // Apple login prompts.
+    if (!isLoopback && !apiToken) {
+      reject(
+        new Error(
+          `Refusing to bind the ASO dashboard to ${formatDashboardHttpUrl(dashboardHost, dashboardPort)} ` +
+            "without authentication. Set ASO_API_TOKEN (32+ characters), or bind to 127.0.0.1."
+        )
+      );
+      return;
+    }
+    if (apiToken && apiToken.length < MIN_API_TOKEN_LENGTH) {
+      reject(
+        new Error(
+          `ASO_API_TOKEN must be at least ${MIN_API_TOKEN_LENGTH} characters ` +
+            `(got ${apiToken.length}). Generate one with: openssl rand -hex 32`
+        )
+      );
+      return;
+    }
+
+    const server = createServer();
     let boundPort = dashboardPort;
     let retriedWithDynamicPort = false;
+    // Silently moving to a random port is a convenience for local runs. Where
+    // the port is pinned or the host is remote it would only produce failing
+    // health checks and proxy errors that look like a healthy process.
+    const allowDynamicPortFallback =
+      isLoopback && process.env.ASO_DASHBOARD_PORT == null;
 
     server.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EADDRINUSE" && !retriedWithDynamicPort) {
+      if (
+        err.code === "EADDRINUSE" &&
+        allowDynamicPortFallback &&
+        !retriedWithDynamicPort
+      ) {
         retriedWithDynamicPort = true;
         boundPort = 0;
         logger.debug(
@@ -822,6 +898,8 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       reject(err);
     });
 
+    registerShutdownHandlers(server);
+
     server.listen(dashboardPort, dashboardHost, () => {
       const address = server.address();
       const activePort =
@@ -832,7 +910,8 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       logger.info(`ASO Dashboard: ${url}`);
       const exposureWarning = getDashboardExposureWarning(
         dashboardHost,
-        activePort
+        activePort,
+        apiToken != null
       );
       if (exposureWarning) logger.warn(exposureWarning);
       if (getConfiguredAsoAdamId()) {
