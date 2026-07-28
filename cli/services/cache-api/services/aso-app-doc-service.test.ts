@@ -373,7 +373,7 @@ describe("aso-app-doc-service", () => {
     expect(mockedAsoAppleGet).not.toHaveBeenCalled();
   });
 
-  it("throws for non-US country", async () => {
+  it("throws for a country that is not enabled", async () => {
     const repository = createRepository({
       getAppDocs: (jest.fn(async () => []) as unknown) as AsoCacheRepository["getAppDocs"],
     });
@@ -384,6 +384,30 @@ describe("aso-app-doc-service", () => {
         appIds: ["1"],
         repository,
       })
-    ).rejects.toThrow("Only US is supported for now");
+    ).rejects.toThrow("Country TR is not enabled");
+  });
+
+  it("allows a country enabled via ASO_SUPPORTED_COUNTRIES", async () => {
+    const previous = process.env.ASO_SUPPORTED_COUNTRIES;
+    process.env.ASO_SUPPORTED_COUNTRIES = "US,GB";
+    try {
+      const repository = createRepository({
+        getAppDocs: (jest.fn(async () => []) as unknown) as AsoCacheRepository["getAppDocs"],
+      });
+
+      await expect(
+        getAsoAppDocs({
+          country: "GB",
+          appIds: ["1"],
+          repository,
+        })
+      ).resolves.toBeDefined();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ASO_SUPPORTED_COUNTRIES;
+      } else {
+        process.env.ASO_SUPPORTED_COUNTRIES = previous;
+      }
+    }
   });
 });

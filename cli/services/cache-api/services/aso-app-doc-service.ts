@@ -2,6 +2,7 @@ import { computeAppExpiryIsoForApp } from "./aso-keyword-utils";
 import type { AsoCacheRepository, AsoAppDoc } from "./aso-types";
 import { normalizeCountryOnAppDocs } from "./aso-app-doc-utils";
 import { asoAppleGet } from "./aso-apple-client";
+import { ASO_ENV } from "../../../shared/aso-env";
 import { logger } from "../../../utils/logger";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
 import { ASO_APPLE_WEB_USER_AGENT } from "../../../shared/aso-apple-http";
@@ -9,6 +10,7 @@ import {
   assertSupportedCountry,
   normalizeCountry,
 } from "../../../domain/keywords/policy";
+import { getStoreFrontHeader } from "../../../shared/aso-storefronts";
 
 type AppStoreProductVersionHistoryItem = {
   releaseDate?: string;
@@ -44,15 +46,6 @@ type AppStoreProductLookupPayload = {
     versionHistory?: AppStoreProductVersionHistoryItem[];
   };
 };
-
-const APP_STORE_FRONT_ID_BY_COUNTRY: Record<string, string> = {
-  US: "143441",
-};
-
-function getStoreFrontHeader(country: string): string {
-  const id = APP_STORE_FRONT_ID_BY_COUNTRY[country.toUpperCase()] ?? APP_STORE_FRONT_ID_BY_COUNTRY.US;
-  return `${id}-1,29`;
-}
 
 function parseAppStorePayload(raw: unknown): AppStoreProductLookupPayload | null {
   if (raw && typeof raw === "object") return raw as AppStoreProductLookupPayload;
@@ -359,6 +352,35 @@ async function fetchAppDocById(country: string, appId: string): Promise<AsoAppDo
   return parsedDoc;
 }
 
+/**
+ * Runs `worker` over `items` with a bounded number in flight, preserving order.
+ *
+ * This was an unbounded `Promise.all`. Apple throttles the app-detail endpoint
+ * per storefront and answers 403 once a burst is too large — asking for the top
+ * 100 apps of a keyword fired 100 simultaneous requests and got the whole
+ * storefront blocked for a while. Concurrency follows
+ * ASO_KEYWORD_ENRICHMENT_CONCURRENCY (default 4).
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const limit = Math.max(1, ASO_ENV.keywordEnrichmentConcurrency);
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
 export async function fetchAppStoreLookupAppDocs(params: {
   country: string;
   appIds: string[];
@@ -367,7 +389,9 @@ export async function fetchAppStoreLookupAppDocs(params: {
   assertSupportedCountry(country);
   if (params.appIds.length === 0) return [];
   const uniqueIds = Array.from(new Set(params.appIds.map((id) => id.trim()).filter(Boolean)));
-  const docs = await Promise.all(uniqueIds.map((appId) => fetchAppDocById(country, appId)));
+  const docs = await mapWithConcurrency(uniqueIds, (appId) =>
+    fetchAppDocById(country, appId)
+  );
   const byId = new Map(
     docs.filter((doc): doc is AsoAppDoc => doc != null).map((doc) => [doc.appId, doc])
   );

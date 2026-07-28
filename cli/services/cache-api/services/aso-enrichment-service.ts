@@ -14,6 +14,13 @@ import type { AsoAppDoc, AsoAppDocIcon } from "./aso-types";
 import { asoAppleGet } from "./aso-apple-client";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
 import { getStorefrontDefaultLanguage } from "../../../shared/aso-storefront-localizations";
+import {
+  getAcceptLanguage,
+  getDsLangCookieValue,
+  getSearchUrl,
+  getStoreFrontHeader,
+} from "../../../shared/aso-storefronts";
+import { parseLocalizedRatingCount } from "../../../shared/aso-rating-count";
 import { ASO_APPLE_WEB_USER_AGENT } from "../../../shared/aso-apple-http";
 import type { KeywordMatchType } from "../../../shared/aso-keyword-match";
 import {
@@ -73,12 +80,7 @@ interface AmpSearchResponse {
   }>;
 }
 
-const MZSEARCH_PLATFORM_ID_JSON = 29;
-const STORE_FRONT_ID_BY_COUNTRY: Record<string, number> = {
-  US: 143441,
-};
 const MZSEARCH_ORDER_URL = "https://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search";
-const APPSTORE_SEARCH_URL = "https://apps.apple.com/us/iphone/search";
 const INSUFFICIENT_DOCS_RETRY_COUNT = 1;
 const INSUFFICIENT_DOCS_RETRY_BACKOFF_MS = 150;
 const INCOMPLETE_TOP_DOC_LOOKUP_COOLDOWN_MS = 10 * 60 * 1000;
@@ -142,18 +144,6 @@ function safeDaysSince(isoDate: string | undefined): number {
   const parsed = Date.parse(isoDate);
   if (Number.isNaN(parsed)) return 365;
   return Math.max(1, Math.floor((Date.now() - parsed) / (1000 * 60 * 60 * 24)));
-}
-
-function parseRatingCount(value: string | number | undefined): number {
-  if (value == null) return 0;
-  if (typeof value === "number" && !Number.isNaN(value)) return Math.max(0, value);
-  const s = String(value).trim().toUpperCase();
-  if (!s) return 0;
-  const num = parseFloat(s.replace(/[^0-9.]/g, ""));
-  if (Number.isNaN(num)) return 0;
-  if (s.endsWith("M")) return Math.round(num * 1000000);
-  if (s.endsWith("K")) return Math.round(num * 1000);
-  return Math.round(num);
 }
 
 function detectKeywordMatchType(
@@ -300,11 +290,6 @@ function appCompetitiveScore(app: AsoAppDoc, keyword: string): number {
   }).score;
 }
 
-function getStoreFrontHeader(country: string): string {
-  const storeId = STORE_FRONT_ID_BY_COUNTRY[country.toUpperCase()] || 143441;
-  return `${storeId}-1,${MZSEARCH_PLATFORM_ID_JSON}`;
-}
-
 async function fetchPopularityOrderedIds(params: {
   keyword: string;
   country: string;
@@ -319,8 +304,8 @@ async function fetchPopularityOrderedIds(params: {
       },
       headers: {
         "User-Agent": ASO_APPLE_WEB_USER_AGENT,
-        "Accept-Language": "en-US,en;q=0.9",
-        Cookie: "dslang=US-EN",
+        "Accept-Language": getAcceptLanguage(params.country),
+        Cookie: `dslang=${getDsLangCookieValue(params.country)}`,
         "x-apple-store-front": getStoreFrontHeader(params.country),
       },
       timeout: 30000,
@@ -382,7 +367,10 @@ function lockupToAppDoc(lockup: AmpSearchLockup, country: string): AsoAppDoc | n
   const rating = lockup?.rating;
   const averageUserRating =
     typeof rating === "number" && !Number.isNaN(rating) ? rating : 0;
-  const userRatingCount = parseRatingCount(lockup?.ratingCount);
+  const userRatingCount = parseLocalizedRatingCount(
+    lockup?.ratingCount,
+    country
+  );
   const icon: AsoAppDocIcon | undefined = lockup?.icon
     ? {
         template: lockup.icon.template,
@@ -423,13 +411,13 @@ async function fetchSearchPageOrderedData(params: {
   orderedAppIds: string[];
   appDocs: AsoAppDoc[];
 }> {
-  const response = await asoAppleGet(APPSTORE_SEARCH_URL, {
+  const response = await asoAppleGet(getSearchUrl(params.country), {
     operation: "appstore.search-page",
     params: { term: params.keyword },
     headers: {
       "User-Agent": ASO_APPLE_WEB_USER_AGENT,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Language": getAcceptLanguage(params.country),
     },
     timeout: 30000,
   });
@@ -512,7 +500,7 @@ export async function refreshKeywordOrder(params: {
     reportAppleContractChange({
       provider: "apple-appstore",
       operation: "appstore.search-page",
-      endpoint: APPSTORE_SEARCH_URL,
+      endpoint: getSearchUrl(params.country),
       expectedContract:
         "Search page includes serialized-server-data with ordered app ids",
       actualSignal: htmlMessage,
@@ -577,7 +565,10 @@ async function lookupDetailsForAppIds(params: {
       map.set(doc.appId, {
         releaseDate: doc.releaseDate ?? null,
         currentVersionReleaseDate: doc.currentVersionReleaseDate ?? null,
-        userRatingCount: parseRatingCount(doc.userRatingCount),
+        userRatingCount: parseLocalizedRatingCount(
+          doc.userRatingCount,
+          params.country
+        ),
       });
       if (!doc.releaseDate || !doc.currentVersionReleaseDate) {
         logger.debug("[aso-enrichment] lookup returned app with missing dates", {
@@ -633,7 +624,10 @@ async function buildAppDocsFromLookup(params: {
         const userRatingCount =
           details?.totalNumberOfRatings == null
             ? lookupDoc.userRatingCount
-            : parseRatingCount(details.totalNumberOfRatings);
+            : parseLocalizedRatingCount(
+                details.totalNumberOfRatings,
+                params.country
+              );
         return {
           ...lookupDoc,
           name: details?.title || lookupDoc.name || "Unknown",
@@ -895,7 +889,7 @@ export async function enrichKeyword(
     reportAppleContractChange({
       provider: "apple-appstore",
       operation: "appstore.search-page",
-      endpoint: APPSTORE_SEARCH_URL,
+      endpoint: getSearchUrl(params.country),
       expectedContract:
         "Search page includes serialized-server-data with ordered app ids and lockups",
       actualSignal: htmlMessage,
@@ -984,7 +978,10 @@ export async function enrichKeyword(
           merged.releaseDate = details.releaseDate ?? undefined;
           merged.currentVersionReleaseDate =
             details.currentVersionReleaseDate ?? undefined;
-          merged.userRatingCount = parseRatingCount(details.userRatingCount);
+          merged.userRatingCount = parseLocalizedRatingCount(
+            details.userRatingCount,
+            country
+          );
           if (!details.releaseDate || !details.currentVersionReleaseDate) {
             logger.debug("[aso-enrichment] merged lookup details missing dates", {
               appId: id,
