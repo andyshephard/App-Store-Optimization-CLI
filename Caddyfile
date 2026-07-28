@@ -1,0 +1,49 @@
+{
+	email {$ASO_ACME_EMAIL}
+}
+
+{$ASO_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Mirrors DEFAULT_MAX_REQUEST_BODY_BYTES in cli/dashboard-server/http-utils.ts
+	request_body {
+		max_size 1MB
+	}
+
+	# Uptime probes: no credentials, and the app serves this one openly too.
+	handle /health {
+		reverse_proxy asocli:3456
+	}
+
+	# API clients (n8n) bring their own bearer token; pass it through and let the
+	# app validate it. A forged token skips basic auth here but still gets a 401
+	# from the app, so this branch weakens nothing.
+	@bearer header Authorization Bearer*
+	handle @bearer {
+		reverse_proxy asocli:3456
+	}
+
+	# Browsers: authenticate at the edge, then inject the API token upstream. The
+	# SPA calls /api/* with no auth header of its own, so this keeps the token out
+	# of the browser entirely and needs no frontend changes.
+	handle {
+		basic_auth {
+			owner {$ASO_UI_BCRYPT_HASH}
+		}
+		reverse_proxy asocli:3456 {
+			header_up Authorization "Bearer {$ASO_API_TOKEN}"
+		}
+	}
+
+	log {
+		output file /data/access.log
+	}
+}

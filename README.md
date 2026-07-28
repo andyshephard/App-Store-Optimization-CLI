@@ -225,6 +225,13 @@ there when onboarding a storefront with a new number format.
 Keyword-match detection still splits on spaces, so it suits Latin-script
 storefronts. CJK storefronts would need a different tokenizer.
 
+## Hosting
+
+The dashboard and its API can run on a server behind TLS, with a bearer token
+required on every request. See [docs/deployment.md](docs/deployment.md) for the
+Docker Compose + Caddy setup, including how Apple login and two-factor are
+completed entirely in the browser with no terminal access.
+
 ## Project Docs
 
 - Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)

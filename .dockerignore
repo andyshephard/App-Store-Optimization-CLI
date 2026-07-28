@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+cli/dist
+website
+coverage
+.jest-cache
+*.log
+aso-debug.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Dockerfile
+docker-compose.yml
+Caddyfile

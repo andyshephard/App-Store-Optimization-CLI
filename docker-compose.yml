@@ -1,0 +1,50 @@
+# Single instance only. SQLite is single-writer and the auth/setup managers are
+# module-level singletons, so never scale this past one replica.
+services:
+  asocli:
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file: [.env]
+    environment:
+      ASO_DASHBOARD_HOST: "0.0.0.0"
+      ASO_DASHBOARD_PORT: "3456"
+      ASO_OPEN_BROWSER: "0"
+      ASO_DISABLE_UPDATE_CHECK: "1"
+      ASO_DISABLE_CREDENTIAL_STORE: "1"
+      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT"
+      # The primary app id otherwise lives in the SQLite metadata table, so a
+      # fresh volume would sit waiting on the interactive setup prompt.
+      ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
+      # Apple throttles the app-detail endpoint per storefront and answers 403
+      # once a burst is too large.
+      ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+    volumes:
+      - aso-data:/home/node/.aso
+    # expose, never ports: Docker's iptables rules bypass UFW, so publishing
+    # 3456 would put the API on the internet regardless of the firewall.
+    expose: ["3456"]
+    networks: [edge]
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [asocli]
+    networks: [edge]
+
+volumes:
+  aso-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  edge:
