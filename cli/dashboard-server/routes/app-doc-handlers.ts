@@ -12,7 +12,6 @@ import { keywordPipelineService } from "../../services/keywords/keyword-pipeline
 import { chunkArray, getMissingOrExpiredAppIds } from "../refresh-utils";
 import { DEFAULT_ASO_COUNTRY } from "../../domain/keywords/policy";
 import { resolveRequestCountry } from "../http-utils";
-import { ASO_ENV } from "../../shared/aso-env";
 import type { AsoApiAppDoc, AsoRouteDeps } from "./aso-route-types";
 import { isStoredKeywordOrderFresh } from "../../shared/aso-keyword-validity";
 import {
@@ -125,22 +124,6 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
 
     if (!term) {
       deps.sendJson(res, 200, { success: true, data: { term: "", appDocs: [] } });
-      return;
-    }
-
-    if (ASO_ENV.disableAppleFetchOnRead) {
-      // Unlike the others this has nothing cached to fall back on - a free-text
-      // search is a live query by nature. Say so rather than returning an empty
-      // list that looks like "no such app".
-      deps.sendJson(res, 200, {
-        success: true,
-        data: {
-          term,
-          appDocs: [],
-          warning:
-            "App search is unavailable while Apple lookups are disabled (ASO_DISABLE_APPLE_FETCH_ON_READ=1).",
-        },
-      });
       return;
     }
 
@@ -278,8 +261,7 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       deps.sendApiError(res, 404, "NOT_FOUND", "Keyword not found.");
       return;
     }
-    const cacheOnly = ASO_ENV.disableAppleFetchOnRead;
-    if (!cacheOnly && !isStoredKeywordOrderFresh(keywordRow, Date.now())) {
+    if (!isStoredKeywordOrderFresh(keywordRow, Date.now())) {
       try {
         await keywordPipelineService.refreshOrder(country, [decoded], {
           preserveUpdatedAt: true,
@@ -302,9 +284,7 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     const topIds = keywordRow.orderedAppIds.slice(0, limit);
     let appDocs = getCompetitorAppDocs(country, topIds);
     const cachedById = new Map(appDocs.map((doc) => [doc.appId, doc]));
-    const missingIds = cacheOnly
-      ? []
-      : getMissingOrExpiredAppIds(topIds, appDocs);
+    const missingIds = getMissingOrExpiredAppIds(topIds, appDocs);
     if (missingIds.length > 0) {
       try {
         const fetchedDocs = await fetchAsoAppDocsFromApi(country, missingIds);
@@ -373,12 +353,10 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       cachedSensorTowerMetrics.map((metrics) => [metrics.appId, metrics] as const)
     );
     const nowMs = Date.now();
-    const appIdsToRefresh = cacheOnly
-      ? []
-      : metricAppIds.filter((appId) => {
-          const cached = cachedByAppId.get(appId);
-          return !cached || !isSensorTowerMetricsFresh(cached.fetchedAt, nowMs);
-        });
+    const appIdsToRefresh = metricAppIds.filter((appId) => {
+      const cached = cachedByAppId.get(appId);
+      return !cached || !isSensorTowerMetricsFresh(cached.fetchedAt, nowMs);
+    });
 
     if (appIdsToRefresh.length > 0) {
       try {
@@ -467,13 +445,7 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     }
 
     const docs = getCompetitorAppDocs(country, ids);
-    // Cache-only mode ignores refresh=1 rather than honouring a request that
-    // would reach out to Apple.
-    const staleIds = ASO_ENV.disableAppleFetchOnRead
-      ? []
-      : forceRefresh
-        ? ids
-        : getMissingOrExpiredAppIds(ids, docs);
+    const staleIds = forceRefresh ? ids : getMissingOrExpiredAppIds(ids, docs);
 
     if (staleIds.length === 0) {
       deps.sendJson(res, 200, { success: true, data: docs });

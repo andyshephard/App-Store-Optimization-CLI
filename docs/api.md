@@ -79,31 +79,33 @@ The endpoints do **not** all behave like a database. Three groups:
 `/api/aso/setup/status` · `/api/dashboard/settings`
 
 **Triggers Apple or SensorTower as a side effect of a GET.** Slow, writes to the
-database, can fail with `AUTH_REQUIRED`, and counts against Apple's per-storefront
-throttling. Do not put these on a schedule.
+database, can fail with `AUTH_REQUIRED`, and counts against Apple's
+per-storefront throttling.
 
-`/api/apps` (refreshes owned-app docs older than 24h) ·
-`/api/aso/top-apps` (re-crawls stale rankings, hydrates app docs, calls
-SensorTower) · `/api/aso/apps` (`refresh=1` forces a lookup) ·
-`/api/aso/apps/search` (always a live search)
+| Endpoint | What it does behind your back |
+|---|---|
+| `GET /api/apps` | Refreshes any owned-app doc older than 24h against Apple |
+| `GET /api/aso/top-apps` | Re-crawls the ranking if stale, hydrates missing app docs one request each, then calls SensorTower |
+| `GET /api/aso/apps` | Fetches missing or expired docs; `refresh=1` forces a lookup of everything asked for |
+| `GET /api/aso/apps/search` | Always performs a live App Store search |
+
+**These exist for the dashboard, which needs live data when a human is looking
+at it. Automation should not call them.** They are the difference between a
+report that reads the database and one that quietly re-crawls the App Store
+every time it runs.
+
+The consequences of scheduling one are not theoretical: Apple throttles the
+app-detail endpoint per storefront and returns 403 once a burst is too large,
+which blocks that storefront for a while — for the scheduled refresh too, not
+just the caller. A crawl of all 11 storefronts in quick succession is what
+caused that during testing.
+
+If a report needs competitor titles, subtitles or download estimates, take them
+from a manual `top-apps` call while building it, or read `orderedAppIds` from
+`/api/aso/keywords` — that ranked list is already in the database and costs
+nothing.
 
 **Mutating.** Everything else.
-
-### Cache-only mode
-
-`ASO_DISABLE_APPLE_FETCH_ON_READ=1` removes the middle group entirely: those
-four endpoints keep responding, served from SQLite, and never call Apple or
-SensorTower. **It is on in this deployment.** The daily refresh is unaffected —
-it is what keeps the cache current.
-
-What changes with it on:
-
-| Endpoint | Behaviour |
-|---|---|
-| `/api/apps` | Lists stored apps; ratings are as of the last scheduled refresh |
-| `/api/aso/apps` | Cached docs only; `refresh=1` is ignored rather than honoured |
-| `/api/aso/top-apps` | Stored ranking and stored docs; no re-crawl, no SensorTower. Apps never hydrated will be missing from the list |
-| `/api/aso/apps/search` | Returns `[]` with a `warning`. A free-text search cannot be answered from cache, so **adding a new app through the dashboard will not work** until the flag is off |
 
 The server refreshes itself daily (`ASO_REFRESH_DAILY_AT`), so automation should
 only ever read. Reaching for a fetch-triggering endpoint to "get fresh data" is
@@ -301,9 +303,12 @@ unrelated to the daily schedule. Keep it `manual` in a hosted deployment.
 
 # Endpoints that reach out to Apple
 
-Documented for completeness. **Do not schedule these.**
+These power the dashboard and behave exactly as intended when a human triggers
+them. Documented here so automation can steer clear.
 
 ## `GET /api/apps`
+
+> **Calls Apple.** Not for automation.
 
 Lists tracked apps, and refreshes any owned app whose doc is older than 24h
 against Apple as a side effect.
@@ -318,6 +323,8 @@ against Apple as a side effect.
 real apps, and have no ranking columns.
 
 ## `GET /api/aso/top-apps`
+
+> **Calls Apple and SensorTower.** Not for automation. The slowest endpoint here.
 
 The top N apps ranking for a keyword, with their metadata and SensorTower
 download/revenue estimates. Re-crawls if the stored ranking is stale, hydrates
@@ -338,11 +345,15 @@ on demand, not on a schedule.
 
 ## `GET /api/aso/apps`
 
+> **Calls Apple** for anything missing or expired. Not for automation.
+
 Metadata for specific app ids. `?country=` `&ids=` (comma-separated; there is no
 cap, they are fetched in batches of 50) `&refresh=1` to force a live lookup. Without `refresh`, only missing or
 expired docs are fetched — so it is *usually* cheap, but not guaranteed.
 
 ## `GET /api/aso/apps/search`
+
+> **Always calls Apple.** Never safe for automation.
 
 Free-text App Store search. `?country=` `&term=` `&limit=` (default 20, max 50).
 Always performs a live search.

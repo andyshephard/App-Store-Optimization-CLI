@@ -573,11 +573,7 @@ export function createServerRequestHandler(): http.RequestListener {
         let apps = listOwnedApps(country);
         const nowMs = Date.now();
         const refreshMaxAgeMs = ASO_ENV.ownedAppDocRefreshMaxAgeMs;
-        // Cache-only mode lists what is stored and never hydrates from Apple.
-        // The scheduled refresh is what keeps these docs current.
-        const staleOwnedAppIds = ASO_ENV.disableAppleFetchOnRead
-          ? []
-          : apps
+        const staleOwnedAppIds = apps
           .filter((app) => app.kind === "owned")
           .map((app) => {
             const fetchedAtMs = Date.parse(app.lastFetchedAt ?? "");

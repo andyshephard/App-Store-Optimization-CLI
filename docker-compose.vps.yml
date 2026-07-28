@@ -30,10 +30,6 @@ services:
       # anything calls the API.
       ASO_REFRESH_DAILY_AT: "04:00"
       ASO_REFRESH_TIMEZONE: "Europe/Prague"
-      # Read endpoints serve cached data only and never call Apple. The daily
-      # refresh above is what keeps that cache current, so nothing outside this
-      # container can trigger App Store traffic.
-      ASO_DISABLE_APPLE_FETCH_ON_READ: "1"
     volumes:
       - aso-data:/home/node/.aso
     # No ports. Caddy reaches this over the shared network as http://asocli:3456,
