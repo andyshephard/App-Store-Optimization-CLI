@@ -6,12 +6,35 @@ jest.mock("child_process", () => ({
   execFileSync: jest.fn(),
 }));
 
-describe("AsoKeychainService", () => {
+/**
+ * The keychain is macOS-only, so these suites pin `process.platform` rather
+ * than inheriting the host's. Without that, the whole file behaves differently
+ * on a Linux CI runner than on a developer's Mac.
+ */
+function setPlatform(platform: NodeJS.Platform): () => void {
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", {
+    value: platform,
+    configurable: true,
+  });
+  return () => {
+    if (original) Object.defineProperty(process, "platform", original);
+  };
+}
+
+describe("AsoKeychainService on macOS", () => {
   const mockExecFileSync = jest.mocked(execFileSync);
   const service = new AsoKeychainService();
+  let restorePlatform: () => void = () => {};
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.ASO_DISABLE_CREDENTIAL_STORE;
+    restorePlatform = setPlatform("darwin");
+  });
+
+  afterEach(() => {
+    restorePlatform();
   });
 
   it("loads credentials from keychain when payload is valid", () => {
@@ -105,5 +128,69 @@ describe("AsoKeychainService", () => {
         stdio: ["ignore", "pipe", "ignore"],
       }
     );
+  });
+});
+
+describe("AsoKeychainService without an OS credential store", () => {
+  const mockExecFileSync = jest.mocked(execFileSync);
+  const service = new AsoKeychainService();
+  let restorePlatform: () => void = () => {};
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.ASO_DISABLE_CREDENTIAL_STORE;
+    restorePlatform = setPlatform("linux");
+  });
+
+  afterEach(() => {
+    restorePlatform();
+  });
+
+  it("reports itself unavailable and never shells out", () => {
+    expect(service.isAvailable()).toBe(false);
+    expect(service.loadCredentials()).toBeNull();
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  // The regression this guards: saveCredentials runs *after* a successful
+  // Apple login, so throwing ENOENT here would discard a session the user had
+  // just completed two-factor authentication for.
+  it("does not throw when saving credentials", () => {
+    expect(() =>
+      service.saveCredentials({ appleId: "user@example.com", password: "pw" })
+    ).not.toThrow();
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when clearing credentials", () => {
+    expect(() => service.clearCredentials()).not.toThrow();
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it("never fails a login even if the store throws", () => {
+    const restore = setPlatform("darwin");
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("keychain locked");
+    });
+    try {
+      expect(() =>
+        service.saveCredentials({ appleId: "user@example.com", password: "pw" })
+      ).not.toThrow();
+    } finally {
+      restore();
+    }
+  });
+
+  it("can be disabled explicitly on macOS", () => {
+    const restore = setPlatform("darwin");
+    process.env.ASO_DISABLE_CREDENTIAL_STORE = "1";
+    try {
+      expect(service.isAvailable()).toBe(false);
+      expect(service.loadCredentials()).toBeNull();
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ASO_DISABLE_CREDENTIAL_STORE;
+      restore();
+    }
   });
 });
