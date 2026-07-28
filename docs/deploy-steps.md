@@ -263,9 +263,9 @@ prefixed with the compose project directory name.
 
 The server refreshes itself daily at 04:00 Europe/Prague
 (`ASO_REFRESH_DAILY_AT` in `docker-compose.vps.yml`), so n8n only reads what is
-already in SQLite. Import `docs/n8n-daily-report.json`, which touches only
-`/api/aso/refresh-status`, `/api/aso/storefronts` and `/api/aso/keywords` — all
-pure database reads.
+already in SQLite. Stick to `/api/aso/refresh-status`, `/api/aso/storefronts` and
+`/api/aso/keywords` — all pure database reads. `docs/api.md` lists which
+endpoints call Apple as a side effect and should be avoided.
 
 Confirm the schedule is armed:
 

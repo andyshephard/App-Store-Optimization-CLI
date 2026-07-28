@@ -391,8 +391,7 @@ a 2FA code from a trusted device, so there is no unattended path regardless.
 
 ## Daily report
 
-`docs/n8n-daily-report.json` implements this; it runs at 06:30, after the 04:00
-crawl.
+Run it after the 04:00 crawl.
 
 1. `GET /api/aso/refresh-status` — if `requiresReauthentication`, alert and stop.
    Also check `counters.skippedCountries` and `schedule.nextRunAt`.
