@@ -101,6 +101,28 @@ the same file worked on the source machine, because the source had refreshed it
 in the meantime. Treat this as a shortcut for the first run, not a way to avoid
 ever logging in.
 
+## Scheduling
+
+The server owns its own clock. Set `ASO_REFRESH_DAILY_AT` (`HH:MM`) and
+`ASO_REFRESH_TIMEZONE` (IANA name) and it refreshes every day at that wall-clock
+time, writing straight to SQLite — no external trigger, and the data is current
+whether or not anything calls the API. Unset the time to disable it.
+
+`GET /api/aso/refresh-status` reports `schedule.nextRunAt` so you can confirm it
+is armed. Timezone handling is DST-aware: 04:00 local stays 04:00 across both
+transitions rather than drifting an hour.
+
+This is separate from `refreshMode`, which only controls the one-shot refresh at
+container startup. Keep that on `manual`, or every restart kicks off an unpaced
+crawl at an arbitrary time.
+
+Consumers should then only ever **read**. These endpoints are pure database
+reads and safe to poll: `/health`, `/api/aso/keywords`,
+`/api/aso/keywords/history`, `/api/aso/storefronts`, `/api/aso/refresh-status`,
+`/api/dashboard/settings`. These reach out to Apple or SensorTower as a side
+effect and should be avoided by automation: `/api/apps`, `/api/aso/top-apps`,
+`/api/aso/apps` and `/api/aso/apps/search`.
+
 ## When the Apple session expires
 
 It will, and there is no unattended fix: Apple requires a 2FA code from a

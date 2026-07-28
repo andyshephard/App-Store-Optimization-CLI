@@ -1,0 +1,173 @@
+{
+  "name": "ASO daily report (read-only)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Every day 06:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-660, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://asocli:3456/api/aso/refresh-status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "Last run health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-440, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.data.requiresReauthentication }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Apple session expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "subject",
+              "value": "=ASO: Apple session needs reauthentication",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "body",
+              "value": "=The scheduled ASO keyword refresh stopped because the Apple Search Ads session expired.\n\nOpen https://keywords.chunks.app and complete the Apple login, including the two-factor code. Until then the keyword data will go stale.\n\nDo not start the login from automation - the prompt is a single slot, and an unattended attempt blocks the browser flow until the container restarts.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Build reauth alert (connect to email)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [0, -120]
+    },
+    {
+      "parameters": {
+        "url": "http://asocli:3456/api/aso/storefronts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000005",
+      "name": "List storefronts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 120]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data.storefronts",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000006",
+      "name": "One item per storefront",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [220, 120]
+    },
+    {
+      "parameters": {
+        "url": "=http://asocli:3456/api/aso/keywords?country={{ $json.country }}&appId=6692632196&page=1&pageSize=500&sortBy=rank&sortDir=asc",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000007",
+      "name": "Read keywords from DB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pure read of what the scheduler already wrote. No Apple traffic here.\nconst APP_ID = '6692632196';\nconst rows = [];\n\nfor (const item of $input.all()) {\n  const data = item.json.data;\n  if (!data || !Array.isArray(data.items)) continue;\n\n  for (const kw of data.items) {\n    const position = (kw.positions || []).find((p) => p.appId === APP_ID);\n    const current = position?.currentPosition ?? null;\n    const previous = position?.previousPosition ?? null;\n    rows.push({\n      country: kw.country,\n      keyword: kw.keyword,\n      popularity: kw.popularity,\n      difficulty: kw.difficultyScore,\n      appCount: kw.appCount,\n      rank: current,\n      previousRank: previous,\n      // Ranks improve downwards, so a negative delta is a gain.\n      change: current != null && previous != null ? previous - current : null,\n      status: kw.keywordStatus,\n      updatedAt: kw.updatedAt,\n    });\n  }\n}\n\nconst ranked = rows.filter((r) => r.rank != null);\nconst movers = ranked\n  .filter((r) => r.change != null && r.change !== 0)\n  .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))\n  .slice(0, 15);\n\nreturn [\n  {\n    json: {\n      generatedAt: new Date().toISOString(),\n      totals: {\n        keywords: rows.length,\n        ranking: ranked.length,\n        failed: rows.filter((r) => r.status === 'failed').length,\n        pending: rows.filter((r) => r.status === 'pending').length,\n      },\n      byCountry: Object.fromEntries(\n        [...new Set(rows.map((r) => r.country))].map((c) => [\n          c,\n          {\n            tracked: rows.filter((r) => r.country === c).length,\n            ranking: ranked.filter((r) => r.country === c).length,\n            best: ranked\n              .filter((r) => r.country === c)\n              .reduce((min, r) => (min == null || r.rank < min ? r.rank : min), null),\n          },\n        ])\n      ),\n      movers,\n      rows,\n    },\n  },\n];"
+      },
+      "id": "b1000000-0000-4000-8000-000000000008",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 120]
+    }
+  ],
+  "connections": {
+    "Every day 06:30": {
+      "main": [[{ "node": "Last run health", "type": "main", "index": 0 }]]
+    },
+    "Last run health": {
+      "main": [[{ "node": "Apple session expired?", "type": "main", "index": 0 }]]
+    },
+    "Apple session expired?": {
+      "main": [
+        [
+          {
+            "node": "Build reauth alert (connect to email)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [{ "node": "List storefronts", "type": "main", "index": 0 }]
+      ]
+    },
+    "List storefronts": {
+      "main": [[{ "node": "One item per storefront", "type": "main", "index": 0 }]]
+    },
+    "One item per storefront": {
+      "main": [[{ "node": "Read keywords from DB", "type": "main", "index": 0 }]]
+    },
+    "Read keywords from DB": {
+      "main": [[{ "node": "Build report", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Prague"
+  },
+  "pinData": {}
+}

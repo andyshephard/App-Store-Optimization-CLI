@@ -20,6 +20,8 @@ export const ASO_DEFAULTS = {
   rateLimitBaseDelayMs: 5000,
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
+  refreshDailyAt: null as string | null,
+  refreshTimeZone: "UTC",
   refreshInterCountryDelayMs: 180000,
   refreshInterBatchDelayMs: 5000,
   keywordOrderTtlHours: 24,
@@ -44,6 +46,10 @@ export type AsoEnvConfig = {
   rateLimitBaseDelayMs: number;
   retryJitterFactor: number;
   keywordEnrichmentConcurrency: number;
+  /** Daily wall-clock time ("HH:MM") to run the refresh; null disables it. */
+  refreshDailyAt: string | null;
+  /** IANA timezone the daily time is interpreted in. */
+  refreshTimeZone: string;
   /** Pause between storefronts during a background refresh. */
   refreshInterCountryDelayMs: number;
   /** Pause between keyword batches during a background refresh. */
@@ -170,6 +176,9 @@ function readAsoEnv(
       env.ASO_KEYWORD_ENRICHMENT_CONCURRENCY,
       ASO_DEFAULTS.keywordEnrichmentConcurrency
     ),
+    refreshDailyAt: parseTrimmed(env.ASO_REFRESH_DAILY_AT),
+    refreshTimeZone:
+      parseTrimmed(env.ASO_REFRESH_TIMEZONE) ?? ASO_DEFAULTS.refreshTimeZone,
     refreshInterCountryDelayMs: parseNonNegativeInt(
       env.ASO_REFRESH_INTER_COUNTRY_DELAY_MS,
       ASO_DEFAULTS.refreshInterCountryDelayMs

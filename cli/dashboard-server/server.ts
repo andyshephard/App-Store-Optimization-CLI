@@ -53,6 +53,7 @@ import {
   resolveRequestCountry,
 } from "./http-utils";
 import { enforceRequestAuth } from "./request-auth";
+import { createRefreshScheduler } from "./refresh-scheduler";
 import { closeDb } from "../db/store";
 import { shutdownPostHog } from "../services/telemetry/posthog-usage-tracking";
 import {
@@ -187,6 +188,20 @@ const startupRefreshManager = createStartupRefreshManager({
     });
   },
   isAuthReauthRequiredError: isAsoAuthReauthRequiredError,
+});
+
+/**
+ * Owns the clock for the daily refresh, so the database stays current whether
+ * or not anything external calls the API. Disabled unless ASO_REFRESH_DAILY_AT
+ * is set, which keeps local runs and existing installs unchanged.
+ */
+const refreshScheduler = createRefreshScheduler({
+  dailyAt: ASO_ENV.refreshDailyAt,
+  timeZone: ASO_ENV.refreshTimeZone,
+  run: () => startupRefreshManager.start(),
+  onError: (error, metadata) => {
+    reportDashboardError(error, { ...metadata, context: "refresh-scheduler" });
+  },
 });
 
 function getStartupRefreshState(): StartupRefreshState {
@@ -344,7 +359,10 @@ function handleApiAsoSetupStatusGet(res: http.ServerResponse): void {
 }
 
 function handleApiAsoRefreshStatusGet(res: http.ServerResponse): void {
-  sendJson(res, 200, { success: true, data: getStartupRefreshState() });
+  sendJson(res, 200, {
+    success: true,
+    data: { ...getStartupRefreshState(), schedule: refreshScheduler.getState() },
+  });
 }
 
 function handleApiAsoStorefrontsGet(res: http.ServerResponse): void {
@@ -810,6 +828,7 @@ function registerShutdownHandlers(server: http.Server): void {
     const force = setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS);
     force.unref();
 
+    refreshScheduler.stop();
     stopStartupRefresh();
     server.close(() => {
       try {
@@ -905,6 +924,7 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
     });
 
     registerShutdownHandlers(server);
+    refreshScheduler.start();
 
     server.listen(dashboardPort, dashboardHost, () => {
       const address = server.address();

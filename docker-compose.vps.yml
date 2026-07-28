@@ -25,6 +25,11 @@ services:
       ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
       # Apple throttles the app-detail endpoint per storefront; keep bursts small.
       ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+      # The app owns its own clock: it refreshes daily at this wall-clock time
+      # and writes straight to SQLite, so the data is current whether or not
+      # anything calls the API.
+      ASO_REFRESH_DAILY_AT: "04:00"
+      ASO_REFRESH_TIMEZONE: "Europe/Prague"
     volumes:
       - aso-data:/home/node/.aso
     # No ports. Caddy reaches this over the shared network as http://asocli:3456,

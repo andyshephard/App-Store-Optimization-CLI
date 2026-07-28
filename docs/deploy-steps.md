@@ -259,7 +259,25 @@ prefixed with the compose project directory name.
 
 ---
 
-## 13. [n8n] Call it over the internal network
+## 13. [n8n] Read the data - never trigger a fetch
+
+The server refreshes itself daily at 04:00 Europe/Prague
+(`ASO_REFRESH_DAILY_AT` in `docker-compose.vps.yml`), so n8n only reads what is
+already in SQLite. Import `docs/n8n-daily-report.json`, which touches only
+`/api/aso/refresh-status`, `/api/aso/storefronts` and `/api/aso/keywords` — all
+pure database reads.
+
+Confirm the schedule is armed:
+
+```bash
+curl -s -H "Authorization: Bearer $ASO_API_TOKEN" \
+  https://keywords.chunks.app/api/aso/refresh-status | python3 -m json.tool
+```
+
+`schedule.nextRunAt` should be tomorrow at 02:00Z in summer (04:00 Prague), or
+03:00Z in winter.
+
+## 14. [n8n] Call it over the internal network
 
 In n8n, use `http://asocli:3456`, **not** the public hostname. Both containers
 are on `n8n-docker-caddy_default`, so this skips TLS and the public round trip
