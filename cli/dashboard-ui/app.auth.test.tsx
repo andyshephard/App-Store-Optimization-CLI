@@ -1855,7 +1855,7 @@ describe("dashboard auth modal UI flow", () => {
           },
         });
       }
-      if (method === "POST" && url === "/api/aso/refresh/start") {
+      if (method === "POST" && url.split("?")[0] === "/api/aso/refresh/start") {
         refreshStartCount += 1;
         return jsonResponse({
           status: 202,
@@ -2142,7 +2142,7 @@ describe("dashboard auth modal UI flow", () => {
           },
         });
       }
-      if (method === "POST" && url === "/api/aso/refresh/start") {
+      if (method === "POST" && url.split("?")[0] === "/api/aso/refresh/start") {
         refreshStartCount += 1;
         return refreshStartPromise;
       }
@@ -2376,7 +2376,7 @@ describe("dashboard auth modal UI flow", () => {
           },
         });
       }
-      if (method === "POST" && url === "/api/aso/refresh/start") {
+      if (method === "POST" && url.split("?")[0] === "/api/aso/refresh/start") {
         refreshStartCount += 1;
         return jsonResponse({
           status: 202,
