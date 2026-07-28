@@ -25,6 +25,13 @@ services:
       ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
       # Apple throttles the app-detail endpoint per storefront; keep bursts small.
       ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+      # 60s between storefronts. Measured 2026-07-28: a full forced crawl of 12
+      # storefronts does only ~152s of actual work, so pacing dominates. Kept at
+      # 60s rather than tuned to the edge because the runs that set this were on
+      # warm app-doc caches; those expire every 168h, and on a cold day each
+      # storefront fetches several times more requests - which is the case the
+      # pacing exists for.
+      ASO_REFRESH_INTER_COUNTRY_DELAY_MS: "60000"
       # The app owns its own clock: it refreshes daily at this wall-clock time
       # and writes straight to SQLite, so the data is current whether or not
       # anything calls the API.

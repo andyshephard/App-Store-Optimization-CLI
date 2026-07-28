@@ -20,6 +20,13 @@ services:
       # Apple throttles the app-detail endpoint per storefront and answers 403
       # once a burst is too large.
       ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+      # 60s between storefronts. Measured 2026-07-28: a full forced crawl of 12
+      # storefronts does only ~152s of actual work, so pacing dominates. Kept at
+      # 60s rather than tuned to the edge because the runs that set this were on
+      # warm app-doc caches; those expire every 168h, and on a cold day each
+      # storefront fetches several times more requests - which is the case the
+      # pacing exists for.
+      ASO_REFRESH_INTER_COUNTRY_DELAY_MS: "60000"
       # Daily self-scheduled refresh; unset to disable.
       ASO_REFRESH_DAILY_AT: "04:00"
       ASO_REFRESH_TIMEZONE: "Europe/Prague"

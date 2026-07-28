@@ -22,7 +22,7 @@ export const ASO_DEFAULTS = {
   keywordEnrichmentConcurrency: 4,
   refreshDailyAt: null as string | null,
   refreshTimeZone: "UTC",
-  refreshInterCountryDelayMs: 180000,
+  refreshInterCountryDelayMs: 60000,
   refreshInterBatchDelayMs: 5000,
   keywordOrderTtlHours: 24,
   popularityCacheTtlHours: 720,
