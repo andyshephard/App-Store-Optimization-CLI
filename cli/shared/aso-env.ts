@@ -20,6 +20,8 @@ export const ASO_DEFAULTS = {
   rateLimitBaseDelayMs: 5000,
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
+  refreshInterCountryDelayMs: 180000,
+  refreshInterBatchDelayMs: 5000,
   keywordOrderTtlHours: 24,
   popularityCacheTtlHours: 720,
   appCacheTtlHours: 168,
@@ -42,6 +44,10 @@ export type AsoEnvConfig = {
   rateLimitBaseDelayMs: number;
   retryJitterFactor: number;
   keywordEnrichmentConcurrency: number;
+  /** Pause between storefronts during a background refresh. */
+  refreshInterCountryDelayMs: number;
+  /** Pause between keyword batches during a background refresh. */
+  refreshInterBatchDelayMs: number;
   keywordOrderTtlHours: number;
   popularityCacheTtlHours: number;
   appCacheTtlHours: number;
@@ -163,6 +169,14 @@ function readAsoEnv(
     keywordEnrichmentConcurrency: parsePositiveInt(
       env.ASO_KEYWORD_ENRICHMENT_CONCURRENCY,
       ASO_DEFAULTS.keywordEnrichmentConcurrency
+    ),
+    refreshInterCountryDelayMs: parseNonNegativeInt(
+      env.ASO_REFRESH_INTER_COUNTRY_DELAY_MS,
+      ASO_DEFAULTS.refreshInterCountryDelayMs
+    ),
+    refreshInterBatchDelayMs: parseNonNegativeInt(
+      env.ASO_REFRESH_INTER_BATCH_DELAY_MS,
+      ASO_DEFAULTS.refreshInterBatchDelayMs
     ),
     keywordOrderTtlHours: parsePositiveInt(
       env.ASO_KEYWORD_ORDER_TTL_HOURS,

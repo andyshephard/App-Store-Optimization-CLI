@@ -21,6 +21,8 @@ export type StartupRefreshCounters = {
   eligibleKeywordCount: number;
   refreshedKeywordCount: number;
   failedKeywordCount: number;
+  /** Storefronts abandoned early because they looked throttled. */
+  skippedCountries: string[];
 };
 
 export type StartupRefreshState = {
@@ -40,6 +42,7 @@ export type KeywordRefreshItem = {
 
 export const STARTUP_KEYWORD_REFRESH_BATCH_SIZE = 25;
 const FOREGROUND_PAUSE_MS = 300;
+
 const RETRY_DELAY_MS = 500;
 
 type StartupRefreshDeps = {
@@ -60,6 +63,24 @@ type StartupRefreshDeps = {
     items: KeywordRefreshItem[]
   ) => Promise<unknown>;
   isForegroundBusy: () => boolean;
+  /**
+   * Pause between storefronts. Apple throttles the app-detail endpoint per
+   * storefront and answers 403 once a burst is too large; 403 is deliberately
+   * not treated as transient, so a throttled storefront fails every remaining
+   * batch fast and the loop would otherwise march into the next one hot.
+   * Defaults to 0, keeping existing callers and tests unchanged.
+   */
+  interCountryDelayMs?: number;
+  /** Pause between batches inside one storefront. Defaults to 0. */
+  interBatchDelayMs?: number;
+  /**
+   * Abandon a storefront once this many consecutive keywords have failed
+   * outright. Counting keywords rather than batches matters: a batch may hold a
+   * single keyword, and a couple of unlucky keywords should not abandon a
+   * storefront, whereas fifty in a row is a throttle rather than bad luck.
+   * Defaults to 0, which disables the check entirely.
+   */
+  abandonCountryAfterFailedKeywords?: number;
   reportError?: (error: unknown, metadata: Record<string, unknown>) => void;
   isAuthReauthRequiredError?: (error: unknown) => boolean;
   nowMs?: () => number;
@@ -135,6 +156,7 @@ function initialCounters(): StartupRefreshCounters {
     eligibleKeywordCount: 0,
     refreshedKeywordCount: 0,
     failedKeywordCount: 0,
+    skippedCountries: [],
   };
 }
 
@@ -204,6 +226,12 @@ export function createStartupRefreshManager(
     100,
     Math.max(1, deps.keywordBatchSize ?? STARTUP_KEYWORD_REFRESH_BATCH_SIZE)
   );
+  const interCountryDelayMs = Math.max(0, deps.interCountryDelayMs ?? 0);
+  const interBatchDelayMs = Math.max(0, deps.interBatchDelayMs ?? 0);
+  const abandonCountryAfterFailedKeywords = Math.max(
+    0,
+    deps.abandonCountryAfterFailedKeywords ?? 0
+  );
 
   let state: StartupRefreshState = initialState();
   let runPromise: Promise<void> | null = null;
@@ -245,8 +273,13 @@ export function createStartupRefreshManager(
     if (items.length === 0) return;
 
     const batches = chunkItems(items, keywordBatchSize);
-    for (const batch of batches) {
+    let consecutiveFailedKeywords = 0;
+    for (const [batchIndex, batch] of batches.entries()) {
       if (stopRequested) break;
+      if (batchIndex > 0 && interBatchDelayMs > 0) {
+        await sleep(interBatchDelayMs);
+        if (stopRequested) break;
+      }
       while (deps.isForegroundBusy()) {
         if (stopRequested) break;
         await sleep(FOREGROUND_PAUSE_MS);
@@ -265,6 +298,7 @@ export function createStartupRefreshManager(
           return isTransientStartupFailure(error);
         });
         state.counters.refreshedKeywordCount += batch.length;
+        consecutiveFailedKeywords = 0;
       } catch (error) {
         const isAuthReauthRequired =
           deps.isAuthReauthRequiredError?.(error) === true;
@@ -279,13 +313,31 @@ export function createStartupRefreshManager(
         if (isAuthReauthRequired) {
           break;
         }
+        // Every keyword in a batch failing usually means the storefront itself
+        // is throttled, not that these particular keywords are bad. Continuing
+        // burns the rest of the list against a wall.
+        consecutiveFailedKeywords = isExhaustedBatchFailure(error)
+          ? consecutiveFailedKeywords + batch.length
+          : 0;
+        if (
+          abandonCountryAfterFailedKeywords > 0 &&
+          consecutiveFailedKeywords >= abandonCountryAfterFailedKeywords
+        ) {
+          state.counters.skippedCountries.push(country);
+          break;
+        }
       }
     }
   };
 
   const refreshKeywordsInBatches = async (): Promise<void> => {
-    for (const country of resolveRefreshCountries()) {
+    const countries = resolveRefreshCountries();
+    for (const [index, country] of countries.entries()) {
       if (stopRequested) break;
+      if (index > 0 && interCountryDelayMs > 0) {
+        await sleep(interCountryDelayMs);
+        if (stopRequested) break;
+      }
       await refreshCountryInBatches(country);
       // A reauth prompt applies to the Apple session itself, so continuing on
       // to the next storefront would just fail the same way.
@@ -350,7 +402,10 @@ export function createStartupRefreshManager(
     },
     getState: () => ({
       ...state,
-      counters: { ...state.counters },
+      counters: {
+        ...state.counters,
+        skippedCountries: [...state.counters.skippedCountries],
+      },
     }),
   };
 }

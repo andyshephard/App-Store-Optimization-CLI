@@ -297,6 +297,140 @@ describe("startup-refresh-manager", () => {
     expect(manager.getState().requiresReauthentication).toBe(true);
   });
 
+  it("paces between storefronts and between batches", async () => {
+    const sleeps: number[] = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+    const byCountry: Record<string, string[]> = {
+      US: ["us-1", "us-2", "us-3"],
+      GB: ["gb-1"],
+      DE: ["de-1"],
+    };
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listRefreshCountries: () => ["US", "GB", "DE"],
+      listKeywords: (country) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildKeyword({
+            keyword,
+            normalizedKeyword: keyword,
+            country,
+            orderExpiresAt: "2026-03-06T00:00:00.000Z",
+          })
+        ),
+      listAppKeywords: (country) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildAssociation({ keyword, country, appId: "app-1" })
+        ),
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async () => {},
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      keywordBatchSize: 1,
+      interCountryDelayMs: 180000,
+      interBatchDelayMs: 5000,
+    });
+
+    manager.start();
+    await waitForManagerToFinish(manager);
+
+    // Two gaps for three storefronts - never before the first or after the last.
+    expect(sleeps.filter((ms) => ms === 180000)).toHaveLength(2);
+    // US has three single-keyword batches, so two gaps; GB and DE have one each.
+    expect(sleeps.filter((ms) => ms === 5000)).toHaveLength(2);
+    expect(manager.getState().status).toBe("completed");
+  });
+
+  it("does not pace when the delays are left at their defaults", async () => {
+    const sleeps: number[] = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listRefreshCountries: () => ["US", "GB"],
+      listKeywords: (country) => [
+        buildKeyword({
+          keyword: `${country.toLowerCase()}-1`,
+          normalizedKeyword: `${country.toLowerCase()}-1`,
+          country,
+          orderExpiresAt: "2026-03-06T00:00:00.000Z",
+        }),
+      ],
+      listAppKeywords: (country) => [
+        buildAssociation({
+          keyword: `${country.toLowerCase()}-1`,
+          country,
+          appId: "app-1",
+        }),
+      ],
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async () => {},
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      keywordBatchSize: 25,
+    });
+
+    manager.start();
+    await waitForManagerToFinish(manager);
+
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it("abandons a storefront once enough consecutive keywords fail", async () => {
+    const attempted: string[] = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+    const usKeywords = ["k1", "k2", "k3", "k4", "k5"];
+    const byCountry: Record<string, string[]> = { US: usKeywords, GB: ["gb-1"] };
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listRefreshCountries: () => ["US", "GB"],
+      listKeywords: (country) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildKeyword({
+            keyword,
+            normalizedKeyword: keyword,
+            country,
+            orderExpiresAt: "2026-03-06T00:00:00.000Z",
+          })
+        ),
+      listAppKeywords: (country) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildAssociation({ keyword, country, appId: "app-1" })
+        ),
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async (country, items) => {
+        attempted.push(`${country}:${items.map((i) => i.keyword).join(",")}`);
+        if (country === "US") {
+          throw new Error("All keywords failed (1): k:INSUFFICIENT_DOCS(503)");
+        }
+      },
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async () => {},
+      keywordBatchSize: 1,
+      abandonCountryAfterFailedKeywords: 2,
+    });
+
+    manager.start();
+    await waitForManagerToFinish(manager);
+
+    // Stops after two failures rather than burning all five keywords...
+    expect(attempted.filter((entry) => entry.startsWith("US:"))).toHaveLength(2);
+    // ...and moves on to the next storefront rather than aborting the run.
+    expect(attempted).toContain("GB:gb-1");
+    expect(manager.getState().counters.skippedCountries).toEqual(["US"]);
+  });
+
   it("stops refresh at the next batch boundary", async () => {
     const enrichCalls: KeywordRefreshItem[][] = [];
     let releaseBatch = () => {};

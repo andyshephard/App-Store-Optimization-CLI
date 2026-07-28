@@ -35,6 +35,7 @@ import {
 } from "../domain/keywords/policy";
 import {
   createStartupRefreshManager,
+  STARTUP_KEYWORD_REFRESH_BATCH_SIZE,
   type StartupRefreshState,
 } from "./startup-refresh-manager";
 import {
@@ -174,6 +175,11 @@ const startupRefreshManager = createStartupRefreshManager({
   enrichKeywords: (country, items) =>
     keywordPipelineService.refreshStartup(country, items),
   isForegroundBusy: () => foregroundMutationCount > 0,
+  interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
+  interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
+  // Two full batches of nothing but failures means the storefront is throttled,
+  // not that these particular keywords are bad.
+  abandonCountryAfterFailedKeywords: STARTUP_KEYWORD_REFRESH_BATCH_SIZE * 2,
   reportError: (error, metadata) => {
     reportDashboardError(error, {
       ...metadata,

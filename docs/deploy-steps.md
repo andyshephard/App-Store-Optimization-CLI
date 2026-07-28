@@ -205,7 +205,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 ## 10. [Browser] Log in to Apple
 
-Open `https://keywords.chunks.app`, enter the basic-auth password from step 4,
+Open `https://keywords.chunks.app`, enter the username 'owner' and the basic-auth password from step 4,
 then complete the Apple login in the dashboard: Apple ID, password, two-factor
 method, and the 6-digit code from your device.
 
