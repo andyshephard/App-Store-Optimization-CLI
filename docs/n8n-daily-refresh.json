@@ -1,0 +1,248 @@
+{
+  "name": "ASO daily keyword refresh",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Every day 04:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-660, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://asocli:3456/api/aso/refresh-status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Check not already running",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-440, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "running",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Idle?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://asocli:3456/api/aso/refresh/start",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Start refresh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, -100]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "minutes"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Wait 10 minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [220, -100],
+      "webhookId": "a1000000-0000-4000-8000-0000000000f1"
+    },
+    {
+      "parameters": {
+        "url": "http://asocli:3456/api/aso/refresh-status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Poll status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "running",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Still running?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.data.requiresReauthentication }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Apple session expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "subject",
+              "value": "=ASO refresh needs Apple reauthentication",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "body",
+              "value": "=The daily ASO keyword refresh stopped because the Apple Search Ads session expired.\n\nOpen https://keywords.chunks.app and complete the Apple login, including the two-factor code.\n\nDo not trigger the login from automation - the prompt is a single slot and an unattended start blocks the browser flow.\n\nRefreshed: {{ $json.data.counters.refreshedKeywordCount }}\nFailed: {{ $json.data.counters.failedKeywordCount }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "Build alert (connect to email)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1100, -100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s3",
+              "name": "summary",
+              "value": "=Refreshed {{ $json.data.counters.refreshedKeywordCount }}, failed {{ $json.data.counters.failedKeywordCount }}, skipped storefronts: {{ $json.data.counters.skippedCountries.join(', ') || 'none' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000a",
+      "name": "Run summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1100, 100]
+    }
+  ],
+  "connections": {
+    "Every day 04:00": {
+      "main": [[{ "node": "Check not already running", "type": "main", "index": 0 }]]
+    },
+    "Check not already running": {
+      "main": [[{ "node": "Idle?", "type": "main", "index": 0 }]]
+    },
+    "Idle?": {
+      "main": [[{ "node": "Start refresh", "type": "main", "index": 0 }], []]
+    },
+    "Start refresh": {
+      "main": [[{ "node": "Wait 10 minutes", "type": "main", "index": 0 }]]
+    },
+    "Wait 10 minutes": {
+      "main": [[{ "node": "Poll status", "type": "main", "index": 0 }]]
+    },
+    "Poll status": {
+      "main": [[{ "node": "Still running?", "type": "main", "index": 0 }]]
+    },
+    "Still running?": {
+      "main": [
+        [{ "node": "Wait 10 minutes", "type": "main", "index": 0 }],
+        [{ "node": "Apple session expired?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Apple session expired?": {
+      "main": [
+        [{ "node": "Build alert (connect to email)", "type": "main", "index": 0 }],
+        [{ "node": "Run summary", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Prague"
+  },
+  "pinData": {}
+}
