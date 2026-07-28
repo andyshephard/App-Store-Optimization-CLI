@@ -232,6 +232,11 @@ required on every request. See [docs/deployment.md](docs/deployment.md) for the
 Docker Compose + Caddy setup, including how Apple login and two-factor are
 completed entirely in the browser with no terminal access.
 
+Once hosted, the server refreshes itself on a schedule and
+[docs/api.md](docs/api.md) documents every endpoint for automation — including
+which ones are pure database reads and which reach out to Apple as a side effect
+of a GET.
+
 ## Project Docs
 
 - Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
