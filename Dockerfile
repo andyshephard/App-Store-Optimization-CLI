@@ -29,8 +29,11 @@ ENV NODE_ENV=production \
     ASO_DASHBOARD_HOST=0.0.0.0 \
     ASO_DASHBOARD_PORT=3456 \
     ASO_OPEN_BROWSER=0 \
-    ASO_DISABLE_UPDATE_CHECK=1 \
-    ASO_DISABLE_CREDENTIAL_STORE=1
+    ASO_DISABLE_UPDATE_CHECK=1
+# ASO_DISABLE_CREDENTIAL_STORE is deliberately not set here: the keychain
+# service already no-ops on any non-darwin platform, so it is redundant inside a
+# Linux image, and the name trips BuildKit's secrets-in-ENV lint. The compose
+# files still set it, where it documents intent without the false positive.
 WORKDIR /app
 
 COPY --from=deps    /app/node_modules ./node_modules
