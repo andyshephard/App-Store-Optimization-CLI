@@ -20,6 +20,7 @@ export const ASO_DEFAULTS = {
   rateLimitBaseDelayMs: 5000,
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
+  disableAppleFetchOnRead: false,
   refreshDailyAt: null as string | null,
   refreshTimeZone: "UTC",
   refreshInterCountryDelayMs: 180000,
@@ -46,6 +47,12 @@ export type AsoEnvConfig = {
   rateLimitBaseDelayMs: number;
   retryJitterFactor: number;
   keywordEnrichmentConcurrency: number;
+  /**
+   * When true, read endpoints serve whatever is cached and never call Apple or
+   * SensorTower. The scheduled refresh is unaffected - it is the thing that
+   * keeps the cache current.
+   */
+  disableAppleFetchOnRead: boolean;
   /** Daily wall-clock time ("HH:MM") to run the refresh; null disables it. */
   refreshDailyAt: string | null;
   /** IANA timezone the daily time is interpreted in. */
@@ -176,6 +183,7 @@ function readAsoEnv(
       env.ASO_KEYWORD_ENRICHMENT_CONCURRENCY,
       ASO_DEFAULTS.keywordEnrichmentConcurrency
     ),
+    disableAppleFetchOnRead: env.ASO_DISABLE_APPLE_FETCH_ON_READ === "1",
     refreshDailyAt: parseTrimmed(env.ASO_REFRESH_DAILY_AT),
     refreshTimeZone:
       parseTrimmed(env.ASO_REFRESH_TIMEZONE) ?? ASO_DEFAULTS.refreshTimeZone,

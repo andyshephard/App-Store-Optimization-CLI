@@ -89,6 +89,22 @@ SensorTower) · `/api/aso/apps` (`refresh=1` forces a lookup) ·
 
 **Mutating.** Everything else.
 
+### Cache-only mode
+
+`ASO_DISABLE_APPLE_FETCH_ON_READ=1` removes the middle group entirely: those
+four endpoints keep responding, served from SQLite, and never call Apple or
+SensorTower. **It is on in this deployment.** The daily refresh is unaffected —
+it is what keeps the cache current.
+
+What changes with it on:
+
+| Endpoint | Behaviour |
+|---|---|
+| `/api/apps` | Lists stored apps; ratings are as of the last scheduled refresh |
+| `/api/aso/apps` | Cached docs only; `refresh=1` is ignored rather than honoured |
+| `/api/aso/top-apps` | Stored ranking and stored docs; no re-crawl, no SensorTower. Apps never hydrated will be missing from the list |
+| `/api/aso/apps/search` | Returns `[]` with a `warning`. A free-text search cannot be answered from cache, so **adding a new app through the dashboard will not work** until the flag is off |
+
 The server refreshes itself daily (`ASO_REFRESH_DAILY_AT`), so automation should
 only ever read. Reaching for a fetch-triggering endpoint to "get fresh data" is
 the mistake this section exists to prevent.

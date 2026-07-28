@@ -581,6 +581,95 @@ describe("dashboard server routes", () => {
     });
   });
 
+  describe("cache-only mode", () => {
+    const previous = process.env.ASO_DISABLE_APPLE_FETCH_ON_READ;
+
+    beforeEach(() => {
+      process.env.ASO_DISABLE_APPLE_FETCH_ON_READ = "1";
+    });
+
+    afterEach(() => {
+      if (previous === undefined) {
+        delete process.env.ASO_DISABLE_APPLE_FETCH_ON_READ;
+      } else {
+        process.env.ASO_DISABLE_APPLE_FETCH_ON_READ = previous;
+      }
+    });
+
+    it("serves /api/apps without hydrating stale docs from Apple", async () => {
+      mockListOwnedApps.mockReturnValue([
+        {
+          id: "1",
+          kind: "owned",
+          name: "Alpha",
+          // Old enough that it would normally be refreshed.
+          lastFetchedAt: "2000-01-01T00:00:00.000Z",
+        } as any,
+      ]);
+      mockGetAppLastKeywordAddedAtMap.mockReturnValue(new Map());
+
+      const response = await request({ method: "GET", path: "/api/apps" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data).toHaveLength(1);
+      expect(mockFetchOwnedAppSnapshotsFromApi).not.toHaveBeenCalled();
+      expect(mockUpsertOwnedAppSnapshots).not.toHaveBeenCalled();
+    });
+
+    it("serves /api/aso/apps from cache and ignores refresh=1", async () => {
+      mockGetCompetitorAppDocs.mockReturnValue([
+        { appId: "1", country: "US", name: "Cached" } as any,
+      ]);
+
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/apps?country=US&ids=1&refresh=1",
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data[0].name).toBe("Cached");
+      expect(mockGetAsoAppDocsLocal).not.toHaveBeenCalled();
+    });
+
+    it("explains itself rather than returning an empty app search", async () => {
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/apps/search?country=US&term=chunks",
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data.appDocs).toEqual([]);
+      expect(response.json?.data.warning).toContain("disabled");
+      expect(mockRefreshAsoKeywordOrderLocal).not.toHaveBeenCalled();
+    });
+
+    it("serves /api/aso/top-apps from cache without refreshing the order", async () => {
+      mockGetKeyword.mockReturnValue({
+        keyword: "chunks",
+        normalizedKeyword: "chunks",
+        country: "US",
+        popularity: 5,
+        orderedAppIds: ["1"],
+        // Stale, so a normal request would re-crawl.
+        orderExpiresAt: "2000-01-01T00:00:00.000Z",
+      } as any);
+      mockGetCompetitorAppDocs.mockReturnValue([
+        { appId: "1", country: "US", name: "Cached" } as any,
+      ]);
+      mockGetSensorTowerAppMetrics.mockReturnValue([]);
+
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/top-apps?country=US&keyword=chunks",
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data.appDocs).toHaveLength(1);
+      expect(mockRefreshOrder).not.toHaveBeenCalled();
+      expect(mockFetchSensorTowerMetricsForApps).not.toHaveBeenCalled();
+    });
+  });
+
   it("lists only enabled storefronts", async () => {
     const previous = process.env.ASO_SUPPORTED_COUNTRIES;
     process.env.ASO_SUPPORTED_COUNTRIES = "US,GB,ZZ";
