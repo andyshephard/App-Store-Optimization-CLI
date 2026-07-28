@@ -10,10 +10,8 @@ import {
 } from "../../services/keywords/aso-local-cache-service";
 import { keywordPipelineService } from "../../services/keywords/keyword-pipeline-service";
 import { chunkArray, getMissingOrExpiredAppIds } from "../refresh-utils";
-import {
-  DEFAULT_ASO_COUNTRY,
-  normalizeCountry,
-} from "../../domain/keywords/policy";
+import { DEFAULT_ASO_COUNTRY } from "../../domain/keywords/policy";
+import { resolveRequestCountry } from "../http-utils";
 import type { AsoApiAppDoc, AsoRouteDeps } from "./aso-route-types";
 import { isStoredKeywordOrderFresh } from "../../shared/aso-keyword-validity";
 import {
@@ -29,6 +27,11 @@ const ASO_APP_DOCS_MAX_BATCH_SIZE = 50;
 const ASO_APP_SEARCH_DEFAULT_LIMIT = 20;
 const ASO_APP_SEARCH_MAX_LIMIT = 50;
 const ASO_APP_SEARCH_FALLBACK_WARNING = "Search failed";
+const ASO_TOP_APPS_DEFAULT_LIMIT = 10;
+// Apple only ever returns ~250 ranked ids for a keyword, and every uncached app
+// in this window costs one app-detail request (bounded concurrency, but still
+// real traffic), so the ceiling stays well under the full list.
+const ASO_TOP_APPS_MAX_LIMIT = 100;
 const SENSOR_TOWER_METRICS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isSensorTowerMetricsFresh(fetchedAt: string, nowMs: number): boolean {
@@ -106,7 +109,10 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     res: http.ServerResponse,
     query: Record<string, string>
   ): Promise<void> {
-    const country = normalizeCountry(query.country);
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
     const term = (query.term ?? "").trim();
     const requestedLimit = Number.parseInt(
       query.limit ?? String(ASO_APP_SEARCH_DEFAULT_LIMIT),
@@ -233,16 +239,22 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     res: http.ServerResponse,
     query: Record<string, string>
   ): Promise<void> {
-    const country = normalizeCountry(query.country);
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
     const keyword = query.keyword ?? "";
     if (!keyword.trim()) {
       deps.sendApiError(res, 400, "INVALID_REQUEST", "Keyword is required.");
       return;
     }
-    const requestedLimit = Number.parseInt(query.limit ?? "10", 10);
+    const requestedLimit = Number.parseInt(
+      query.limit ?? String(ASO_TOP_APPS_DEFAULT_LIMIT),
+      10
+    );
     const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
-      ? Math.min(requestedLimit, 50)
-      : 10;
+      ? Math.min(requestedLimit, ASO_TOP_APPS_MAX_LIMIT)
+      : ASO_TOP_APPS_DEFAULT_LIMIT;
     const decoded = keyword.trim();
     let keywordRow = getKeyword(country, decoded);
     if (!keywordRow) {
@@ -414,7 +426,10 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     res: http.ServerResponse,
     query: Record<string, string>
   ): Promise<void> {
-    const country = normalizeCountry(query.country);
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return Promise.resolve();
+    }
     const forceRefresh = deps.isTruthyQueryParam(query.refresh);
     const ids = Array.from(
       new Set(

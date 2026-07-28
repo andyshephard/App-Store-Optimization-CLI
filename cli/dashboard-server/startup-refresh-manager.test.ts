@@ -203,6 +203,100 @@ describe("startup-refresh-manager", () => {
     expect(errors).toHaveLength(0);
   });
 
+  it("refreshes every storefront returned by listRefreshCountries", async () => {
+    const enrichCalls: Array<{ country: string; keywords: string[] }> = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+    const keywordsByCountry: Record<string, string[]> = {
+      US: ["us-1", "us-2"],
+      GB: ["gb-1"],
+    };
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listRefreshCountries: () => ["US", "gb", "US"],
+      listKeywords: (country) =>
+        (keywordsByCountry[country] ?? []).map((keyword) =>
+          buildKeyword({
+            keyword,
+            normalizedKeyword: keyword,
+            country,
+            orderExpiresAt: "2026-03-06T00:00:00.000Z",
+          })
+        ),
+      listAppKeywords: (country) =>
+        (keywordsByCountry[country] ?? []).map((keyword) =>
+          buildAssociation({ keyword, country, appId: "app-1" })
+        ),
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async (country, items) => {
+        enrichCalls.push({
+          country,
+          keywords: items.map((item) => item.keyword),
+        });
+      },
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async () => {},
+      keywordBatchSize: 25,
+    });
+
+    manager.start();
+    await waitForManagerToFinish(manager);
+
+    const state = manager.getState();
+    expect(state.status).toBe("completed");
+    // "gb" is normalized and the duplicate "US" is dropped.
+    expect(enrichCalls).toEqual([
+      { country: "US", keywords: ["us-1", "us-2"] },
+      { country: "GB", keywords: ["gb-1"] },
+    ]);
+    expect(state.counters.eligibleKeywordCount).toBe(3);
+    expect(state.counters.refreshedKeywordCount).toBe(3);
+  });
+
+  it("stops refreshing further storefronts once reauthentication is required", async () => {
+    const enrichCalls: string[] = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listRefreshCountries: () => ["US", "GB"],
+      listKeywords: (country) => [
+        buildKeyword({
+          keyword: `${country.toLowerCase()}-1`,
+          normalizedKeyword: `${country.toLowerCase()}-1`,
+          country,
+          orderExpiresAt: "2026-03-06T00:00:00.000Z",
+        }),
+      ],
+      listAppKeywords: (country) => [
+        buildAssociation({
+          keyword: `${country.toLowerCase()}-1`,
+          country,
+          appId: "app-1",
+        }),
+      ],
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async (country) => {
+        enrichCalls.push(country);
+        throw new Error("reauth required");
+      },
+      isForegroundBusy: () => false,
+      isAuthReauthRequiredError: () => true,
+      nowMs: () => now,
+      sleep: async () => {},
+      keywordBatchSize: 25,
+    });
+
+    manager.start();
+    await waitForManagerToFinish(manager);
+
+    expect(enrichCalls).toEqual(["US"]);
+    expect(manager.getState().requiresReauthentication).toBe(true);
+  });
+
   it("stops refresh at the next batch boundary", async () => {
     const enrichCalls: KeywordRefreshItem[][] = [];
     let releaseBatch = () => {};

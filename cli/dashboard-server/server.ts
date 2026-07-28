@@ -29,7 +29,10 @@ import {
   type DashboardErrorCode,
   type DashboardUserSafeError,
 } from "../domain/errors/dashboard-errors";
-import { DEFAULT_ASO_COUNTRY } from "../domain/keywords/policy";
+import {
+  DEFAULT_ASO_COUNTRY,
+  listEnabledStorefronts,
+} from "../domain/keywords/policy";
 import {
   createStartupRefreshManager,
   type StartupRefreshState,
@@ -42,7 +45,12 @@ import {
 import {
   createAsoRouteHandlers,
 } from "./routes/aso-routes";
-import { sendApiError, sendJson, parseJsonBody } from "./http-utils";
+import {
+  sendApiError,
+  sendJson,
+  parseJsonBody,
+  resolveRequestCountry,
+} from "./http-utils";
 import {
   resolveStaticPath,
   sendDashboardRuntimeConfig,
@@ -142,6 +150,10 @@ function runAsForegroundMutationSync(operation: () => void): void {
 
 const startupRefreshManager = createStartupRefreshManager({
   country: DEFAULT_ASO_COUNTRY,
+  // Background refresh covers every enabled storefront, not just the default —
+  // otherwise keywords tracked in GB would never refresh on their own.
+  listRefreshCountries: () =>
+    listEnabledStorefronts().map((storefront) => storefront.country),
   listKeywords,
   listAppKeywords: listAllAppKeywords,
   listAssociatedAppIds: () => {
@@ -321,6 +333,16 @@ function handleApiAsoSetupStatusGet(res: http.ServerResponse): void {
 
 function handleApiAsoRefreshStatusGet(res: http.ServerResponse): void {
   sendJson(res, 200, { success: true, data: getStartupRefreshState() });
+}
+
+function handleApiAsoStorefrontsGet(res: http.ServerResponse): void {
+  sendJson(res, 200, {
+    success: true,
+    data: {
+      storefronts: listEnabledStorefronts(),
+      defaultCountry: DEFAULT_ASO_COUNTRY,
+    },
+  });
 }
 
 function handleApiAsoRefreshStartPost(res: http.ServerResponse): void {
@@ -514,8 +536,10 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "GET" && pathname === "/api/apps") {
+        const country = resolveRequestCountry(res, query.country);
+        if (!country) return;
         ensureDefaultResearchAppExists();
-        let apps = listOwnedApps(DEFAULT_APP_DOCS_HYDRATION_COUNTRY);
+        let apps = listOwnedApps(country);
         const nowMs = Date.now();
         const refreshMaxAgeMs = ASO_ENV.ownedAppDocRefreshMaxAgeMs;
         const staleOwnedAppIds = apps
@@ -532,23 +556,24 @@ export function createServerRequestHandler(): http.RequestListener {
         if (staleOwnedAppIds.length > 0) {
           try {
             const snapshots = await fetchOwnedAppSnapshotsFromApi(
-              DEFAULT_APP_DOCS_HYDRATION_COUNTRY,
+              country,
               staleOwnedAppIds
             );
             if (snapshots.length > 0) {
-              upsertOwnedAppSnapshots(DEFAULT_APP_DOCS_HYDRATION_COUNTRY, snapshots);
+              upsertOwnedAppSnapshots(country, snapshots);
             }
-            apps = listOwnedApps(DEFAULT_APP_DOCS_HYDRATION_COUNTRY);
+            apps = listOwnedApps(country);
           } catch (error) {
             reportDashboardError(error, {
               method: "GET",
               path: "/api/apps",
               phase: "owned-app-refresh",
+              country,
               staleOwnedAppCount: staleOwnedAppIds.length,
             });
           }
         }
-        const appLastAddedAt = getAppLastKeywordAddedAtMap(DEFAULT_ASO_COUNTRY);
+        const appLastAddedAt = getAppLastKeywordAddedAtMap(country);
         const payload = apps
           .map((app) => ({
             id: app.id,
@@ -601,6 +626,11 @@ export function createServerRequestHandler(): http.RequestListener {
 
       if (req.method === "GET" && pathname === "/api/aso/refresh-status") {
         handleApiAsoRefreshStatusGet(res);
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/aso/storefronts") {
+        handleApiAsoStorefrontsGet(res);
         return;
       }
 

@@ -466,6 +466,73 @@ describe("dashboard server routes", () => {
     expect(response.json?.data.map((item: any) => item.id)).toEqual(["2", "1"]);
   });
 
+  it("lists only enabled storefronts", async () => {
+    const previous = process.env.ASO_SUPPORTED_COUNTRIES;
+    process.env.ASO_SUPPORTED_COUNTRIES = "US,GB,ZZ";
+    try {
+      const response = await request({
+        method: "GET",
+        path: "/api/aso/storefronts",
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json?.data.defaultCountry).toBe("US");
+      // ZZ is enabled but has no storefront entry, so it is dropped.
+      expect(response.json?.data.storefronts).toEqual([
+        { country: "US", name: "United States", isDefault: true },
+        { country: "GB", name: "United Kingdom", isDefault: false },
+      ]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ASO_SUPPORTED_COUNTRIES;
+      } else {
+        process.env.ASO_SUPPORTED_COUNTRIES = previous;
+      }
+    }
+  });
+
+  it("serves apps for an enabled storefront and rejects a disabled one", async () => {
+    const previous = process.env.ASO_SUPPORTED_COUNTRIES;
+    process.env.ASO_SUPPORTED_COUNTRIES = "US,GB";
+    try {
+      mockListOwnedApps.mockReturnValue([
+        { id: "1", kind: "owned", name: "Alpha", lastFetchedAt: null } as any,
+      ]);
+      mockGetAppLastKeywordAddedAtMap.mockReturnValue(new Map());
+
+      const enabled = await request({
+        method: "GET",
+        path: "/api/apps?country=GB",
+      });
+      expect(enabled.statusCode).toBe(200);
+      expect(mockListOwnedApps).toHaveBeenCalledWith("GB");
+      expect(mockGetAppLastKeywordAddedAtMap).toHaveBeenCalledWith("GB");
+
+      const disabled = await request({
+        method: "GET",
+        path: "/api/apps?country=DE",
+      });
+      expect(disabled.statusCode).toBe(400);
+      expect(disabled.json?.errorCode).toBe("COUNTRY_NOT_ENABLED");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ASO_SUPPORTED_COUNTRIES;
+      } else {
+        process.env.ASO_SUPPORTED_COUNTRIES = previous;
+      }
+    }
+  });
+
+  it("rejects keyword reads for a storefront that is not enabled", async () => {
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/keywords?country=GB&appId=1",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json?.errorCode).toBe("COUNTRY_NOT_ENABLED");
+  });
+
   it("validates app-creation payloads", async () => {
     const invalidJson = await request({
       method: "POST",

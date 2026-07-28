@@ -44,6 +44,13 @@ const RETRY_DELAY_MS = 500;
 
 type StartupRefreshDeps = {
   country: string;
+  /**
+   * Storefronts to refresh, in order. Defaults to `[country]` so existing
+   * single-storefront callers behave exactly as before. The dashboard passes
+   * every enabled storefront, because keywords tracked in a non-default
+   * storefront would otherwise never be refreshed in the background.
+   */
+  listRefreshCountries?: () => string[];
   listKeywords: (country: string) => StoredAsoKeyword[];
   listAppKeywords: (country: string) => StoredAppKeyword[];
   listAssociatedAppIds: () => Set<string>;
@@ -214,15 +221,27 @@ export function createStartupRefreshManager(
     deps.reportError?.(error, metadata);
   };
 
-  const refreshKeywordsInBatches = async (): Promise<void> => {
+  const resolveRefreshCountries = (): string[] => {
+    const countries = deps.listRefreshCountries?.() ?? [deps.country];
+    const unique: string[] = [];
+    for (const entry of countries) {
+      const normalized = entry.trim().toUpperCase();
+      if (normalized && !unique.includes(normalized)) {
+        unique.push(normalized);
+      }
+    }
+    return unique.length > 0 ? unique : [deps.country];
+  };
+
+  const refreshCountryInBatches = async (country: string): Promise<void> => {
     const items = selectKeywordRefreshCandidates({
-      keywords: deps.listKeywords(deps.country),
-      appKeywords: deps.listAppKeywords(deps.country),
+      keywords: deps.listKeywords(country),
+      appKeywords: deps.listAppKeywords(country),
       associatedAppIds: deps.listAssociatedAppIds(),
       orderRelevantAppIds: deps.listOrderRelevantAppIds(),
       nowMs: nowMs(),
     });
-    state.counters.eligibleKeywordCount = items.length;
+    state.counters.eligibleKeywordCount += items.length;
     if (items.length === 0) return;
 
     const batches = chunkItems(items, keywordBatchSize);
@@ -235,7 +254,7 @@ export function createStartupRefreshManager(
       if (stopRequested) break;
       try {
         await withOneRetry(async () => {
-          await deps.enrichKeywords(deps.country, batch);
+          await deps.enrichKeywords(country, batch);
         }, sleep, (error) => {
           if (deps.isAuthReauthRequiredError?.(error) === true) {
             return false;
@@ -252,6 +271,7 @@ export function createStartupRefreshManager(
         state.counters.failedKeywordCount += batch.length;
         setFailure(error, {
           phase: "startup-keyword-refresh",
+          country,
           batchSize: batch.length,
           keywordPreview: batch.slice(0, 5).map((item) => item.keyword),
           isAuthReauthRequired,
@@ -260,6 +280,16 @@ export function createStartupRefreshManager(
           break;
         }
       }
+    }
+  };
+
+  const refreshKeywordsInBatches = async (): Promise<void> => {
+    for (const country of resolveRefreshCountries()) {
+      if (stopRequested) break;
+      await refreshCountryInBatches(country);
+      // A reauth prompt applies to the Apple session itself, so continuing on
+      // to the next storefront would just fail the same way.
+      if (state.requiresReauthentication) break;
     }
   };
 

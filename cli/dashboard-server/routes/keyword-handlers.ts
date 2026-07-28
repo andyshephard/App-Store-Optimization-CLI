@@ -15,7 +15,8 @@ import {
   ASO_MAX_KEYWORDS,
   ASO_MAX_KEYWORDS_PER_REQUEST_ERROR,
 } from "../../shared/aso-keyword-limits";
-import { normalizeCountry, normalizeKeyword } from "../../domain/keywords/policy";
+import { normalizeKeyword } from "../../domain/keywords/policy";
+import { resolveRequestCountry } from "../http-utils";
 import type { AsoRouteDeps } from "./aso-route-types";
 
 const DEFAULT_KEYWORDS_PAGE = 1;
@@ -289,7 +290,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     const appId = body.appId ?? DEFAULT_RESEARCH_APP_ID;
     const rawKeywords = body.keywords ?? [];
     const keywords = keywordPipelineService.normalizeKeywords(rawKeywords);
-    const country = normalizeCountry(body.country);
+    const country = resolveRequestCountry(res, body.country);
+    if (!country) {
+      return;
+    }
     const startedAt = Date.now();
     if (keywords.length === 0) {
       deps.sendApiError(
@@ -531,7 +535,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     }
     const appId = body.appId ?? DEFAULT_RESEARCH_APP_ID;
     const keywords = body.keywords ?? [];
-    const country = normalizeCountry(body.country);
+    const country = resolveRequestCountry(res, body.country);
+    if (!country) {
+      return;
+    }
     const startedAt = Date.now();
     logger.debug("[aso-dashboard] request", {
       method: "DELETE",
@@ -598,7 +605,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
       return;
     }
     const appId = body.appId ?? DEFAULT_RESEARCH_APP_ID;
-    const country = normalizeCountry(body.country);
+    const country = resolveRequestCountry(res, body.country);
+    if (!country) {
+      return;
+    }
 
     if (deps.isDashboardAuthInProgress()) {
       deps.sendApiError(
@@ -664,7 +674,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     }
     const appId = body.appId ?? DEFAULT_RESEARCH_APP_ID;
     const keyword = body.keyword?.trim() ?? "";
-    const country = normalizeCountry(body.country);
+    const country = resolveRequestCountry(res, body.country);
+    if (!country) {
+      return;
+    }
     if (!keyword) {
       deps.sendApiError(
         res,
@@ -723,7 +736,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
   ): void {
     const appId = query.appId?.trim() ?? "";
     const normalizedKeyword = normalizeKeyword(query.keyword ?? "");
-    const country = normalizeCountry(query.country);
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
     if (!appId || !normalizedKeyword) {
       deps.sendApiError(
         res,
@@ -976,7 +992,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     res: http.ServerResponse,
     query: Record<string, string>
   ): void {
-    const country = normalizeCountry(query.country);
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
     const appId = query.appId?.trim() ?? "";
     if (appId !== "") {
       handleApiAsoKeywordsGetPagedForApp(res, country, appId, query);

@@ -10,12 +10,15 @@ import {
   DEFAULT_RESEARCH_APP_ID,
   DEFAULT_RESEARCH_APP_NAME,
 } from "../shared/aso-research";
+import { resolveRequestCountry } from "./http-utils";
 import type { OwnedAppSnapshot } from "./owned-app-details";
 
 type ManualAppAddRequest =
   | {
       type: "app";
       appId?: string;
+      /** Storefront to hydrate ratings for; defaults to deps.hydrationCountry. */
+      country?: string;
     }
   | {
       type: "research";
@@ -122,7 +125,13 @@ export function createAppsHandlers(deps: CreateAppsHandlersDeps) {
         return;
       }
 
-      const country = deps.hydrationCountry;
+      const country = resolveRequestCountry(
+        res,
+        body.country ?? deps.hydrationCountry
+      );
+      if (!country) {
+        return;
+      }
       upsertOwnedApps([{ id: appId, kind: "owned", name: appId }]);
       let hydratedName = appId;
       try {
