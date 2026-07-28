@@ -191,8 +191,10 @@ then only for your browser.
   stops the refresh at its next batch boundary rather than mid-request to Apple,
   then checkpoints and closes SQLite.
 - **Rate limiting**: Apple throttles the app-detail endpoint per storefront and
-  answers 403 once a burst is too large; a blocked storefront recovers on its
-  own after a while. Concurrency is capped at 3 in compose. Scheduled crawling
+  per client, answering 403 after roughly 100–200 rapid requests to one
+  storefront. Recovery is seconds rather than minutes, and one client being
+  throttled does not affect another — a workstation was blocked on US while the
+  server crawled US with zero failures. Concurrency is capped at 3 in compose. Scheduled crawling
   across all 11 storefronts needs pacing between storefronts as well — that is
   Stage 2 work, so until then trigger refreshes deliberately rather than often.
 - **Health**: `GET /health` is unauthenticated by design, for uptime probes. It

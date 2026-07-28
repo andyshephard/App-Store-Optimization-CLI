@@ -164,14 +164,24 @@ What is and is not per storefront:
 
 ## Apple rate limiting
 
-The app-detail endpoint throttles **per storefront** with a 403 that rolls off
-after a while. Sustained multi-storefront crawling will trip it — during one run
-US/GB/CA/AU/FR/ES/PT served fine while IE/NZ/DE/IT were blocked simultaneously.
+The app-detail endpoint throttles **per storefront and per client**, answering
+403. Measured directly (2026-07-28, probing NZ from one machine):
+
+- **~100–200 rapid requests to one storefront trips it.** A wave of 100 was
+  clean; the next 100 returned 71 × 403.
+- **Recovery is seconds, not minutes.** An app returning 403 three times in a row
+  served 200 about a minute later. An earlier note here claimed blocks lasted
+  ~30 minutes; that was wrong, and probably described retries re-tripping it.
+- **It is per client, not global.** A workstation was 403 on US while the VPS
+  crawled US concurrently with zero failures.
+
+So the useful lever is requests-per-storefront in a short window, not total
+elapsed time. Concurrency alone is not the trigger: 25 simultaneous requests
+were fine, while 60 sequential ones during an active block all failed.
 
 It surfaces as `INSUFFICIENT_DOCS` (503) with `docsForDifficulty=0`, which reads
-like a data problem and hides the cause. Longer sleeps between keywords do not
-help; what helps is checking whether a storefront is serving before spending
-calls on it, then coming back later:
+like a data problem and hides the cause. Checking whether a storefront is
+serving before spending calls on it is still the cheapest guard:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \

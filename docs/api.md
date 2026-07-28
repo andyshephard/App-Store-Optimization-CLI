@@ -96,8 +96,8 @@ every time it runs.
 
 The consequences of scheduling one are not theoretical: Apple throttles the
 app-detail endpoint per storefront and returns 403 once a burst is too large,
-which blocks that storefront for a while — for the scheduled refresh too, not
-just the caller. A crawl of all 11 storefronts in quick succession is what
+which blocks that storefront for the client that tripped it. Recovery takes
+seconds, but a report that re-crawls on every run keeps re-tripping it. A crawl of all 11 storefronts in quick succession is what
 caused that during testing.
 
 If a report needs competitor titles, subtitles or download estimates, take them
@@ -452,8 +452,9 @@ serves it.
   limit.
 - **Request bodies are capped at 1 MB** (413 beyond).
 - **Apple throttles per storefront** and answers 403 once a burst is too large.
-  A blocked storefront recovers by itself after a while. The scheduler paces
-  itself; ad-hoc calls to the fetch-triggering endpoints do not.
+  Roughly 100–200 rapid requests to one storefront trips it; recovery takes
+  seconds. The scheduler paces itself; ad-hoc calls to the fetch-triggering
+  endpoints do not.
 - **One instance only.** SQLite is single-writer.
 - **`AUTH_REQUIRED` is ambiguous** — bad API token or dead Apple session. Probe
   `/health` first.
