@@ -6,8 +6,9 @@ Guidance for Claude Code working in this repository.
 
 A fork of [semihcihan/App-Store-Optimization-CLI](https://github.com/semihcihan/App-Store-Optimization-CLI)
 (`aso-cli` v0.17.0, MIT), cloned at upstream `0671de3`. The fork exists to unlock
-multi-storefront keyword tracking, which upstream scopes to US only. Nothing has
-been committed yet — everything below is in the working tree.
+multi-storefront keyword tracking, which upstream scopes to US only. Work lives
+on the `feat/multi-storefront` branch, unpushed. It is deployed at
+`keywords.chunks.app` — see `docs/deployment.md` and `docs/deploy-steps.md`.
 
 Primary consumer: the **Chunks Microlearning** iOS app (`6692632196`), whose repo
 is at `~/Documents/projects/chunks/chunks-frontend`. Its per-locale App Store
@@ -136,12 +137,12 @@ changes.
 ## Storefronts
 
 `cli/shared/aso-storefronts.ts` is the single source of truth: US, GB, CA, AU,
-IE, NZ, DE, FR, IT, ES, PT. Read the comment at the top of that file before
+IE, NZ, DE, FR, IT, ES, PT, VN. Read the comment at the top of that file before
 adding another — the important part is that the `X-Apple-Store-Front` header is
 `<storefrontId>-<languageIndex>,<platformId>` and **the language index is per
 storefront**, not a constant:
 
-| US 1 | GB 2 | FR 3 | DE 4 | CA 6 | IT 7 | ES 8 | PT 24 | AU/IE/NZ 2 |
+| US 1 | GB 2 | FR 3 | DE 4 | CA 6 | IT 7 | ES 8 | PT 24 | VN 43 | AU/IE/NZ 2 |
 
 Index 2 returns HTTP 200 on *every* storefront but with **English** metadata, so
 a 200 does not mean the index is right. Verify a candidate index by checking
@@ -153,6 +154,13 @@ keyword-match detection and therefore difficulty scores.
 `defaultLanguage` becomes the `?l=` parameter on app pages, and the English
 locales are **not** interchangeable: `?l=en-AU` and `?l=en-GB` return different
 titles for the same app.
+
+Apple does not always render numbers in the storefront's own language. Vietnam
+serves Vietnamese titles with English-style numbers (`8.1k`), so it carries an
+explicit `numberLocale` — reading that with vi-VN rules, where `.` groups
+thousands, turns 8,100 into 81,000. Its `additionalLanguages` is `["vi"]` rather
+than `["en-GB"]` for the same reason: the base doc already arrives English
+there, so the extra localization worth fetching is the Vietnamese one.
 
 What is and is not per storefront:
 
