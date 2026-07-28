@@ -1,5 +1,6 @@
 describe("telemetry instrument", () => {
-  const defaultPosthogApiKey = "phc_CjK5coJt6fxtXseg8XgkU8dMfXPur3JgabQh5454opmQ";
+  // Fork change: the default is blank so telemetry is opt-in — see instrument.ts.
+  const defaultPosthogApiKey = "";
   const originalNodeEnv = process.env.NODE_ENV;
   const originalBugsnagApiKey = process.env.BUGSNAG_API_KEY;
   const originalPosthogApiKey = process.env.ASO_POSTHOG_API_KEY;

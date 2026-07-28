@@ -103,7 +103,7 @@ aso
 
 ### Supported flags
 
-- `--country <code>`: currently `US` only
+- `--country <code>`: any storefront listed in `ASO_SUPPORTED_COUNTRIES` (default `US`)
 - `--primary-app-id <id>`: saved locally for future runs
 - `--min-popularity <number>`: filters out low-popularity keywords before enrichment
 - `--max-difficulty <number>`: filters out high-difficulty keywords after enrichment
@@ -184,10 +184,46 @@ Example MCP config:
 }
 ```
 
-## Current Scope
+## Storefronts
 
-- Storefront support: `US`
-- Multi-storefront support is planned
+Storefronts are opt-in through `ASO_SUPPORTED_COUNTRIES` (comma-separated). With
+it unset only `US` is enabled, which is the original behaviour.
+
+```bash
+ASO_SUPPORTED_COUNTRIES=US,GB aso keywords "wikipedia" --country GB
+ASO_SUPPORTED_COUNTRIES=US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT aso   # dashboard picker
+```
+
+Known storefronts live in `cli/shared/aso-storefronts.ts`: US, GB, CA, AU, IE,
+NZ, DE, FR, IT, ES, PT. Each entry carries the storefront id and its language
+index; both are needed for Apple's `X-Apple-Store-Front` header, and the
+language index is per storefront (US 1; GB/AU/IE/NZ 2; FR 3; DE 4; CA 6; IT 7;
+ES 8; PT 24). Index 2 returns HTTP 200 on every storefront but with English
+metadata, so a 200 does not mean the index is right — follow the probe recipe in
+that file before adding another.
+
+`defaultLanguage` is used as the `?l=` parameter when fetching an app page, and
+the English locales are not interchangeable: `?l=en-AU` and `?l=en-GB` return
+different titles for the same app.
+
+What is and is not per storefront:
+
+- Per storefront: rank, `app_count`, `difficulty_score`, `keyword_match`,
+  `is_brand_keyword`. These are computed from that storefront's search page.
+- Account-level: `popularity`. Apple returns the same score regardless of
+  storefront, so the same number appears under every storefront.
+
+The dashboard shows a storefront picker when more than one is enabled; data
+routes reject a storefront that is not enabled with `COUNTRY_NOT_ENABLED`.
+
+Rating counts on the search page are localized strings, not numbers, and the
+formats differ per storefront (`6.2K` in US, `428.932` in DE, `6,8 mil` in ES,
+`8,4 k` in FR). `cli/shared/aso-rating-count.ts` parses them per locale; it
+feeds `appCompetitiveScore` and therefore `difficulty_score`, so add a sample
+there when onboarding a storefront with a new number format.
+
+Keyword-match detection still splits on spaces, so it suits Latin-script
+storefronts. CJK storefronts would need a different tokenizer.
 
 ## Project Docs
 
