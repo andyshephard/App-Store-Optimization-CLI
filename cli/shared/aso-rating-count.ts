@@ -20,6 +20,11 @@ import { getStorefront, isKnownStorefront } from "./aso-storefronts";
  *   ES "6,8 mil" "2,5 mil" "354"
  *   IT "5,9K"  "532"
  *   PT "1,3 mil" "11 mil" "47"
+ *   VN "8.1k"  "520k"  "302"            (English formatting, Vietnamese titles)
+ *
+ * The locale used here is the storefront's `numberLocale` where it has one, not
+ * its `defaultLanguage` - Vietnam renders numbers the English way, and reading
+ * "8.1k" with vi-VN rules (where "." groups thousands) gives 81,000.
  */
 
 type NumberSeparators = {
@@ -65,14 +70,18 @@ function getNumberSeparators(locale: string): NumberSeparators {
   return separators;
 }
 
-function getLanguageBase(country: string): string {
-  if (!isKnownStorefront(country)) return "en";
-  return getStorefront(country).defaultLanguage.split("-")[0].toLowerCase();
-}
-
+/**
+ * Locale the *numbers* are rendered in, which is not always the storefront's
+ * own language - see `numberLocale` in aso-storefronts.ts.
+ */
 function getLocale(country: string): string {
   if (!isKnownStorefront(country)) return "en-US";
-  return getStorefront(country).defaultLanguage;
+  const storefront = getStorefront(country);
+  return storefront.numberLocale ?? storefront.defaultLanguage;
+}
+
+function getLanguageBase(country: string): string {
+  return getLocale(country).split("-")[0].toLowerCase();
 }
 
 /** Strips characters Apple mixes into the suffix: NBSP, narrow NBSP, ".". */

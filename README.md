@@ -195,10 +195,10 @@ ASO_SUPPORTED_COUNTRIES=US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT aso   # dashboard picke
 ```
 
 Known storefronts live in `cli/shared/aso-storefronts.ts`: US, GB, CA, AU, IE,
-NZ, DE, FR, IT, ES, PT. Each entry carries the storefront id and its language
+NZ, DE, FR, IT, ES, PT, VN. Each entry carries the storefront id and its language
 index; both are needed for Apple's `X-Apple-Store-Front` header, and the
 language index is per storefront (US 1; GB/AU/IE/NZ 2; FR 3; DE 4; CA 6; IT 7;
-ES 8; PT 24). Index 2 returns HTTP 200 on every storefront but with English
+ES 8; PT 24; VN 43). Index 2 returns HTTP 200 on every storefront but with English
 metadata, so a 200 does not mean the index is right — follow the probe recipe in
 that file before adding another.
 

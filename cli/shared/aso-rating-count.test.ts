@@ -71,6 +71,16 @@ describe("parseLocalizedRatingCount", () => {
     expect(parseLocalizedRatingCount("1,2 Mln", "IT")).toBe(1200000);
   });
 
+  it("uses the number locale, not the storefront language, for Vietnam", () => {
+    // Apple serves Vietnamese titles but English-formatted numbers there.
+    // Read as vi-VN, "8.1k" would strip the dot as a group separator and give
+    // 81,000 - an order of magnitude out, straight into difficulty scoring.
+    expect(parseLocalizedRatingCount("8.1k", "VN")).toBe(8100);
+    expect(parseLocalizedRatingCount("1.2k", "VN")).toBe(1200);
+    expect(parseLocalizedRatingCount("520k", "VN")).toBe(520000);
+    expect(parseLocalizedRatingCount("302", "VN")).toBe(302);
+  });
+
   it("returns 0 rather than a wrong magnitude for an unknown suffix", () => {
     expect(parseLocalizedRatingCount("6,8 zzz", "ES")).toBe(0);
   });

@@ -17,6 +17,7 @@
  *   FR 143442 → 3  (French)       DE 143443 → 4  (German)
  *   IT 143450 → 7  (Italian)      ES 143454 → 8  (Spanish)
  *   PT 143453 → 24 (Portuguese)   AU 143460 → 2  (English)
+ *   VN 143471 → 43 (Vietnamese)
  *   IE 143476 → 2  (English)      NZ 143461 → 2  (English)
  *   CA 143455 → 6  (English; 5 is French, and Canada really serves both)
  *
@@ -57,6 +58,16 @@ export type AsoStorefront = {
    */
   languageIndex: number;
   defaultLanguage: string;
+  /**
+   * Locale to read rating-count strings with, when it differs from
+   * `defaultLanguage`.
+   *
+   * Apple does not always format numbers in the storefront's own language.
+   * Vietnam serves Vietnamese titles but English-style numbers ("8.1k"), and
+   * reading those with vi-VN rules - where "." groups thousands - turns 8,100
+   * into 81,000. Verified per storefront against the live search page.
+   */
+  numberLocale?: string;
   /**
    * Extra localizations to fetch when detecting keyword matches in localized
    * titles/subtitles. Each entry costs one extra request per app, so English
@@ -123,6 +134,19 @@ export const ASO_STOREFRONTS: Record<string, AsoStorefront> = {
     languageIndex: 8,
     defaultLanguage: "es-ES",
     additionalLanguages: ["en-GB"],
+  },
+  VN: {
+    country: "VN",
+    name: "Vietnam",
+    storefrontId: 143471,
+    languageIndex: 43,
+    defaultLanguage: "vi",
+    numberLocale: "en-GB",
+    // Unlike the European storefronts, Apple serves the VN search page in
+    // English, so the base doc is already English and the *extra* localization
+    // worth fetching is Vietnamese. Without this, a Vietnamese keyword could
+    // never match a Vietnamese title.
+    additionalLanguages: ["vi"],
   },
   PT: {
     country: "PT",

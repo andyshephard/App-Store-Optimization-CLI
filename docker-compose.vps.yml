@@ -21,7 +21,7 @@ services:
       ASO_OPEN_BROWSER: "0"
       ASO_DISABLE_UPDATE_CHECK: "1"
       ASO_DISABLE_CREDENTIAL_STORE: "1"
-      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT"
+      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT,VN"
       ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
       # Apple throttles the app-detail endpoint per storefront; keep bursts small.
       ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"

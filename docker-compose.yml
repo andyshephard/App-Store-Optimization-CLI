@@ -13,7 +13,7 @@ services:
       ASO_OPEN_BROWSER: "0"
       ASO_DISABLE_UPDATE_CHECK: "1"
       ASO_DISABLE_CREDENTIAL_STORE: "1"
-      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT"
+      ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT,VN"
       # The primary app id otherwise lives in the SQLite metadata table, so a
       # fresh volume would sit waiting on the interactive setup prompt.
       ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
