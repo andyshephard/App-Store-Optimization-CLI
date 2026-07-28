@@ -768,7 +768,9 @@ export function App() {
       setIsRestartingStartupRefresh(true);
       const data = await apiWrite<StartupRefreshStatusPayload>(
         "POST",
-        "/api/aso/refresh/start",
+        // The manual control means "refresh everything now", so it ignores the
+        // freshness window the scheduled run respects.
+        "/api/aso/refresh/start?force=1",
         {}
       );
       setStartupRefreshState(data);

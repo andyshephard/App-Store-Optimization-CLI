@@ -370,7 +370,7 @@ Always performs a live search.
 | `DELETE /api/aso/keywords` | `{"appId":"123","keywords":["a"],"country":"GB"}` | `{removedCount}` |
 | `POST /api/aso/keywords/favorite` | `{"appId":"123","keyword":"a","isFavorite":true,"country":"GB"}` | 404 if not tracked |
 | `POST /api/aso/keywords/retry-failed` | `{"appId":"123","country":"GB"}` | Re-crawls failed keywords |
-| `POST /api/aso/refresh/start` \| `/stop` | — | Manual crawl control; 202. The scheduler makes this unnecessary |
+| `POST /api/aso/refresh/start` \| `/stop` | — | Manual crawl control; 202. `?force=1` re-crawls every tracked keyword instead of only those past their 24h freshness window — that is what the dashboard's Refresh all button sends |
 | `POST /api/aso/auth/start` \| `/respond` | see below | **Never call from automation** |
 | `POST /api/aso/setup/start` \| `/respond` | | Primary App ID selection |
 

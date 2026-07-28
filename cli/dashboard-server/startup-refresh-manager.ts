@@ -89,7 +89,7 @@ type StartupRefreshDeps = {
 };
 
 export type StartupRefreshManager = {
-  start: () => void;
+  start: (options?: { force?: boolean }) => void;
   stop: () => void;
   getState: () => StartupRefreshState;
 };
@@ -100,6 +100,12 @@ export function selectKeywordRefreshCandidates(params: {
   associatedAppIds: Set<string>;
   orderRelevantAppIds: Set<string>;
   nowMs: number;
+  /**
+   * Ignore freshness and re-crawl every tracked keyword. Used by the manual
+   * "refresh all" control, where the point is to get current data now rather
+   * than to skip anything still inside its TTL.
+   */
+  force?: boolean;
 }): KeywordRefreshItem[] {
   const associatedKeywords = new Set(
     params.appKeywords
@@ -122,6 +128,7 @@ export function selectKeywordRefreshCandidates(params: {
         Number.isFinite(keyword.popularity)
     )
     .filter((keyword) => {
+      if (params.force) return true;
       const orderFresh = isStoredKeywordOrderFresh(keyword, params.nowMs);
       const popularityFresh = isStoredKeywordPopularityFresh(
         keyword,
@@ -261,8 +268,12 @@ export function createStartupRefreshManager(
     return unique.length > 0 ? unique : [deps.country];
   };
 
-  const refreshCountryInBatches = async (country: string): Promise<void> => {
+  const refreshCountryInBatches = async (
+    country: string,
+    force: boolean
+  ): Promise<void> => {
     const items = selectKeywordRefreshCandidates({
+      force,
       keywords: deps.listKeywords(country),
       appKeywords: deps.listAppKeywords(country),
       associatedAppIds: deps.listAssociatedAppIds(),
@@ -330,7 +341,7 @@ export function createStartupRefreshManager(
     }
   };
 
-  const refreshKeywordsInBatches = async (): Promise<void> => {
+  const refreshKeywordsInBatches = async (force: boolean): Promise<void> => {
     const countries = resolveRefreshCountries();
     for (const [index, country] of countries.entries()) {
       if (stopRequested) break;
@@ -338,14 +349,14 @@ export function createStartupRefreshManager(
         await sleep(interCountryDelayMs);
         if (stopRequested) break;
       }
-      await refreshCountryInBatches(country);
+      await refreshCountryInBatches(country, force);
       // A reauth prompt applies to the Apple session itself, so continuing on
       // to the next storefront would just fail the same way.
       if (state.requiresReauthentication) break;
     }
   };
 
-  const run = async (): Promise<void> => {
+  const run = async (force: boolean): Promise<void> => {
     state = {
       status: "running",
       startedAt: new Date(nowMs()).toISOString(),
@@ -357,7 +368,7 @@ export function createStartupRefreshManager(
     };
     stopRequested = false;
 
-    await refreshKeywordsInBatches();
+    await refreshKeywordsInBatches(force);
 
     const finalStatus: StartupRefreshStatus =
       state.requiresReauthentication || (!stopRequested && state.lastError)
@@ -375,9 +386,9 @@ export function createStartupRefreshManager(
   };
 
   return {
-    start: () => {
+    start: (options?: { force?: boolean }) => {
       if (runPromise) return;
-      runPromise = run()
+      runPromise = run(options?.force === true)
         .catch((error) => {
           setFailure(error, { phase: "startup-refresh-unhandled" });
           state = {

@@ -297,6 +297,78 @@ describe("startup-refresh-manager", () => {
     expect(manager.getState().requiresReauthentication).toBe(true);
   });
 
+  it("skips fresh keywords normally but takes everything when forced", async () => {
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+    // One stale, one still well inside its freshness window.
+    const keywords = [
+      buildKeyword({
+        keyword: "stale",
+        normalizedKeyword: "stale",
+        orderExpiresAt: "2026-03-06T00:00:00.000Z",
+      }),
+      buildKeyword({
+        keyword: "fresh",
+        normalizedKeyword: "fresh",
+        orderExpiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+    ];
+    const appKeywords = [
+      buildAssociation({ keyword: "stale", appId: "app-1" }),
+      buildAssociation({ keyword: "fresh", appId: "app-1" }),
+    ];
+
+    const normal = selectKeywordRefreshCandidates({
+      keywords,
+      appKeywords,
+      associatedAppIds: new Set(["app-1"]),
+      orderRelevantAppIds: new Set(["app-1"]),
+      nowMs: now,
+    });
+    expect(normal.map((item) => item.keyword)).toEqual(["stale"]);
+
+    const forced = selectKeywordRefreshCandidates({
+      keywords,
+      appKeywords,
+      associatedAppIds: new Set(["app-1"]),
+      orderRelevantAppIds: new Set(["app-1"]),
+      nowMs: now,
+      force: true,
+    });
+    expect(forced.map((item) => item.keyword)).toEqual(["stale", "fresh"]);
+  });
+
+  it("passes force through from start() to the crawl", async () => {
+    const enriched: string[] = [];
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+
+    const manager = createStartupRefreshManager({
+      country: "US",
+      listKeywords: () => [
+        buildKeyword({
+          keyword: "fresh",
+          normalizedKeyword: "fresh",
+          orderExpiresAt: "2099-01-01T00:00:00.000Z",
+        }),
+      ],
+      listAppKeywords: () => [
+        buildAssociation({ keyword: "fresh", appId: "app-1" }),
+      ],
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      enrichKeywords: async (_country, items) => {
+        enriched.push(...items.map((item) => item.keyword));
+      },
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async () => {},
+    });
+
+    manager.start({ force: true });
+    await waitForManagerToFinish(manager);
+
+    expect(enriched).toEqual(["fresh"]);
+  });
+
   it("paces between storefronts and between batches", async () => {
     const sleeps: number[] = [];
     const now = Date.parse("2026-03-10T00:00:00.000Z");

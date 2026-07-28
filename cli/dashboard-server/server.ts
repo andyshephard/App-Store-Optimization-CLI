@@ -208,8 +208,8 @@ function getStartupRefreshState(): StartupRefreshState {
   return startupRefreshManager.getState();
 }
 
-function startStartupRefresh(): void {
-  startupRefreshManager.start();
+function startStartupRefresh(options?: { force?: boolean }): void {
+  startupRefreshManager.start(options);
 }
 
 function stopStartupRefresh(): void {
@@ -375,8 +375,12 @@ function handleApiAsoStorefrontsGet(res: http.ServerResponse): void {
   });
 }
 
-function handleApiAsoRefreshStartPost(res: http.ServerResponse): void {
-  startStartupRefresh();
+function handleApiAsoRefreshStartPost(
+  res: http.ServerResponse,
+  query: Record<string, string>
+): void {
+  // force=1 re-crawls every tracked keyword instead of only the stale ones.
+  startStartupRefresh({ force: isTruthyQueryParam(query.force) });
   sendJson(res, 202, { success: true, data: getStartupRefreshState() });
 }
 
@@ -679,7 +683,7 @@ export function createServerRequestHandler(): http.RequestListener {
 
       if (req.method === "POST" && pathname === "/api/aso/refresh/start") {
         runAsForegroundMutationSync(() => {
-          handleApiAsoRefreshStartPost(res);
+          handleApiAsoRefreshStartPost(res, query);
         });
         return;
       }
