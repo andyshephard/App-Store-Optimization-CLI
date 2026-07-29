@@ -255,8 +255,9 @@ describe("startup-refresh-manager", () => {
     expect(state.counters.refreshedKeywordCount).toBe(3);
   });
 
-  it("stops refreshing further storefronts once reauthentication is required", async () => {
+  it("keeps refreshing later storefronts without the popularity stage once reauthentication is required", async () => {
     const enrichCalls: string[] = [];
+    const skipPopularityFlags: boolean[] = [];
     const now = Date.parse("2026-03-10T00:00:00.000Z");
 
     const manager = createStartupRefreshManager({
@@ -279,12 +280,18 @@ describe("startup-refresh-manager", () => {
       ],
       listAssociatedAppIds: () => new Set(["app-1"]),
       listOrderRelevantAppIds: () => new Set(["app-1"]),
-      enrichKeywords: async (country) => {
+      enrichKeywords: async (country, _items, options) => {
         enrichCalls.push(country);
-        throw new Error("reauth required");
+        skipPopularityFlags.push(options.skipPopularity);
+        // Only the popularity stage needs the Apple session, so once it is
+        // known dead the caller must stop asking for it - and must not throw
+        // for the ranking-only work that needs no session.
+        if (!options.skipPopularity) throw new Error("reauth required");
+        return [];
       },
       isForegroundBusy: () => false,
-      isAuthReauthRequiredError: () => true,
+      isAuthReauthRequiredError: (error) =>
+        error instanceof Error && error.message === "reauth required",
       nowMs: () => now,
       sleep: async () => {},
       keywordBatchSize: 25,
@@ -293,7 +300,10 @@ describe("startup-refresh-manager", () => {
     manager.start();
     await waitForManagerToFinish(manager);
 
-    expect(enrichCalls).toEqual(["US"]);
+    // GB is still crawled: rank and difficulty come from the public search
+    // page, so abandoning it would discard data that was there for the taking.
+    expect(enrichCalls).toEqual(["US", "GB"]);
+    expect(skipPopularityFlags).toEqual([false, true]);
     expect(manager.getState().requiresReauthentication).toBe(true);
   });
 
@@ -366,7 +376,7 @@ describe("startup-refresh-manager", () => {
     manager.start({ force: true });
     await waitForManagerToFinish(manager);
 
-    expect(seen).toEqual([{ force: true }]);
+    expect(seen).toEqual([{ force: true, skipPopularity: false }]);
   });
 
   it("passes force through from start() to the crawl", async () => {
@@ -790,11 +800,14 @@ describe("startup-refresh-manager", () => {
       ],
       listAssociatedAppIds: () => new Set(["app-1"]),
       listOrderRelevantAppIds: () => new Set(["app-1"]),
-      enrichKeywords: async () => {
+      enrichKeywords: async (_country, items, options) => {
         attempt += 1;
-        throw new Error(
-          "Apple Search Ads session expired. Reauthentication is required."
-        );
+        if (!options.skipPopularity) {
+          throw new Error(
+            "Apple Search Ads session expired. Reauthentication is required."
+          );
+        }
+        return items;
       },
       isForegroundBusy: () => false,
       isAuthReauthRequiredError: (error) =>
@@ -808,13 +821,17 @@ describe("startup-refresh-manager", () => {
     manager.start();
     await waitForManagerToFinish(manager);
 
+    // The first batch establishes that the session is gone. The other two are
+    // still attempted, without the popularity stage, because the ranking crawl
+    // they need does not touch the Apple account at all. The run is still
+    // reported as failed so the operator is told to log in.
     const state = manager.getState();
     expect(state.status).toBe("failed");
     expect(state.requiresReauthentication).toBe(true);
     expect(state.counters.eligibleKeywordCount).toBe(3);
-    expect(state.counters.refreshedKeywordCount).toBe(0);
+    expect(state.counters.refreshedKeywordCount).toBe(2);
     expect(state.counters.failedKeywordCount).toBe(1);
-    expect(attempt).toBe(1);
+    expect(attempt).toBe(3);
   });
 
   it("does not retry exhausted all-keywords-failed batches", async () => {

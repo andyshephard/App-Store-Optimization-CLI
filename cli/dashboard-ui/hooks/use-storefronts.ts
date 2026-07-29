@@ -77,7 +77,9 @@ export function useStorefronts() {
             isDefault: true,
           },
         ]);
-        setCountry(DEFAULT_ASO_COUNTRY);
+        // Deliberately not setCountry: that persists, and a transient failure
+        // here would overwrite a GB user's saved storefront with US and keep it
+        // that way after the server recovers.
         setStorefrontsError("Could not load storefronts");
       });
     return () => {

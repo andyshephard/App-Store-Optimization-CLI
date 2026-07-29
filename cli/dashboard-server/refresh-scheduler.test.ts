@@ -1,6 +1,7 @@
 import {
   createRefreshScheduler,
   getNextRunTimestamp,
+  getPreviousRunTimestamp,
   parseDailyTime,
 } from "./refresh-scheduler";
 
@@ -121,7 +122,15 @@ describe("createRefreshScheduler", () => {
       timer.callback();
     };
 
-    return { scheduler, runs, timers, fireNext, setNow: (v: string) => { now = Date.parse(v); } };
+    return {
+      scheduler,
+      runs,
+      timers,
+      fireNext,
+      setNow: (v: string) => {
+        now = Date.parse(v);
+      },
+    };
   }
 
   it("does nothing when no time is configured", () => {
@@ -212,5 +221,91 @@ describe("createRefreshScheduler", () => {
 
     expect(errors).toHaveLength(1);
     expect(scheduler.getState().nextRunAt).toBe("2026-01-16T03:00:00.000Z");
+  });
+});
+
+describe("getPreviousRunTimestamp", () => {
+  const at4am = { hours: 4, minutes: 0 };
+
+  it("picks today when the time has already passed", () => {
+    // 09:00 Prague (winter, UTC+1) on 15 Jan 2026
+    const from = Date.parse("2026-01-15T08:00:00Z");
+    expect(iso(getPreviousRunTimestamp(from, at4am, PRAGUE))).toBe(
+      "2026-01-15T03:00:00.000Z"
+    );
+  });
+
+  it("falls back to yesterday when the time is still ahead", () => {
+    // 01:00 Prague on 15 Jan 2026
+    const from = Date.parse("2026-01-15T00:00:00Z");
+    expect(iso(getPreviousRunTimestamp(from, at4am, PRAGUE))).toBe(
+      "2026-01-14T03:00:00.000Z"
+    );
+  });
+});
+
+describe("missed run recovery", () => {
+  function build(overrides: { now: number; stored: number | null }) {
+    const runs: number[] = [];
+    const saved: number[] = [];
+    const scheduler = createRefreshScheduler({
+      dailyAt: "04:00",
+      timeZone: PRAGUE,
+      run: () => runs.push(overrides.now),
+      loadLastRunAt: () => overrides.stored,
+      saveLastRunAt: (timestamp) => saved.push(timestamp),
+      now: () => overrides.now,
+      setTimer: () => ({}) as NodeJS.Timeout,
+      clearTimer: () => {},
+    });
+    return { scheduler, runs, saved };
+  }
+
+  it("runs immediately when a restart skipped the scheduled time", () => {
+    // Booted 09:00 Prague; the last recorded run was two days earlier, so
+    // today's 04:00 came and went while the process was down.
+    const { scheduler, runs, saved } = build({
+      now: Date.parse("2026-01-15T08:00:00Z"),
+      stored: Date.parse("2026-01-13T03:00:00Z"),
+    });
+
+    scheduler.start();
+
+    expect(runs).toHaveLength(1);
+    expect(saved).toEqual([Date.parse("2026-01-15T08:00:00Z")]);
+    expect(scheduler.getState().nextRunAt).toBe("2026-01-16T03:00:00.000Z");
+  });
+
+  it("does not re-run when the recorded run is already after the last occurrence", () => {
+    const { scheduler, runs } = build({
+      now: Date.parse("2026-01-15T08:00:00Z"),
+      stored: Date.parse("2026-01-15T03:00:00Z"),
+    });
+
+    scheduler.start();
+
+    expect(runs).toHaveLength(0);
+  });
+
+  it("does not crawl on a fresh install that has never run", () => {
+    const { scheduler, runs } = build({
+      now: Date.parse("2026-01-15T08:00:00Z"),
+      stored: null,
+    });
+
+    scheduler.start();
+
+    expect(runs).toHaveLength(0);
+  });
+
+  it("reports the persisted run so a restart does not look like it never fired", () => {
+    const { scheduler } = build({
+      now: Date.parse("2026-01-15T08:00:00Z"),
+      stored: Date.parse("2026-01-15T03:00:00Z"),
+    });
+
+    scheduler.start();
+
+    expect(scheduler.getState().lastRunAt).toBe("2026-01-15T03:00:00.000Z");
   });
 });

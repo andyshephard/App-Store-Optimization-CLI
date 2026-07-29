@@ -7,6 +7,7 @@ import {
   upsertOwnedAppSnapshots,
 } from "../db/owned-apps";
 import { listKeywords } from "../db/aso-keywords";
+import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
   listAllAppKeywords,
   getAppLastKeywordAddedAtMap,
@@ -201,10 +202,24 @@ const startupRefreshManager = createStartupRefreshManager({
  * as a side effect of someone pressing a button. Forcing keeps one row per
  * keyword per day regardless.
  */
+const SCHEDULED_REFRESH_LAST_RUN_KEY = "dashboard:scheduled-refresh:last-run-at";
+
 const refreshScheduler = createRefreshScheduler({
   dailyAt: ASO_ENV.refreshDailyAt,
   timeZone: ASO_ENV.refreshTimeZone,
   run: () => startupRefreshManager.start({ force: true }),
+  loadLastRunAt: () => {
+    const raw = getMetadataValue(SCHEDULED_REFRESH_LAST_RUN_KEY);
+    if (!raw) return null;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  },
+  saveLastRunAt: (timestamp) => {
+    setMetadataValue(
+      SCHEDULED_REFRESH_LAST_RUN_KEY,
+      new Date(timestamp).toISOString()
+    );
+  },
   onError: (error, metadata) => {
     reportDashboardError(error, { ...metadata, context: "refresh-scheduler" });
   },

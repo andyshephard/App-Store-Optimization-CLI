@@ -208,7 +208,11 @@ export class AsoPopularityService {
       terms: string[],
       stageLabel: string,
       options?: { maxAttempts?: number }
-    ): Promise<{ statusCode: number; data: PopularityResponse; attempts: number }> => {
+    ): Promise<{
+      statusCode: number;
+      data: PopularityResponse;
+      attempts: number;
+    }> => {
       logger.debug(
         `[aso-popularity] sending ${stageLabel} request cookieHeaderLength=${cookieHeader.length} terms=${terms.length}`
       );
@@ -229,12 +233,28 @@ export class AsoPopularityService {
             );
           }
           cookieHeader = recovered;
-          return requestPopularitiesWithKwsRetry(
+          const retried = await requestPopularitiesWithKwsRetry(
             terms,
             cookieHeader,
             adamId,
             options
           );
+          logPopularityResponse(
+            `${stageLabel}-post-unattended-reauth`,
+            retried.statusCode,
+            retried.data
+          );
+          // A retry that still fails auth means the credentials or the trust
+          // cookie are gone, not that these keywords are bad. Returning the
+          // response here would turn it into ordinary per-keyword failures and
+          // leave `requiresReauthentication` false, so nothing would ever tell
+          // the operator to log in - the crawl would just quietly stop updating.
+          if (isAuthFailure(retried.statusCode, retried.data)) {
+            throw new AsoAuthReauthRequiredError(
+              "Apple Search Ads session expired and unattended reauthentication did not restore it."
+            );
+          }
+          return retried;
         }
         logger.debug(
           `[aso-popularity] ${stageLabel} auth failure detected, reauthenticating before retry`
@@ -270,9 +290,10 @@ export class AsoPopularityService {
       requestId: normalized.requestId,
     });
 
-    const parseSuccessPopularities = (
-      response: { statusCode: number; data: PopularityResponse }
-    ): Record<string, number> => {
+    const parseSuccessPopularities = (response: {
+      statusCode: number;
+      data: PopularityResponse;
+    }): Record<string, number> => {
       const result: Record<string, number> = {};
       if (!Array.isArray(response.data.data)) {
         reportAppleContractChange({
@@ -329,7 +350,11 @@ export class AsoPopularityService {
 
     const toFailureFromResponse = (
       keyword: string,
-      response: { statusCode: number; data: PopularityResponse; attempts: number }
+      response: {
+        statusCode: number;
+        data: PopularityResponse;
+        attempts: number;
+      }
     ): FailedKeyword => {
       const messageCode = firstMessageCode(response.data);
       const message = firstMessage(response.data);
@@ -356,7 +381,10 @@ export class AsoPopularityService {
       return toFailedKeyword(keyword, normalized);
     };
 
-    const toFailureFromError = (keyword: string, error: unknown): FailedKeyword => {
+    const toFailureFromError = (
+      keyword: string,
+      error: unknown
+    ): FailedKeyword => {
       const normalized = normalizeAppleUpstreamError({
         error,
         operation: "keywords-popularities-request",
@@ -391,7 +419,10 @@ export class AsoPopularityService {
           }
         );
       }
-      if (response.statusCode === 403 && messageCode === KWS_NO_ORG_CONTENT_PROVIDERS) {
+      if (
+        response.statusCode === 403 &&
+        messageCode === KWS_NO_ORG_CONTENT_PROVIDERS
+      ) {
         logger.debug(
           `[aso-popularity] KWS_NO_ORG_CONTENT_PROVIDERS requestID=${
             response.data.requestID || "none"
@@ -399,7 +430,8 @@ export class AsoPopularityService {
         );
       }
       if (sanitizedKeywords.length === 1) {
-        const keyword = sanitizedToOriginal.get(sanitizedKeywords[0]) ?? sanitizedKeywords[0];
+        const keyword =
+          sanitizedToOriginal.get(sanitizedKeywords[0]) ?? sanitizedKeywords[0];
         return {
           popularities: {},
           failedKeywords: [toFailureFromResponse(keyword, response)],
@@ -420,7 +452,8 @@ export class AsoPopularityService {
             singleResponse.statusCode === 200 &&
             singleResponse.data.status === "success"
           ) {
-            popularities[keyword] = parseSuccessPopularities(singleResponse)[keyword] ?? 1;
+            popularities[keyword] =
+              parseSuccessPopularities(singleResponse)[keyword] ?? 1;
           } else {
             failedKeywords.push(toFailureFromResponse(keyword, singleResponse));
           }

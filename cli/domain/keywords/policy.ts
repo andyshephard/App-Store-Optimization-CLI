@@ -77,4 +77,14 @@ export function assertSupportedCountry(country: string): void {
         `(currently: ${Array.from(supported).join(", ")}).`
     );
   }
+  // Enabled is not sufficient: ASO_SUPPORTED_COUNTRIES is free text, and a
+  // country with no entry in ASO_STOREFRONTS has no storefront id or language
+  // index. Catching it here gives one clear message instead of an "Unknown
+  // storefront" thrown from the middle of a crawl.
+  if (!ASO_STOREFRONTS[normalized]) {
+    throw new Error(
+      `Country ${normalized} is enabled but unknown. Add it to ` +
+        `cli/shared/aso-storefronts.ts (known: ${Object.keys(ASO_STOREFRONTS).join(", ")}).`
+    );
+  }
 }

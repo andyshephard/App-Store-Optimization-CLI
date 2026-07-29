@@ -26,6 +26,15 @@ type RefreshSchedulerDeps = {
   timeZone: string;
   /** Starts a refresh. Must be safe to call when one is already running. */
   run: () => void;
+  /**
+   * Persisted timestamp of the last scheduled run, injected so this module
+   * stays storage-agnostic. Without it `lastRunAt` lives only in memory: a
+   * restart erases the evidence that a run ever happened, which makes "did the
+   * nightly refresh fire?" unanswerable, and a restart spanning the scheduled
+   * minute drops that day silently.
+   */
+  loadLastRunAt?: () => number | null;
+  saveLastRunAt?: (timestamp: number) => void;
   now?: () => number;
   setTimer?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
   clearTimer?: (timer: NodeJS.Timeout) => void;
@@ -158,6 +167,30 @@ export function getNextRunTimestamp(
   return from + 24 * 60 * 60 * 1000;
 }
 
+/** Most recent occurrence of `dailyAt` at or before `from`. */
+export function getPreviousRunTimestamp(
+  from: number,
+  dailyAt: { hours: number; minutes: number },
+  timeZone: string
+): number {
+  const today = getZonedParts(from, timeZone);
+  for (let dayOffset = 0; dayOffset >= -2; dayOffset -= 1) {
+    const candidateDay = new Date(
+      Date.UTC(today.year, today.month - 1, today.day + dayOffset)
+    );
+    const candidate = zonedTimeToUtc(
+      candidateDay.getUTCFullYear(),
+      candidateDay.getUTCMonth() + 1,
+      candidateDay.getUTCDate(),
+      dailyAt.hours,
+      dailyAt.minutes,
+      timeZone
+    );
+    if (candidate <= from) return candidate;
+  }
+  return from - 24 * 60 * 60 * 1000;
+}
+
 export function createRefreshScheduler(
   deps: RefreshSchedulerDeps
 ): RefreshScheduler {
@@ -176,6 +209,22 @@ export function createRefreshScheduler(
   let lastRunAt: number | null = null;
   let stopped = false;
 
+  const fire = (reason: "scheduled-refresh" | "missed-refresh-catch-up") => {
+    lastRunAt = now();
+    // Recorded before running, so a crash-looping container cannot turn one
+    // missed occurrence into a crawl on every restart.
+    try {
+      deps.saveLastRunAt?.(lastRunAt);
+    } catch (error) {
+      deps.onError?.(error, { phase: "scheduled-refresh-persist" });
+    }
+    try {
+      deps.run();
+    } catch (error) {
+      deps.onError?.(error, { phase: reason });
+    }
+  };
+
   const scheduleNext = (): void => {
     if (stopped || !dailyAt) return;
     const target = getNextRunTimestamp(now(), dailyAt, timeZone);
@@ -189,12 +238,7 @@ export function createRefreshScheduler(
         scheduleNext();
         return;
       }
-      lastRunAt = now();
-      try {
-        deps.run();
-      } catch (error) {
-        deps.onError?.(error, { phase: "scheduled-refresh" });
-      }
+      fire("scheduled-refresh");
       scheduleNext();
     }, chunk);
     timer.unref?.();
@@ -205,6 +249,20 @@ export function createRefreshScheduler(
       if (!dailyAt) return;
       stopped = false;
       if (timer) return;
+      if (lastRunAt == null) {
+        try {
+          lastRunAt = deps.loadLastRunAt?.() ?? null;
+        } catch (error) {
+          deps.onError?.(error, { phase: "scheduled-refresh-load" });
+        }
+      }
+      // A restart that spanned the scheduled minute would otherwise drop that
+      // day entirely and wait until tomorrow. Only catch up when there is a
+      // recorded earlier run, so a fresh install does not crawl on first boot.
+      const previous = getPreviousRunTimestamp(now(), dailyAt, timeZone);
+      if (lastRunAt != null && lastRunAt < previous) {
+        fire("missed-refresh-catch-up");
+      }
       scheduleNext();
     },
     stop: () => {

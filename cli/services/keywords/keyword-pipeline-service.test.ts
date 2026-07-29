@@ -112,6 +112,45 @@ describe("KeywordPipelineService.refreshStartup with force", () => {
     expect(refreshOrder).toHaveBeenCalledWith("US", ["fresh"]);
   });
 
+  it("does the ranking-only work when the Apple session is unavailable", async () => {
+    // Popularity is account-level, so a dead session blocks it everywhere. The
+    // ranking crawl needs no session, so it must still run.
+    getKeywordsMock.mockReturnValue([
+      storedKeyword("fresh"),
+      storedKeyword("stale", {
+        popularityExpiresAt: new Date(Date.now() - HOUR_MS).toISOString(),
+      }),
+    ]);
+
+    await service.refreshStartup(
+      "US",
+      [
+        { keyword: "fresh", popularity: 40 },
+        { keyword: "stale", popularity: 40 },
+      ],
+      { force: true, skipPopularity: true }
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    expect(refreshOrder).toHaveBeenCalledWith("US", ["fresh", "stale"]);
+  });
+
+  it("skips a never-enriched keyword when the session is unavailable, since it has no score yet", async () => {
+    getKeywordsMock.mockReturnValue([]);
+
+    await service.refreshStartup(
+      "US",
+      [{ keyword: "deferred", popularity: 0 }],
+      {
+        force: true,
+        skipPopularity: true,
+      }
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    expect(refreshOrder).not.toHaveBeenCalled();
+  });
+
   it("sends a never-enriched keyword through the full pipeline, not refreshOrder", async () => {
     getKeywordsMock.mockReturnValue([]);
 

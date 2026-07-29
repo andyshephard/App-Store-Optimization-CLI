@@ -61,7 +61,7 @@ type StartupRefreshDeps = {
   enrichKeywords: (
     country: string,
     items: KeywordRefreshItem[],
-    options: { force: boolean }
+    options: { force: boolean; skipPopularity: boolean }
   ) => Promise<unknown>;
   isForegroundBusy: () => boolean;
   /**
@@ -219,7 +219,10 @@ function isExhaustedBatchFailure(error: unknown): boolean {
 function isTransientStartupFailure(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const statusCode = (error as { statusCode?: unknown }).statusCode;
-  if (typeof statusCode === "number" && isKnownTransientStatusCode(statusCode)) {
+  if (
+    typeof statusCode === "number" &&
+    isKnownTransientStatusCode(statusCode)
+  ) {
     return true;
   }
   return isTransientTransportFailure({
@@ -265,6 +268,14 @@ export function createStartupRefreshManager(
   let state: StartupRefreshState = initialState();
   let runPromise: Promise<void> | null = null;
   let stopRequested = false;
+  /**
+   * Latched once a batch reports that reauthentication is required. Popularity
+   * is account-level, so a dead session blocks it everywhere - but rank, app
+   * count and difficulty come from the public search page and need no session.
+   * The rest of the run continues without the popularity stage rather than
+   * abandoning eleven storefronts' worth of collectable data.
+   */
+  let popularityUnavailable = false;
 
   const setFailure = (error: unknown, metadata: Record<string, unknown>) => {
     const isAuthReauthRequired =
@@ -318,19 +329,33 @@ export function createStartupRefreshManager(
         await sleep(FOREGROUND_PAUSE_MS);
       }
       if (stopRequested) break;
+      // Partial success is normal - the pipeline resolves with the keywords it
+      // managed to refresh and reports the rest in its envelope. Counting the
+      // whole batch as refreshed made a run that half worked look complete.
+      let refreshedInBatch = batch.length;
       try {
-        await withOneRetry(async () => {
-          await deps.enrichKeywords(country, batch, { force });
-        }, sleep, (error) => {
-          if (deps.isAuthReauthRequiredError?.(error) === true) {
-            return false;
+        await withOneRetry(
+          async () => {
+            const result = await deps.enrichKeywords(country, batch, {
+              force,
+              skipPopularity: popularityUnavailable,
+            });
+            refreshedInBatch = Array.isArray(result)
+              ? result.length
+              : batch.length;
+          },
+          sleep,
+          (error) => {
+            if (deps.isAuthReauthRequiredError?.(error) === true) {
+              return false;
+            }
+            if (isExhaustedBatchFailure(error)) {
+              return false;
+            }
+            return isTransientStartupFailure(error);
           }
-          if (isExhaustedBatchFailure(error)) {
-            return false;
-          }
-          return isTransientStartupFailure(error);
-        });
-        state.counters.refreshedKeywordCount += batch.length;
+        );
+        state.counters.refreshedKeywordCount += refreshedInBatch;
         consecutiveFailedKeywords = 0;
       } catch (error) {
         const isAuthReauthRequired =
@@ -344,7 +369,11 @@ export function createStartupRefreshManager(
           isAuthReauthRequired,
         });
         if (isAuthReauthRequired) {
-          break;
+          // Retrying the popularity stage would just fail the same way and burn
+          // another login attempt per batch. Drop to the auth-free work and
+          // keep going; the state already records that a login is needed.
+          popularityUnavailable = true;
+          continue;
         }
         // Every keyword in a batch failing usually means the storefront itself
         // is throttled, not that these particular keywords are bad. Continuing
@@ -372,9 +401,6 @@ export function createStartupRefreshManager(
         if (stopRequested) break;
       }
       await refreshCountryInBatches(country, force);
-      // A reauth prompt applies to the Apple session itself, so continuing on
-      // to the next storefront would just fail the same way.
-      if (state.requiresReauthentication) break;
     }
   };
 
@@ -389,6 +415,7 @@ export function createStartupRefreshManager(
       counters: initialCounters(),
     };
     stopRequested = false;
+    popularityUnavailable = false;
 
     await refreshKeywordsInBatches(force);
 

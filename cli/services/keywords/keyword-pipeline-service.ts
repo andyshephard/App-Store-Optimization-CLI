@@ -685,10 +685,18 @@ export class KeywordPipelineService {
     return refreshed;
   }
 
+  /**
+   * @param options.skipPopularity Do only the work that needs no Apple account
+   * session. Set once a run has established that reauthentication is required:
+   * popularity is account-level so it cannot be fetched for any storefront, but
+   * rank, app count and difficulty come from the public search page and are
+   * still available. Without this the whole run would abandon data it could
+   * have collected.
+   */
   async refreshStartup(
     country: string,
     items: PendingKeywordPopularityItem[],
-    options: { force?: boolean } = {}
+    options: { force?: boolean; skipPopularity?: boolean } = {}
   ): Promise<AsoKeywordItem[]> {
     if (items.length === 0) return [];
     const seen = new Set<string>();
@@ -717,7 +725,9 @@ export class KeywordPipelineService {
     // deliberately left alone there: it is account-level with a 30-day TTL, so
     // re-fetching it would hammer the Search Ads API for an unchanged value.
     const collected: AsoKeywordItem[] = [];
-    if (neverEnriched.length > 0) {
+    // A never-enriched keyword cannot proceed without a popularity score, so
+    // there is nothing to attempt for it while the session is down.
+    if (neverEnriched.length > 0 && !options.skipPopularity) {
       const result = await this.run(country, neverEnriched, {
         allowInteractiveAuthRecovery: false,
       });
@@ -728,6 +738,12 @@ export class KeywordPipelineService {
       (keyword) => !neverEnriched.includes(keyword)
     );
     if (known.length === 0) return collected;
+
+    // Every remaining keyword already has a popularity score on disk, so the
+    // ranking crawl can run against the public search page with no session.
+    if (options.skipPopularity) {
+      return [...collected, ...(await this.refreshOrder(country, known))];
+    }
 
     if (options.force) {
       // refreshOrder copies the stored popularity verbatim, so routing every
