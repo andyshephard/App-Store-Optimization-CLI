@@ -20,6 +20,7 @@ export const ASO_DEFAULTS = {
   rateLimitBaseDelayMs: 5000,
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
+  alertEmailFrom: "keywords@chunks.app",
   refreshDailyAt: null as string | null,
   refreshTimeZone: "UTC",
   refreshInterCountryDelayMs: 60000,
@@ -64,6 +65,12 @@ export type AsoEnvConfig = {
   apiToken: string | null;
   /** Origin allowed to make state-changing requests from a browser. */
   allowedOrigin: string | null;
+  /** Resend API key. Unset disables alert email entirely. */
+  resendApiKey: string | null;
+  /** Recipient for operational alerts. Unset disables alert email entirely. */
+  alertEmailTo: string | null;
+  /** Sender for alert email; must be on a domain verified in Resend. */
+  alertEmailFrom: string;
   /** Whether to open a browser at startup; never in a container. */
   openBrowser: boolean;
 };
@@ -75,26 +82,34 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return parsed;
 }
 
-function parseNonNegativeInt(raw: string | undefined, fallback: number): number {
+function parseNonNegativeInt(
+  raw: string | undefined,
+  fallback: number
+): number {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
 }
 
-function parsePositiveNumber(raw: string | undefined, fallback: number): number {
+function parsePositiveNumber(
+  raw: string | undefined,
+  fallback: number
+): number {
   if (!raw) return fallback;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
 }
 
-function parseMode(
-  raw: string | undefined
-): "auto" | "sirp" | "legacy" {
+function parseMode(raw: string | undefined): "auto" | "sirp" | "legacy" {
   if (!raw) return ASO_DEFAULTS.authMode;
   const normalized = raw.trim().toLowerCase();
-  if (normalized === "auto" || normalized === "sirp" || normalized === "legacy") {
+  if (
+    normalized === "auto" ||
+    normalized === "sirp" ||
+    normalized === "legacy"
+  ) {
     return normalized;
   }
   return ASO_DEFAULTS.authMode;
@@ -130,7 +145,8 @@ function parseEnabled(raw: string | undefined): boolean {
 function readAsoEnv(
   env:
     | NodeJS.ProcessEnv
-    | Record<string, string | undefined> = typeof process === "undefined" || !process?.env
+    | Record<string, string | undefined> = typeof process === "undefined" ||
+  !process?.env
     ? {}
     : process.env
 ): AsoEnvConfig {
@@ -201,9 +217,16 @@ function readAsoEnv(
     ),
     ownedAppDocRefreshMaxAgeMs: ownedAppDocRefreshMaxAgeHours * 60 * 60 * 1000,
     dashboardHost: parseBindHost(env.ASO_DASHBOARD_HOST),
-    dashboardPort: parsePort(env.ASO_DASHBOARD_PORT, ASO_DEFAULTS.dashboardPort),
+    dashboardPort: parsePort(
+      env.ASO_DASHBOARD_PORT,
+      ASO_DEFAULTS.dashboardPort
+    ),
     apiToken: parseTrimmed(env.ASO_API_TOKEN),
     allowedOrigin: parseTrimmed(env.ASO_ALLOWED_ORIGIN),
+    resendApiKey: parseTrimmed(env.ASO_RESEND_API_KEY),
+    alertEmailTo: parseTrimmed(env.ASO_ALERT_EMAIL_TO),
+    alertEmailFrom:
+      parseTrimmed(env.ASO_ALERT_EMAIL_FROM) ?? ASO_DEFAULTS.alertEmailFrom,
     // Explicit setting wins; otherwise only when bound to loopback, which keeps
     // a container from shelling out to a browser opener that does not exist.
     openBrowser:

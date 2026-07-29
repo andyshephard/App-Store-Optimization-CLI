@@ -9,15 +9,15 @@ import {
 import { listKeywords } from "../db/aso-keywords";
 import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
+  clearReauthenticationAlertState,
+  sendReauthenticationAlert,
+} from "../services/notifications/reauth-alert-service";
+import {
   listAllAppKeywords,
   getAppLastKeywordAddedAtMap,
 } from "../db/app-keywords";
-import {
-  keywordPipelineService,
-} from "../services/keywords/keyword-pipeline-service";
-import {
-  asoAuthService,
-} from "../services/auth/aso-auth-service";
+import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
+import { asoAuthService } from "../services/auth/aso-auth-service";
 import { isAsoAuthReauthRequiredError } from "../services/keywords/aso-popularity-service";
 import {
   getConfiguredAsoAdamId,
@@ -44,9 +44,7 @@ import {
   updateDashboardSettings,
   type DashboardSettings,
 } from "./dashboard-settings";
-import {
-  createAsoRouteHandlers,
-} from "./routes/aso-routes";
+import { createAsoRouteHandlers } from "./routes/aso-routes";
 import {
   sendApiError,
   sendJson,
@@ -114,13 +112,17 @@ function reportDashboardError(
   reportBugsnagError(error, {
     surface: "aso-dashboard-server",
     source: toStringValue(metadata.source) ?? "dashboard-server.runtime",
-    operation: toStringValue(metadata.operation) ?? operation ?? "server-runtime",
+    operation:
+      toStringValue(metadata.operation) ?? operation ?? "server-runtime",
     endpoint: toStringValue(metadata.endpoint) ?? path,
     ...metadata,
   });
 }
 
-function toUserSafeError(error: unknown, fallback: string): DashboardUserSafeError {
+function toUserSafeError(
+  error: unknown,
+  fallback: string
+): DashboardUserSafeError {
   return mapToDashboardUserSafeError(error, {
     fallback,
     isAuthReauthRequiredError: isAsoAuthReauthRequiredError,
@@ -189,6 +191,12 @@ const startupRefreshManager = createStartupRefreshManager({
     });
   },
   isAuthReauthRequiredError: isAsoAuthReauthRequiredError,
+  onReauthenticationRequired: (detail) => {
+    void sendReauthenticationAlert({ detail }).then((outcome) => {
+      logger.debug(`[aso-dashboard] reauthentication alert ${outcome}`);
+    });
+  },
+  onRunHealthy: () => clearReauthenticationAlertState(),
 });
 
 /**
@@ -202,7 +210,8 @@ const startupRefreshManager = createStartupRefreshManager({
  * as a side effect of someone pressing a button. Forcing keeps one row per
  * keyword per day regardless.
  */
-const SCHEDULED_REFRESH_LAST_RUN_KEY = "dashboard:scheduled-refresh:last-run-at";
+const SCHEDULED_REFRESH_LAST_RUN_KEY =
+  "dashboard:scheduled-refresh:last-run-at";
 
 const refreshScheduler = createRefreshScheduler({
   dailyAt: ASO_ENV.refreshDailyAt,
@@ -382,7 +391,10 @@ function handleApiAsoSetupStatusGet(res: http.ServerResponse): void {
 function handleApiAsoRefreshStatusGet(res: http.ServerResponse): void {
   sendJson(res, 200, {
     success: true,
-    data: { ...getStartupRefreshState(), schedule: refreshScheduler.getState() },
+    data: {
+      ...getStartupRefreshState(),
+      schedule: refreshScheduler.getState(),
+    },
   });
 }
 
@@ -486,7 +498,9 @@ function handleApiAsoSetupStartPost(
   if (!beginDashboardPrimaryAppSetup({ forcePrompt })) {
     const state = getDashboardSetupState();
     const errorCode =
-      state.status === "in_progress" ? "SETUP_IN_PROGRESS" : "SETUP_NOT_REQUIRED";
+      state.status === "in_progress"
+        ? "SETUP_IN_PROGRESS"
+        : "SETUP_NOT_REQUIRED";
     const statusCode = state.status === "in_progress" ? 409 : 409;
     sendApiError(
       res,
@@ -512,7 +526,10 @@ async function handleApiAsoAuthRespondPost(
   const response = getPendingPromptResponse(state.pendingPrompt, body);
   if (!response || !dashboardAuthStateManager.submitPromptResponse(response)) {
     const currentState = getDashboardAuthState();
-    if (currentState.status === "in_progress" && currentState.pendingPrompt == null) {
+    if (
+      currentState.status === "in_progress" &&
+      currentState.pendingPrompt == null
+    ) {
       sendJson(res, 202, { success: true, data: currentState });
       return;
     }
@@ -537,7 +554,10 @@ async function handleApiAsoSetupRespondPost(
   const response = getPendingPromptResponse(state.pendingPrompt, body);
   if (!response || !dashboardSetupStateManager.submitPromptResponse(response)) {
     const currentState = getDashboardSetupState();
-    if (currentState.status === "in_progress" && currentState.pendingPrompt == null) {
+    if (
+      currentState.status === "in_progress" &&
+      currentState.pendingPrompt == null
+    ) {
       sendJson(res, 202, { success: true, data: currentState });
       return;
     }
@@ -602,7 +622,10 @@ export function createServerRequestHandler(): http.RequestListener {
           .filter((app) => app.kind === "owned")
           .map((app) => {
             const fetchedAtMs = Date.parse(app.lastFetchedAt ?? "");
-            if (!Number.isFinite(fetchedAtMs) || nowMs - fetchedAtMs >= refreshMaxAgeMs) {
+            if (
+              !Number.isFinite(fetchedAtMs) ||
+              nowMs - fetchedAtMs >= refreshMaxAgeMs
+            ) {
               return app.id;
             }
             return null;
@@ -702,6 +725,22 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
+      // Sends the real reauthentication alert on demand, so delivery can be
+      // proven without waiting for the Apple session to actually die. Bypasses
+      // the once-per-day suppression; everything else is the production path.
+      if (req.method === "POST" && pathname === "/api/aso/alerts/test") {
+        void sendReauthenticationAlert({
+          force: true,
+          detail: "Test send requested via POST /api/aso/alerts/test.",
+        }).then((outcome) => {
+          sendJson(res, outcome === "sent" ? 200 : 503, {
+            success: outcome === "sent",
+            data: { outcome },
+          });
+        });
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/api/aso/refresh/start") {
         runAsForegroundMutationSync(() => {
           handleApiAsoRefreshStartPost(res, query);
@@ -778,7 +817,10 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
-      if (req.method === "POST" && pathname === "/api/aso/keywords/retry-failed") {
+      if (
+        req.method === "POST" &&
+        pathname === "/api/aso/keywords/retry-failed"
+      ) {
         await runAsForegroundMutation(() =>
           asoRouteHandlers.handleApiAsoKeywordsRetryFailedPost(req, res)
         );
@@ -816,12 +858,7 @@ export function createServerRequestHandler(): http.RequestListener {
       });
       if (res.writableEnded) return;
       if (pathname.startsWith("/api/")) {
-        sendApiError(
-          res,
-          500,
-          "INTERNAL_ERROR",
-          "Internal server error."
-        );
+        sendApiError(res, 500, "INTERNAL_ERROR", "Internal server error.");
         return;
       }
       res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
@@ -974,7 +1011,12 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
         const launchUrl = getDashboardBrowserUrl(dashboardHost, activePort);
         try {
           const { exec } = require("child_process");
-          const open = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+          const open =
+            process.platform === "darwin"
+              ? "open"
+              : process.platform === "win32"
+                ? "start"
+                : "xdg-open";
           exec(`${open} ${launchUrl}`);
         } catch {
           // ignore

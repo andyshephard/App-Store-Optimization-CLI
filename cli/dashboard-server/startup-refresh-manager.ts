@@ -84,6 +84,14 @@ type StartupRefreshDeps = {
   abandonCountryAfterFailedKeywords?: number;
   reportError?: (error: unknown, metadata: Record<string, unknown>) => void;
   isAuthReauthRequiredError?: (error: unknown) => boolean;
+  /**
+   * Called once per run, the first time a batch reports that the Apple session
+   * is gone. Once, not per batch: the remaining storefronts still run without
+   * the popularity stage, and each would otherwise repeat the notification.
+   */
+  onReauthenticationRequired?: (detail: string | null) => void;
+  /** Called after a run that finished with the session intact. */
+  onRunHealthy?: () => void;
   nowMs?: () => number;
   sleep?: (ms: number) => Promise<void>;
   keywordBatchSize?: number;
@@ -372,7 +380,18 @@ export function createStartupRefreshManager(
           // Retrying the popularity stage would just fail the same way and burn
           // another login attempt per batch. Drop to the auth-free work and
           // keep going; the state already records that a login is needed.
-          popularityUnavailable = true;
+          if (!popularityUnavailable) {
+            popularityUnavailable = true;
+            try {
+              deps.onReauthenticationRequired?.(errorToMessage(error));
+            } catch (notifyError) {
+              // Failing to raise the alarm must not stop the rest of the crawl.
+              deps.reportError?.(notifyError, {
+                phase: "startup-refresh-reauth-notify",
+                country,
+              });
+            }
+          }
           continue;
         }
         // Every keyword in a batch failing usually means the storefront itself
@@ -432,6 +451,17 @@ export function createStartupRefreshManager(
       finishedAt: new Date(nowMs()).toISOString(),
       stopRequested: false,
     };
+
+    // A run that got through with the session intact clears the alert
+    // suppression, so the next outage is reported straight away rather than
+    // being swallowed by a window left over from the previous one.
+    if (!state.requiresReauthentication && !stopRequested) {
+      try {
+        deps.onRunHealthy?.();
+      } catch {
+        // Nothing here is worth failing a completed run for.
+      }
+    }
   };
 
   return {
