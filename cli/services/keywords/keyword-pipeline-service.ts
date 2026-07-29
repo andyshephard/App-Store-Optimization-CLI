@@ -653,7 +653,10 @@ export class KeywordPipelineService {
         popularityExpiresAt: existing.popularityExpiresAt,
       };
       refreshed.push(refreshedItem);
-      positionCapturedAtByKeyword.set(existing.normalizedKeyword, positionCapturedAt);
+      positionCapturedAtByKeyword.set(
+        existing.normalizedKeyword,
+        positionCapturedAt
+      );
     }
 
     if (refreshed.length > 0) {
@@ -721,11 +724,37 @@ export class KeywordPipelineService {
       collected.push(...result.items);
     }
 
-    const known = keywords.filter((keyword) => !neverEnriched.includes(keyword));
+    const known = keywords.filter(
+      (keyword) => !neverEnriched.includes(keyword)
+    );
     if (known.length === 0) return collected;
 
     if (options.force) {
-      collected.push(...(await this.refreshOrder(country, known)));
+      // refreshOrder copies the stored popularity verbatim, so routing every
+      // known keyword through it would leave the 30-day popularity TTL with no
+      // path to fire - the score would freeze for as long as the daily forced
+      // pass keeps running. Expired ones go through `run`, which fetches the
+      // popularity and re-crawls the ranking in the same pass because an
+      // expired popularity makes the keyword a cache miss.
+      const nowMs = Date.now();
+      const popularityStale = new Set(
+        known.filter((keyword) => {
+          const row = existing.get(keyword);
+          return !row || !isStoredKeywordPopularityFresh(row, nowMs);
+        })
+      );
+      if (popularityStale.size > 0) {
+        const result = await this.run(country, [...popularityStale], {
+          allowInteractiveAuthRecovery: false,
+        });
+        collected.push(...result.items);
+      }
+      const orderOnly = known.filter(
+        (keyword) => !popularityStale.has(keyword)
+      );
+      if (orderOnly.length > 0) {
+        collected.push(...(await this.refreshOrder(country, orderOnly)));
+      }
       return collected;
     }
 
