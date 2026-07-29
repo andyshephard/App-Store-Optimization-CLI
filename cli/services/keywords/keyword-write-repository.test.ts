@@ -101,7 +101,12 @@ describe("keyword-write-repository", () => {
       },
     ]);
 
-    expect(mockSetPreviousPosition).toHaveBeenCalledWith("term", "US", "app-1", 1);
+    expect(mockSetPreviousPosition).toHaveBeenCalledWith(
+      "term",
+      "US",
+      "app-1",
+      1
+    );
     expect(mockUpsertKeywords).toHaveBeenCalledTimes(1);
     expect(mockInsertAppKeywordPositionHistoryPoints).toHaveBeenCalledWith([
       {
@@ -150,5 +155,99 @@ describe("keyword-write-repository", () => {
     expect(mockInsertAppKeywordPositionHistoryPoints).toHaveBeenCalledTimes(1);
     expect(mockPruneAppKeywordPositionHistoryBefore).not.toHaveBeenCalled();
     expect(mockSetMetadataValue).not.toHaveBeenCalled();
+  });
+});
+describe("upsertPopularityOnly", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getAssociationsForKeyword as jest.Mock).mockReturnValue([]);
+  });
+
+  const storedKeyword = {
+    keyword: "meditation",
+    normalizedKeyword: "meditation",
+    country: "US",
+    popularity: 40,
+    difficultyScore: 31,
+    minDifficultyScore: 12,
+    isBrandKeyword: false,
+    appCount: 220,
+    keywordMatch: "none",
+    orderedAppIds: ["111", "222"],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    orderExpiresAt: "2026-07-02T00:00:00.000Z",
+    popularityExpiresAt: "2026-07-31T00:00:00.000Z",
+  };
+
+  it("carries the enrichment forward instead of blanking it", () => {
+    // Popularity expires for every keyword at once, so nulling these emptied
+    // the whole table until each row was re-crawled - and lost the data
+    // outright for any row whose re-crawl then failed.
+    (getKeywords as jest.Mock).mockReturnValue([storedKeyword]);
+    const repository = new KeywordWriteRepository();
+
+    repository.upsertPopularityOnly("US", [
+      { keyword: "meditation", popularity: 55 },
+    ]);
+
+    const written = (upsertKeywords as jest.Mock).mock.calls[0][1] as Array<
+      Record<string, unknown>
+    >;
+    expect(written[0]).toMatchObject({
+      popularity: 55,
+      difficultyScore: 31,
+      minDifficultyScore: 12,
+      appCount: 220,
+      keywordMatch: "none",
+      orderedAppIds: ["111", "222"],
+    });
+  });
+
+  it("leaves the order TTL alone, because the ranking was not rechecked", () => {
+    (getKeywords as jest.Mock).mockReturnValue([storedKeyword]);
+    const repository = new KeywordWriteRepository();
+
+    repository.upsertPopularityOnly("US", [
+      { keyword: "meditation", popularity: 55 },
+    ]);
+
+    const written = (upsertKeywords as jest.Mock).mock.calls[0][1] as Array<
+      Record<string, unknown>
+    >;
+    expect(written[0].orderExpiresAt).toBe("2026-07-02T00:00:00.000Z");
+  });
+
+  it("records no position movement, having observed no ranking", () => {
+    (getKeywords as jest.Mock).mockReturnValue([storedKeyword]);
+    (getAssociationsForKeyword as jest.Mock).mockReturnValue([
+      { appId: "111", keyword: "meditation", country: "US" },
+    ]);
+    const repository = new KeywordWriteRepository();
+
+    repository.upsertPopularityOnly("US", [
+      { keyword: "meditation", popularity: 55 },
+    ]);
+
+    expect(setPreviousPosition).not.toHaveBeenCalled();
+    expect(insertAppKeywordPositionHistoryPoints).not.toHaveBeenCalled();
+  });
+
+  it("still writes a keyword that has never been enriched", () => {
+    (getKeywords as jest.Mock).mockReturnValue([]);
+    const repository = new KeywordWriteRepository();
+
+    repository.upsertPopularityOnly("US", [
+      { keyword: "brand new", popularity: 7 },
+    ]);
+
+    const written = (upsertKeywords as jest.Mock).mock.calls[0][1] as Array<
+      Record<string, unknown>
+    >;
+    expect(written[0]).toMatchObject({
+      popularity: 7,
+      difficultyScore: null,
+      orderedAppIds: [],
+    });
   });
 });

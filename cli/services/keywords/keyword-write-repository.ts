@@ -60,7 +60,9 @@ type CompetitorAppDoc = {
 
 function maybePrunePositionHistory(now: Date): void {
   const nowMs = now.getTime();
-  const lastPrunedAt = getMetadataValue(POSITION_HISTORY_LAST_PRUNED_METADATA_KEY);
+  const lastPrunedAt = getMetadataValue(
+    POSITION_HISTORY_LAST_PRUNED_METADATA_KEY
+  );
   if (lastPrunedAt) {
     const lastPrunedMs = Date.parse(lastPrunedAt);
     if (
@@ -75,18 +77,34 @@ function maybePrunePositionHistory(now: Date): void {
     nowMs - POSITION_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
   pruneAppKeywordPositionHistoryBefore(cutoff);
-  setMetadataValue(POSITION_HISTORY_LAST_PRUNED_METADATA_KEY, now.toISOString());
+  setMetadataValue(
+    POSITION_HISTORY_LAST_PRUNED_METADATA_KEY,
+    now.toISOString()
+  );
 }
 
 export class KeywordWriteRepository {
-  upsertKeywordItems(country: string, items: KeywordWriteItem[]): void {
+  /**
+   * @param options.recordPositions Whether to move `previous_position` on and
+   * record a position history point. False for writes that did not actually
+   * observe a ranking - carrying the stored order forward is not the same as
+   * having crawled it, and recording it would invent history and destroy the
+   * real previous position.
+   */
+  upsertKeywordItems(
+    country: string,
+    items: KeywordWriteItem[],
+    options: { recordPositions?: boolean } = {}
+  ): void {
     if (items.length === 0) return;
+    const recordPositions = options.recordPositions !== false;
 
     const now = new Date();
     const nowIso = now.toISOString();
     const normalizedItems = items.map((item) => ({
       ...item,
-      normalizedKeyword: item.normalizedKeyword ?? normalizeKeyword(item.keyword),
+      normalizedKeyword:
+        item.normalizedKeyword ?? normalizeKeyword(item.keyword),
       updatedAt: item.updatedAt ?? nowIso,
       positionCapturedAt: item.positionCapturedAt ?? item.updatedAt ?? nowIso,
     }));
@@ -105,6 +123,7 @@ export class KeywordWriteRepository {
     );
 
     for (const item of normalizedItems) {
+      if (!recordPositions) continue;
       const existing = existingByNormalized.get(item.normalizedKeyword);
       const orderedIds = existing?.orderedAppIds ?? [];
       const associations = getAssociationsForKeyword(item.keyword, country);
@@ -113,7 +132,12 @@ export class KeywordWriteRepository {
           const idx = orderedIds.indexOf(assoc.appId);
           const previousPosition = idx >= 0 ? idx + 1 : 0;
           if (previousPosition > 0) {
-            setPreviousPosition(item.keyword, country, assoc.appId, previousPosition);
+            setPreviousPosition(
+              item.keyword,
+              country,
+              assoc.appId,
+              previousPosition
+            );
           }
         }
 
@@ -147,7 +171,8 @@ export class KeywordWriteRepository {
         orderExpiresAt: item.orderExpiresAt ?? computeOrderExpiryIso(),
         popularityExpiresAt:
           item.popularityExpiresAt ??
-          existingByNormalized.get(item.normalizedKeyword)?.popularityExpiresAt ??
+          existingByNormalized.get(item.normalizedKeyword)
+            ?.popularityExpiresAt ??
           computePopularityExpiryIso(),
       }))
     );
@@ -158,26 +183,54 @@ export class KeywordWriteRepository {
     }
   }
 
+  /**
+   * Updates the popularity score and nothing else.
+   *
+   * The enrichment fields are carried forward rather than nulled. A popularity
+   * refresh says nothing about difficulty, app count, keyword match or the
+   * ranking - blanking them emptied the row in the dashboard until the
+   * enrichment that follows completed, and left the keyword with no data at all
+   * if that enrichment then failed. Popularity expires every 30 days for every
+   * keyword at once, so this ran as a fleet-wide wipe.
+   *
+   * The order TTL is preserved too. Extending it here would claim the ranking
+   * had just been checked when it had not, suppressing the refresh it is due.
+   */
   upsertPopularityOnly(
     country: string,
     items: Array<{ keyword: string; popularity: number }>
   ): void {
     if (items.length === 0) return;
+    const normalizedKeywords = items.map((item) =>
+      normalizeKeyword(item.keyword)
+    );
+    const existingByNormalized = new Map(
+      getKeywords(country, normalizedKeywords).map(
+        (keyword) => [keyword.normalizedKeyword, keyword] as const
+      )
+    );
     this.upsertKeywordItems(
       country,
-      items.map((item) => ({
-        keyword: item.keyword,
-        normalizedKeyword: normalizeKeyword(item.keyword),
-        popularity: item.popularity,
-        difficultyScore: null,
-        minDifficultyScore: null,
-        isBrandKeyword: null,
-        appCount: null,
-        keywordMatch: null,
-        orderedAppIds: [],
-        orderExpiresAt: computeOrderExpiryIso(),
-        popularityExpiresAt: computePopularityExpiryIso(),
-      }))
+      items.map((item) => {
+        const normalizedKeyword = normalizeKeyword(item.keyword);
+        const existing = existingByNormalized.get(normalizedKeyword);
+        return {
+          keyword: item.keyword,
+          normalizedKeyword,
+          popularity: item.popularity,
+          difficultyScore: existing?.difficultyScore ?? null,
+          minDifficultyScore: existing?.minDifficultyScore ?? null,
+          isBrandKeyword: existing?.isBrandKeyword ?? null,
+          appCount: existing?.appCount ?? null,
+          keywordMatch: existing?.keywordMatch ?? null,
+          orderedAppIds: existing?.orderedAppIds ?? [],
+          orderExpiresAt: existing?.orderExpiresAt ?? computeOrderExpiryIso(),
+          popularityExpiresAt: computePopularityExpiryIso(),
+        };
+      }),
+      // Nothing was crawled here, so the stored ranking must not be recorded as
+      // a fresh observation.
+      { recordPositions: false }
     );
   }
 
