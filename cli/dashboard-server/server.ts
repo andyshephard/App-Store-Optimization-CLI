@@ -194,11 +194,17 @@ const startupRefreshManager = createStartupRefreshManager({
  * Owns the clock for the daily refresh, so the database stays current whether
  * or not anything external calls the API. Disabled unless ASO_REFRESH_DAILY_AT
  * is set, which keeps local runs and existing installs unchanged.
+ *
+ * The run is forced. Without it the crawl only picks up keywords past the 24h
+ * order TTL, so any manual refresh in the preceding day leaves nothing eligible
+ * and the scheduled run silently does nothing — the daily snapshot skips a day
+ * as a side effect of someone pressing a button. Forcing keeps one row per
+ * keyword per day regardless.
  */
 const refreshScheduler = createRefreshScheduler({
   dailyAt: ASO_ENV.refreshDailyAt,
   timeZone: ASO_ENV.refreshTimeZone,
-  run: () => startupRefreshManager.start(),
+  run: () => startupRefreshManager.start({ force: true }),
   onError: (error, metadata) => {
     reportDashboardError(error, { ...metadata, context: "refresh-scheduler" });
   },
