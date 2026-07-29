@@ -25,6 +25,18 @@ function isCredentialStoreAvailable(): boolean {
   return process.platform === "darwin";
 }
 
+function loadEnvCredentials(): AppleLoginCredentials | null {
+  const appleId = process.env.ASO_APPLE_ID?.trim();
+  const password = process.env.ASO_APPLE_PASSWORD?.trim();
+  if (!appleId || !password) return null;
+  return { appleId, password };
+}
+
+/** Whether credentials are supplied by the environment rather than a prompt. */
+export function hasEnvAppleCredentials(): boolean {
+  return loadEnvCredentials() != null;
+}
+
 function runSecurityCommand(args: string[]): string {
   return execFileSync("security", args, {
     encoding: "utf8",
@@ -39,6 +51,13 @@ export class AsoKeychainService {
   }
 
   loadCredentials(): AppleLoginCredentials | null {
+    // Environment credentials come first and work on every platform. This is
+    // what lets a server re-authenticate unattended: Apple's 2FA trust cookie
+    // lasts ~30 days, so a re-login inside that window needs only the Apple ID
+    // and password, no verification code.
+    const envCredentials = loadEnvCredentials();
+    if (envCredentials) return envCredentials;
+
     if (!isCredentialStoreAvailable()) return null;
     try {
       const raw = runSecurityCommand([

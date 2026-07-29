@@ -1,6 +1,7 @@
 import { ContextualError } from "../../utils/error-handling-helpers";
 import { logger } from "../../utils/logger";
 import { asoAuthService } from "../auth/aso-auth-service";
+import { hasEnvAppleCredentials } from "../auth/aso-keychain-service";
 import { getConfiguredAsoAdamId } from "./aso-adam-id-service";
 import {
   requestPopularitiesWithKwsRetry,
@@ -26,6 +27,29 @@ const NO_USER_OWNED_APPS_FOUND_CODE = "NO_USER_OWNED_APPS_FOUND_CODE";
 const KWS_NO_ORG_CONTENT_PROVIDERS = "KWS_NO_ORG_CONTENT_PROVIDERS";
 const APPLE_POPULARITY_URL =
   "https://app-ads.apple.com/cm/api/v2/keywords/popularities";
+
+/**
+ * Re-authenticate without a human, using Apple credentials from the environment.
+ *
+ * Apple's two-factor trust cookie lasts about 30 days, while the Search Ads
+ * session cookies expire far sooner. Inside that window a re-login needs only
+ * the Apple ID and password, no verification code — so an unattended retry is
+ * worth attempting even on paths that must never block on a prompt. With no
+ * prompt handler and no TTY the auth service throws rather than waiting, so the
+ * worst case is the same error the caller would have seen anyway.
+ */
+async function tryUnattendedReauth(): Promise<string | null> {
+  if (!hasEnvAppleCredentials()) return null;
+  try {
+    logger.debug("[aso-popularity] attempting unattended reauthentication");
+    return await asoAuthService.reAuthenticate();
+  } catch (error) {
+    logger.debug(
+      `[aso-popularity] unattended reauthentication failed: ${String(error)}`
+    );
+    return null;
+  }
+}
 
 type FetchKeywordPopularitiesOptions = {
   allowInteractiveAuthRecovery?: boolean;
@@ -166,14 +190,19 @@ export class AsoPopularityService {
     let cookieHeader = asoAuthService.getCookieHeader(APPLE_POPULARITY_URL);
     if (!cookieHeader.trim()) {
       if (!allowInteractiveAuthRecovery) {
-        throw new AsoAuthReauthRequiredError(
-          "Apple Search Ads session expired. Reauthentication is required."
+        const recovered = await tryUnattendedReauth();
+        if (!recovered) {
+          throw new AsoAuthReauthRequiredError(
+            "Apple Search Ads session expired. Reauthentication is required."
+          );
+        }
+        cookieHeader = recovered;
+      } else {
+        logger.debug(
+          "[aso-popularity] no cached cookie header, reauthenticating"
         );
+        cookieHeader = await asoAuthService.reAuthenticate();
       }
-      logger.debug(
-        "[aso-popularity] no cached cookie header, reauthenticating"
-      );
-      cookieHeader = await asoAuthService.reAuthenticate();
     }
     const requestWithAuthRecovery = async (
       terms: string[],
@@ -193,8 +222,18 @@ export class AsoPopularityService {
 
       if (isAuthFailure(response.statusCode, response.data)) {
         if (!allowInteractiveAuthRecovery) {
-          throw new AsoAuthReauthRequiredError(
-            "Apple Search Ads session expired. Reauthentication is required."
+          const recovered = await tryUnattendedReauth();
+          if (!recovered) {
+            throw new AsoAuthReauthRequiredError(
+              "Apple Search Ads session expired. Reauthentication is required."
+            );
+          }
+          cookieHeader = recovered;
+          return requestPopularitiesWithKwsRetry(
+            terms,
+            cookieHeader,
+            adamId,
+            options
           );
         }
         logger.debug(

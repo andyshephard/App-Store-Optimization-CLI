@@ -698,19 +698,42 @@ export class KeywordPipelineService {
       keywords.push(normalizedKeyword);
     }
 
+    // Keywords that have never been enriched have no stored row, so
+    // refreshOrder would skip them - they need the full pipeline to get a
+    // popularity score first. This is the path a deferred add lands on.
+    const existing = new Map(
+      getKeywords(country, keywords).map((row) => [row.normalizedKeyword, row])
+    );
+    const neverEnriched = keywords.filter(
+      (keyword) => !isCompleteStoredAsoKeyword(existing.get(keyword))
+    );
+
     // `run` short-circuits on the cache, which is what the scheduled pass wants.
-    // A forced refresh has to reach Apple, so it goes through refreshOrder,
-    // which re-crawls the ranking unconditionally. Popularity is deliberately
-    // left alone: it is account-level with a 30-day TTL, so re-fetching it here
-    // would hammer the Search Ads API for a value that has not moved.
-    if (options.force) {
-      return this.refreshOrder(country, keywords);
+    // A forced refresh has to reach Apple, so known keywords go through
+    // refreshOrder, which re-crawls the ranking unconditionally. Popularity is
+    // deliberately left alone there: it is account-level with a 30-day TTL, so
+    // re-fetching it would hammer the Search Ads API for an unchanged value.
+    const collected: AsoKeywordItem[] = [];
+    if (neverEnriched.length > 0) {
+      const result = await this.run(country, neverEnriched, {
+        allowInteractiveAuthRecovery: false,
+      });
+      collected.push(...result.items);
     }
 
-    const result = await this.run(country, keywords, {
+    const known = keywords.filter((keyword) => !neverEnriched.includes(keyword));
+    if (known.length === 0) return collected;
+
+    if (options.force) {
+      collected.push(...(await this.refreshOrder(country, known)));
+      return collected;
+    }
+
+    const result = await this.run(country, known, {
       allowInteractiveAuthRecovery: false,
     });
-    return result.items;
+    collected.push(...result.items);
+    return collected;
   }
 
   async run(

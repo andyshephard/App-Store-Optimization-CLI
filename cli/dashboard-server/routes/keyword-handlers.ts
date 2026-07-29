@@ -283,6 +283,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
       appId?: string;
       keywords?: string[];
       country?: string;
+      defer?: boolean;
     }>(req, res);
     if (!body) {
       return;
@@ -343,6 +344,23 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
         cachedCount: 0,
         pendingCount: 0,
         skippedExistingCount: keywords.length,
+      });
+      return;
+    }
+
+    // Track the keywords without contacting Apple. Scores arrive on the next
+    // refresh, which now picks up associations that have no cached row yet.
+    // Lets an automation add keywords without a live Apple session.
+    if (body.defer === true) {
+      createAppKeywords(appId, keywordsToAdd, country);
+      deps.sendJson(res, 201, {
+        success: true,
+        data: {
+          cachedCount: 0,
+          pendingCount: keywordsToAdd.length,
+          failedCount: 0,
+          deferred: true,
+        },
       });
       return;
     }
@@ -486,12 +504,23 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
       }
     } catch (err) {
       if (isAsoAuthReauthRequiredError(err)) {
-        deps.sendApiError(
-          res,
-          401,
-          "AUTH_REQUIRED",
-          "Apple Search Ads session expired. Reauthenticate from the dashboard and retry."
-        );
+        // The Apple session is gone, but the request itself was valid. Record
+        // the association so the work is not lost, and say plainly that scores
+        // are outstanding - a bare 401 makes a caller drop the keywords and
+        // redo it by hand later.
+        createAppKeywords(appId, keywordsToAdd, country);
+        deps.sendJson(res, 202, {
+          success: true,
+          data: {
+            cachedCount: 0,
+            pendingCount: keywordsToAdd.length,
+            failedCount: 0,
+            deferred: true,
+            warning:
+              "Tracked without scores: the Apple Search Ads session has expired. " +
+              "Popularity and difficulty will be filled in once it is restored.",
+          },
+        });
         return;
       }
 

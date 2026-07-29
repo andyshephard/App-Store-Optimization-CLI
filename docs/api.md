@@ -366,13 +366,34 @@ Always performs a live search.
 |---|---|---|
 | `POST /api/apps` | `{"type":"app","appId":"123","country":"GB"}` or `{"type":"research","name":"..."}` | Adds a tracked app; hydrates from Apple |
 | `DELETE /api/apps` | `{"appId":"123"}` | Removes the app and its keyword associations |
-| `POST /api/aso/keywords` | `{"appId":"123","keywords":["a","b"],"country":"GB"}` | **Crawls Apple synchronously.** Max 100 per call. Returns `{cachedCount, pendingCount, failedCount}`. Can exceed Cloudflare's 100s limit — use the internal URL for large batches |
+| `POST /api/aso/keywords` | `{"appId":"123","keywords":["a","b"],"country":"GB","defer":true}` | Max 100 per call. Returns `{cachedCount, pendingCount, failedCount}`. **`defer: true` records the keywords without contacting Apple** and lets the next refresh score them — the right choice for automation. Without it the call crawls synchronously and can exceed Cloudflare's 100s limit |
 | `DELETE /api/aso/keywords` | `{"appId":"123","keywords":["a"],"country":"GB"}` | `{removedCount}` |
 | `POST /api/aso/keywords/favorite` | `{"appId":"123","keyword":"a","isFavorite":true,"country":"GB"}` | 404 if not tracked |
 | `POST /api/aso/keywords/retry-failed` | `{"appId":"123","country":"GB"}` | Re-crawls failed keywords |
 | `POST /api/aso/refresh/start` \| `/stop` | — | Manual crawl control; 202. `?force=1` re-crawls every tracked keyword instead of only those past their 24h freshness window — that is what the dashboard's Refresh all button sends |
 | `POST /api/aso/auth/start` \| `/respond` | see below | **Never call from automation** |
 | `POST /api/aso/setup/start` \| `/respond` | | Primary App ID selection |
+
+## Adding keywords from a script
+
+`POST /api/aso/keywords` with `"defer": true` stores the keyword association and
+returns immediately:
+
+```json
+{ "success": true, "data": { "cachedCount": 0, "pendingCount": 3, "failedCount": 0, "deferred": true } }
+```
+
+Popularity, difficulty and rank arrive on the next refresh, which picks up
+tracked keywords that have no cached row yet. Nothing is lost and no Apple
+session is needed at the moment of adding.
+
+Even without `defer`, an expired Apple session no longer fails the request: the
+keywords are recorded and the response is **202** with `deferred: true` and a
+`warning`, rather than a 401 that would make a caller drop them and redo the work
+by hand.
+
+Adding an *app* (`POST /api/apps`) never needed the Search Ads session — it reads
+public App Store pages — so that path was already safe.
 
 ## Why automation must not start the Apple login
 

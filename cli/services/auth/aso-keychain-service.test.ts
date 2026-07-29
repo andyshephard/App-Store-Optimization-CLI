@@ -1,6 +1,9 @@
 import { jest } from "@jest/globals";
 import { execFileSync } from "child_process";
-import { AsoKeychainService } from "./aso-keychain-service";
+import {
+  AsoKeychainService,
+  hasEnvAppleCredentials,
+} from "./aso-keychain-service";
 
 jest.mock("child_process", () => ({
   execFileSync: jest.fn(),
@@ -190,6 +193,61 @@ describe("AsoKeychainService without an OS credential store", () => {
       expect(mockExecFileSync).not.toHaveBeenCalled();
     } finally {
       delete process.env.ASO_DISABLE_CREDENTIAL_STORE;
+      restore();
+    }
+  });
+});
+
+describe("environment credentials", () => {
+  const previousId = process.env.ASO_APPLE_ID;
+  const previousPassword = process.env.ASO_APPLE_PASSWORD;
+
+  afterEach(() => {
+    for (const [key, value] of [
+      ["ASO_APPLE_ID", previousId],
+      ["ASO_APPLE_PASSWORD", previousPassword],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("reports none when either value is missing", () => {
+    delete process.env.ASO_APPLE_ID;
+    delete process.env.ASO_APPLE_PASSWORD;
+    expect(hasEnvAppleCredentials()).toBe(false);
+
+    process.env.ASO_APPLE_ID = "user@example.com";
+    expect(hasEnvAppleCredentials()).toBe(false);
+  });
+
+  // This is what lets a server re-authenticate unattended, so it must work on
+  // Linux where there is no OS credential store at all.
+  it("supplies credentials on a platform with no credential store", () => {
+    process.env.ASO_APPLE_ID = "user@example.com";
+    process.env.ASO_APPLE_PASSWORD = "pw";
+    const restore = setPlatform("linux");
+    try {
+      expect(hasEnvAppleCredentials()).toBe(true);
+      expect(new AsoKeychainService().loadCredentials()).toEqual({
+        appleId: "user@example.com",
+        password: "pw",
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("takes precedence over the OS credential store", () => {
+    process.env.ASO_APPLE_ID = "env@example.com";
+    process.env.ASO_APPLE_PASSWORD = "env-pw";
+    const restore = setPlatform("darwin");
+    try {
+      expect(new AsoKeychainService().loadCredentials()).toEqual({
+        appleId: "env@example.com",
+        password: "env-pw",
+      });
+      } finally {
       restore();
     }
   });

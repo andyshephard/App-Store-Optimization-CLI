@@ -9,6 +9,7 @@ import {
   upsertOwnedAppSnapshots,
 } from "../db/owned-apps";
 import {
+  createAppKeywords,
   deleteAppKeywords,
   deleteAppKeywordsByAppId,
   getAppLastKeywordAddedAtMap,
@@ -278,6 +279,7 @@ describe("dashboard server routes", () => {
   const mockDeleteAppKeywords = jest.mocked(deleteAppKeywords);
   const mockDeleteAppKeywordsByAppId = jest.mocked(deleteAppKeywordsByAppId);
   const mockSetAppKeywordFavorite = jest.mocked(setAppKeywordFavorite);
+  const mockCreateAppKeywords = jest.mocked(createAppKeywords);
   const mockGetKeyword = jest.mocked(getKeyword);
   const mockGetCompetitorAppDocs = jest.mocked(getCompetitorAppDocs);
   const mockUpsertCompetitorAppDocs = jest.mocked(upsertCompetitorAppDocs);
@@ -1975,7 +1977,7 @@ describe("dashboard server routes", () => {
     expect(response.json?.errorCode).toBe("PRIMARY_APP_ID_RECONFIGURE_REQUIRED");
   });
 
-  it("returns auth-required for keyword routes when reauth is required", async () => {
+  it("tracks keywords anyway when the Apple session has expired, but still reports auth-required for retries", async () => {
     mockIsAsoAuthReauthRequiredError.mockReturnValue(true);
     mockFetchKeywordStage.mockRejectedValue(new Error("session expired"));
     mockRetryFailed.mockRejectedValue(new Error("session expired"));
@@ -1989,8 +1991,16 @@ describe("dashboard server routes", () => {
         keywords: ["failed-term"],
       },
     });
-    expect(addKeywords.statusCode).toBe(401);
-    expect(addKeywords.json?.errorCode).toBe("AUTH_REQUIRED");
+    // The request was valid; only the scoring could not happen. Dropping it
+    // would make a caller lose the keyword and redo the work by hand.
+    expect(addKeywords.statusCode).toBe(202);
+    expect(addKeywords.json?.data.deferred).toBe(true);
+    expect(addKeywords.json?.data.pendingCount).toBe(1);
+    expect(mockCreateAppKeywords).toHaveBeenCalledWith(
+      "app-1",
+      ["failed-term"],
+      "US"
+    );
 
     const retryFailed = await request({
       method: "POST",

@@ -121,7 +121,26 @@ export function selectKeywordRefreshCandidates(params: {
       .filter(Boolean)
   );
 
-  return params.keywords
+  // Keywords added while Apple auth was unavailable have an association but no
+  // cached row yet. They are invisible to the freshness checks below - which
+  // read stored rows - so pick them up explicitly, otherwise a deferred add
+  // never gets enriched.
+  const storedKeywords = new Set(
+    params.keywords.map((keyword) => keyword.normalizedKeyword)
+  );
+  const pendingFirstEnrichment: KeywordRefreshItem[] = [];
+  const seenPending = new Set<string>();
+  for (const row of params.appKeywords) {
+    if (!params.associatedAppIds.has(row.appId)) continue;
+    const normalized = normalizeKeyword(row.keyword);
+    if (!normalized || storedKeywords.has(normalized)) continue;
+    if (seenPending.has(normalized)) continue;
+    seenPending.add(normalized);
+    // Popularity is unknown until the pipeline fetches it.
+    pendingFirstEnrichment.push({ keyword: row.keyword, popularity: 0 });
+  }
+
+  const refreshable = params.keywords
     .filter((keyword) => associatedKeywords.has(keyword.normalizedKeyword))
     .filter(
       (keyword) =>
@@ -147,6 +166,8 @@ export function selectKeywordRefreshCandidates(params: {
       keyword: keyword.keyword,
       popularity: keyword.popularity,
     }));
+
+  return [...pendingFirstEnrichment, ...refreshable];
 }
 
 function chunkItems<T>(items: T[], size: number): T[][] {
