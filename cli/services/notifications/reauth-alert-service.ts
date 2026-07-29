@@ -148,13 +148,18 @@ export async function sendReauthenticationAlert(
   }
 
   // Recorded only on success, so a Resend outage does not silently consume the
-  // one alert for this incident.
-  try {
-    writeLastSentAt(new Date(now).toISOString());
-  } catch (error) {
-    logger.debug(
-      `[aso-alert] could not record alert timestamp: ${String(error)}`
-    );
+  // one alert for this incident - and never for a forced send, which is a
+  // delivery test rather than an incident. Recording it would arm the
+  // suppression window and swallow a real failure that happened to follow
+  // within the day.
+  if (params.force !== true) {
+    try {
+      writeLastSentAt(new Date(now).toISOString());
+    } catch (error) {
+      logger.debug(
+        `[aso-alert] could not record alert timestamp: ${String(error)}`
+      );
+    }
   }
   logger.debug("[aso-alert] reauthentication alert sent");
   return "sent";

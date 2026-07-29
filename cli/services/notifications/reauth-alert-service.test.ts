@@ -108,6 +108,22 @@ describe("sendReauthenticationAlert", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("does not arm suppression on a forced send, so a real failure later that day still alerts", async () => {
+    const written: string[] = [];
+
+    await sendReauthenticationAlert(
+      { force: true },
+      {
+        mailer: async () => {},
+        now: () => Date.parse("2026-08-28T02:00:00.000Z"),
+        readLastSentAt: () => null,
+        writeLastSentAt: (iso) => written.push(iso),
+      }
+    );
+
+    expect(written).toEqual([]);
+  });
+
   it("does not record a timestamp when sending failed, so the incident can still alert", async () => {
     const written: string[] = [];
 
