@@ -7,6 +7,10 @@ import {
   setAppKeywordFavorite,
 } from "../../db/app-keywords";
 import { listAppKeywordPositionHistory } from "../../db/app-keyword-position-history";
+import {
+  getLatestPopularityTrends,
+  listKeywordPopularityHistory,
+} from "../../db/aso-keyword-popularity-history";
 import { getDb } from "../../db/store";
 import { keywordPipelineService } from "../../services/keywords/keyword-pipeline-service";
 import { isAsoAuthReauthRequiredError } from "../../services/keywords/aso-popularity-service";
@@ -798,6 +802,39 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     });
   }
 
+  function handleApiAsoKeywordPopularityHistoryGet(
+    res: http.ServerResponse,
+    query: Record<string, string>
+  ): void {
+    const normalizedKeyword = normalizeKeyword(query.keyword ?? "");
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
+    if (!normalizedKeyword) {
+      deps.sendApiError(res, 400, "INVALID_REQUEST", "Please provide keyword.");
+      return;
+    }
+
+    const points = listKeywordPopularityHistory(country, normalizedKeyword).map(
+      (row) => ({
+        week: row.week,
+        popularity: row.popularity,
+        genre: row.genre,
+        rankInGenre: row.rankInGenre,
+      })
+    );
+
+    deps.sendJson(res, 200, {
+      success: true,
+      data: {
+        keyword: normalizedKeyword,
+        country,
+        points,
+      },
+    });
+  }
+
   function handleApiAsoKeywordsGetPagedForApp(
     res: http.ServerResponse,
     country: string,
@@ -947,6 +984,11 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
       }
     }
 
+    const popularityTrends = getLatestPopularityTrends(
+      country,
+      normalizedKeywords
+    );
+
     const items = rows.map((row) => {
       const orderedAppIds = parseOrderedAppIds(row.ordered_app_ids);
       const assocs = associationsByKeyword.get(row.normalized_keyword) ?? [];
@@ -977,6 +1019,8 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
         normalizedKeyword: row.normalized_keyword,
         country,
         popularity: row.popularity,
+        previousPopularity:
+          popularityTrends.get(row.normalized_keyword)?.previous ?? null,
         difficultyScore: row.difficulty_score,
         minDifficultyScore: row.min_difficulty_score,
         isBrandKeyword:
@@ -1045,6 +1089,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     handleApiAsoKeywordsFavoritePost,
     handleApiAsoKeywordsRetryFailedPost,
     handleApiAsoKeywordHistoryGet,
+    handleApiAsoKeywordPopularityHistoryGet,
     handleApiAsoKeywordsGet,
   };
 }

@@ -75,6 +75,7 @@ function buildFetchMock(params: {
   appDocsById?: Record<string, unknown>;
   topAppsByKeyword?: Record<string, unknown>;
   historyByKeyword?: Record<string, { points: unknown[] }>;
+  popularityHistoryByKeyword?: Record<string, { points: unknown[] }>;
   appSearchByTerm?: Record<string, { appDocs: unknown[] }>;
   dashboardSettings?: {
     includeResearchAppsInKeywordRefresh: boolean;
@@ -170,6 +171,22 @@ function buildFetchMock(params: {
           appId,
           keyword,
           points: params.historyByKeyword?.[keyword]?.points ?? [],
+        },
+      });
+    }
+
+    if (
+      method === "GET" &&
+      url.startsWith("/api/aso/keywords/popularity-history?")
+    ) {
+      const query = new URLSearchParams(url.split("?")[1] ?? "");
+      const keyword = decodeURIComponent(query.get("keyword") ?? "");
+      return jsonResponse(200, {
+        success: true,
+        data: {
+          keyword,
+          country: "US",
+          points: params.popularityHistoryByKeyword?.[keyword]?.points ?? [],
         },
       });
     }
@@ -502,6 +519,56 @@ describe("dashboard app interactions", () => {
     });
     expect(within(dialog).getByText(/Best rank:/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Worst rank:/)).toBeInTheDocument();
+  });
+
+  it("opens popularity history dialog from the popularity cell", async () => {
+    const fetchMock = buildFetchMock({
+      initialApps: [
+        { id: DEFAULT_RESEARCH_APP_ID, name: "Research" },
+        { id: "111", name: "Owned App" },
+      ],
+      keywordsByAppId: {
+        "111": [
+          {
+            keyword: "meditation",
+            popularity: 60,
+            previousPopularity: 55,
+            difficultyScore: 40,
+            appCount: 88,
+            positions: [{ appId: "111", previousPosition: 6, currentPosition: 4 }],
+            updatedAt: "2026-03-10T11:00:00.000Z",
+          },
+        ],
+      },
+      popularityHistoryByKeyword: {
+        meditation: {
+          points: [
+            { week: "2026-03-01", popularity: 55, genre: "HEALTH_FITNESS", rankInGenre: 12 },
+            { week: "2026-03-08", popularity: 60, genre: "HEALTH_FITNESS", rankInGenre: 9 },
+          ],
+        },
+      },
+    });
+    global.fetch = fetchMock as typeof fetch;
+    localStorage.setItem("aso-dashboard:selected-app-id", "111");
+
+    render(<App />);
+
+    const keywordCell = await screen.findByText("meditation");
+    const row = keywordCell.closest("tr") as HTMLElement;
+    const popularityCell = within(row).getAllByRole("cell")[1];
+    const trigger = within(popularityCell).getByRole("button", {
+      name: /60/,
+    });
+    expect(within(popularityCell).getByText("↑5")).toBeInTheDocument();
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Popularity history for meditation",
+    });
+    expect(within(dialog).getByText(/Peak:/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Low:/)).toBeInTheDocument();
+    expect(within(dialog).getByText("HEALTH_FITNESS #9")).toBeInTheDocument();
   });
 
   it("opens top apps dialog and supports context delete", async () => {

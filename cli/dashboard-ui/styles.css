@@ -1133,9 +1133,10 @@ td.updated-value {
   font-size: 0.75rem;
 }
 
+/* Blue up / red down: colour-blind-safe pair (no red vs green). */
 .delta.up {
-  background: color-mix(in oklab, #16a34a 24%, transparent);
-  color: #16a34a;
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
+  color: var(--primary);
 }
 
 .delta.down {
@@ -1144,8 +1145,8 @@ td.updated-value {
 }
 
 .delta.same {
-  background: color-mix(in oklab, var(--primary) 18%, transparent);
-  color: color-mix(in oklab, var(--foreground) 82%, var(--primary));
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  color: var(--muted-foreground);
 }
 
 .rank-history-trigger {
@@ -2358,8 +2359,8 @@ td.updated-value {
 }
 
 .delta.up {
-  background: rgba(34, 197, 94, 0.14);
-  color: var(--ok);
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
 }
 
 .delta.down {
@@ -2368,8 +2369,56 @@ td.updated-value {
 }
 
 .delta.same {
-  background: rgba(112, 172, 231, 0.16);
-  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* The whole popularity cell opens the popularity-history dialog. The bar is
+   capped narrower than the generic metric bar so the trend chip always fits
+   inside the column instead of clipping at its edge. */
+.popularity-cell-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.popularity-cell-trigger .metric {
+  width: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.popularity-cell-trigger .metric-track {
+  min-width: 44px;
+  max-width: 92px;
+}
+
+.popularity-cell-trigger:hover .metric-value {
+  text-decoration: underline;
+}
+
+/* Weekly popularity trend, rendered beside the popularity bar. Blue up /
+   red down to match the rank-change pills (no red vs green). */
+.pop-trend {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pop-trend.up {
+  color: var(--primary);
+}
+
+.pop-trend.down {
+  color: var(--danger);
 }
 
 .top-apps-trigger {

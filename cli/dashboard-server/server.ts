@@ -793,6 +793,14 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
+      if (
+        req.method === "GET" &&
+        pathname === "/api/aso/keywords/popularity-history"
+      ) {
+        asoRouteHandlers.handleApiAsoKeywordPopularityHistoryGet(res, query);
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/aso/top-apps") {
         await asoRouteHandlers.handleApiAsoTopAppsGet(res, query);
         return;

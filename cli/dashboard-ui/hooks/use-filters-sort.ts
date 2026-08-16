@@ -141,6 +141,7 @@ function getStoredFilterState(): typeof DEFAULT_FILTER_STATE {
 type FilterableRow = {
   keyword: string;
   popularity: number;
+  previousPopularity?: number | null;
   difficultyScore: number | null;
   isBrandKeyword: boolean | null;
   isFavorite: boolean;

@@ -79,6 +79,7 @@ type AppDoc = {
 type KeywordItem = {
   keyword: string;
   popularity: number | null;
+  previousPopularity?: number | null;
   difficultyScore: number | null;
   isBrandKeyword?: boolean | null;
   isFavorite?: boolean;
@@ -119,6 +120,24 @@ type PositionHistoryHoverPoint = {
   y: number;
   capturedAt: string;
   position: number;
+};
+type KeywordPopularityHistoryPoint = {
+  week: string;
+  popularity: number;
+  genre: string | null;
+  rankInGenre: number | null;
+};
+type KeywordPopularityHistoryPayload = {
+  keyword: string;
+  country: string;
+  points: KeywordPopularityHistoryPoint[];
+};
+type PopularityHistoryHoverPoint = {
+  x: number;
+  y: number;
+  week: string;
+  popularity: number;
+  genre: string | null;
 };
 
 type FilterMenuKey = "popularity" | "difficulty" | "brand" | "favorite" | "rank";
@@ -168,6 +187,7 @@ type PendingKeywordAuthResume =
 type Row = {
   keyword: string;
   popularity: number;
+  previousPopularity: number | null;
   difficultyScore: number | null;
   isBrandKeyword: boolean | null;
   isFavorite: boolean;
@@ -236,6 +256,7 @@ const POSITION_HISTORY_CHART_PADDING = {
   bottom: 34,
   left: 18,
 };
+const POPULARITY_HISTORY_TICKS = [20, 40, 60, 80, 100];
 const FLOATING_MENU_PADDING = 8;
 const APP_ACTION_MENU_SIZE = { width: 170, height: 58 };
 const KEYWORD_ACTION_MENU_SIZE = { width: 190, height: 96 };
@@ -585,6 +606,17 @@ export function App() {
   const [positionHistoryError, setPositionHistoryError] = useState("");
   const [positionHistoryHoverPoint, setPositionHistoryHoverPoint] =
     useState<PositionHistoryHoverPoint | null>(null);
+  const [popularityHistoryKeyword, setPopularityHistoryKeyword] = useState<
+    string | null
+  >(null);
+  const [popularityHistoryPoints, setPopularityHistoryPoints] = useState<
+    KeywordPopularityHistoryPoint[]
+  >([]);
+  const [popularityHistoryLoading, setPopularityHistoryLoading] =
+    useState(false);
+  const [popularityHistoryError, setPopularityHistoryError] = useState("");
+  const [popularityHistoryHoverPoint, setPopularityHistoryHoverPoint] =
+    useState<PopularityHistoryHoverPoint | null>(null);
   const [startupRefreshState, setStartupRefreshState] =
     useState<StartupRefreshStatusPayload | null>(null);
   const [appIconsById, setAppIconsById] = useState<Record<string, string | null>>(
@@ -923,6 +955,7 @@ export function App() {
       return {
         keyword: item.keyword,
         popularity: item.popularity ?? 0,
+        previousPopularity: item.previousPopularity ?? null,
         difficultyScore: item.difficultyScore,
         isBrandKeyword: item.isBrandKeyword ?? null,
         isFavorite: item.isFavorite === true,
@@ -1245,6 +1278,20 @@ export function App() {
     if (positionHistoryKeyword) return;
     setPositionHistoryHoverPoint(null);
   }, [positionHistoryKeyword]);
+
+  useEffect(() => {
+    if (!popularityHistoryKeyword) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPopularityHistoryKeyword(null);
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, [popularityHistoryKeyword]);
+
+  useEffect(() => {
+    if (popularityHistoryKeyword) return;
+    setPopularityHistoryHoverPoint(null);
+  }, [popularityHistoryKeyword]);
 
   useEffect(() => {
     if (!isSettingsOpen) return;
@@ -2028,6 +2075,32 @@ export function App() {
     }
   };
 
+  const onOpenPopularityHistory = async (rowKeyword: string) => {
+    setPopularityHistoryKeyword(rowKeyword);
+    setPopularityHistoryPoints([]);
+    setPopularityHistoryError("");
+    setPopularityHistoryHoverPoint(null);
+    setPopularityHistoryLoading(true);
+    try {
+      const data = await apiGet<KeywordPopularityHistoryPayload>(
+        `/api/aso/keywords/popularity-history?country=${encodeURIComponent(
+          country
+        )}&keyword=${encodeURIComponent(rowKeyword)}`
+      );
+      setPopularityHistoryPoints(
+        (data.points ?? []).filter((point) =>
+          Number.isFinite(point.popularity)
+        )
+      );
+    } catch (error) {
+      setPopularityHistoryError(
+        toActionableErrorMessage(error, "Failed to load popularity history")
+      );
+    } finally {
+      setPopularityHistoryLoading(false);
+    }
+  };
+
   const onSortHeader = (key: SortKey) => {
     if (sortBy === key) {
       setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -2214,6 +2287,103 @@ export function App() {
       rankLabel,
     };
   }, [displayLocale, positionHistoryChart, positionHistoryHoverPoint]);
+
+  const popularityHistoryChart = useMemo(() => {
+    if (popularityHistoryPoints.length === 0) return null;
+    const sorted = [...popularityHistoryPoints].sort((a, b) =>
+      a.week < b.week ? -1 : 1
+    );
+
+    const chartWidth = POSITION_HISTORY_CHART_WIDTH;
+    const chartHeight = POSITION_HISTORY_CHART_HEIGHT;
+    const innerWidth =
+      chartWidth -
+      POSITION_HISTORY_CHART_PADDING.left -
+      POSITION_HISTORY_CHART_PADDING.right;
+    const innerHeight =
+      chartHeight -
+      POSITION_HISTORY_CHART_PADDING.top -
+      POSITION_HISTORY_CHART_PADDING.bottom;
+
+    const scores = sorted.map((point) => point.popularity);
+    const bestPopularity = Math.max(...scores);
+    const worstPopularity = Math.min(...scores);
+    const minTimestamp = Date.parse(sorted[0].week);
+    const maxTimestamp = Date.parse(sorted[sorted.length - 1].week);
+    const xRange = Math.max(1, maxTimestamp - minTimestamp);
+
+    // Popularity is 0-100 with higher = better, so higher scores sit higher
+    // in the chart (the inverse of the rank chart).
+    const yFor = (popularity: number) =>
+      POSITION_HISTORY_CHART_PADDING.top +
+      ((100 - Math.max(0, Math.min(100, popularity))) / 100) * innerHeight;
+
+    const points = sorted.map((point) => {
+      const timestamp = Date.parse(point.week);
+      const x =
+        POSITION_HISTORY_CHART_PADDING.left +
+        ((timestamp - minTimestamp) / xRange) * innerWidth;
+      return {
+        x,
+        y: yFor(point.popularity),
+        week: point.week,
+        popularity: point.popularity,
+        genre: point.genre,
+      };
+    });
+
+    const linePath = points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+      .join(" ");
+
+    const yTicks = POPULARITY_HISTORY_TICKS.map((score) => ({
+      score,
+      y: yFor(score),
+    }));
+
+    const monthFormatter = new Intl.DateTimeFormat(displayLocale, {
+      month: "short",
+    });
+    const firstMonthStart = Date.UTC(
+      new Date(minTimestamp).getUTCFullYear(),
+      new Date(minTimestamp).getUTCMonth(),
+      1
+    );
+    const lastMonthStart = Date.UTC(
+      new Date(maxTimestamp).getUTCFullYear(),
+      new Date(maxTimestamp).getUTCMonth(),
+      1
+    );
+    const monthTicks: Array<{ label: string; x: number }> = [];
+    for (let cursor = firstMonthStart; cursor <= lastMonthStart; ) {
+      const x =
+        POSITION_HISTORY_CHART_PADDING.left +
+        ((cursor - minTimestamp) / xRange) * innerWidth;
+      monthTicks.push({
+        label: monthFormatter.format(new Date(cursor)),
+        x: Math.min(
+          chartWidth - POSITION_HISTORY_CHART_PADDING.right,
+          Math.max(POSITION_HISTORY_CHART_PADDING.left, x)
+        ),
+      });
+      const nextMonth = new Date(cursor);
+      nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+      cursor = nextMonth.getTime();
+    }
+
+    return {
+      chartWidth,
+      chartHeight,
+      points,
+      linePath,
+      yTicks,
+      monthTicks,
+      bestPopularity,
+      worstPopularity,
+      latestGenre: sorted[sorted.length - 1].genre,
+      latestRankInGenre: sorted[sorted.length - 1].rankInGenre,
+    };
+  }, [displayLocale, popularityHistoryPoints]);
 
   const getFilterLabel = (key: FilterMenuKey): string | null => {
     switch (key) {
@@ -3189,10 +3359,40 @@ export function App() {
                         </div>
                       </td>
                       <td className="num col-middle">
-                        <MetricBar
-                          value={row.popularity > 0 ? row.popularity : null}
-                          tone="popularity"
-                        />
+                        <button
+                          type="button"
+                          className="popularity-cell-trigger"
+                          title="Show popularity history"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void onOpenPopularityHistory(row.keyword);
+                          }}
+                        >
+                          <MetricBar
+                            value={row.popularity > 0 ? row.popularity : null}
+                            tone="popularity"
+                          />
+                          {(() => {
+                            if (
+                              row.previousPopularity == null ||
+                              row.popularity <= 0
+                            ) {
+                              return null;
+                            }
+                            const delta =
+                              row.popularity - row.previousPopularity;
+                            if (delta === 0) return null;
+                            return (
+                              <span
+                                className={`pop-trend ${delta > 0 ? "up" : "down"}`}
+                                title={`${delta > 0 ? "Up" : "Down"} ${Math.abs(delta)} vs previous week`}
+                              >
+                                {delta > 0 ? "↑" : "↓"}
+                                {Math.abs(delta)}
+                              </span>
+                            );
+                          })()}
+                        </button>
                       </td>
                       <td className="num col-middle">
                         {row.keywordStatus === "failed" ? (
@@ -3236,9 +3436,9 @@ export function App() {
                                 {change === 0 ? (
                                   <span className="delta same">0</span>
                                 ) : change < 0 ? (
-                                  <span className="delta up">+{Math.abs(change)}</span>
+                                  <span className="delta up">↑{Math.abs(change)}</span>
                                 ) : (
-                                  <span className="delta down">-{Math.abs(change)}</span>
+                                  <span className="delta down">↓{Math.abs(change)}</span>
                                 )}
                               </button>
                             )}
@@ -3635,6 +3835,188 @@ export function App() {
                         </text>
                       </g>
                     ) : null}
+                  </svg>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {popularityHistoryKeyword ? (
+        <div
+          className="dialog-backdrop"
+          onClick={() => {
+            setPopularityHistoryHoverPoint(null);
+            setPopularityHistoryKeyword(null);
+          }}
+          role="presentation"
+        >
+          <section
+            className="dialog-card ui-card position-history-dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Popularity history for ${popularityHistoryKeyword}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="dialog-header">
+              <h2>Popularity history for "{popularityHistoryKeyword}"</h2>
+              <button
+                type="button"
+                className="dialog-close"
+                aria-label="Close"
+                onClick={() => {
+                  setPopularityHistoryHoverPoint(null);
+                  setPopularityHistoryKeyword(null);
+                }}
+              >
+                ×
+              </button>
+            </header>
+            <div className="dialog-content">
+              {popularityHistoryLoading ? (
+                <p className="dialog-message">Loading history...</p>
+              ) : null}
+              {!popularityHistoryLoading && popularityHistoryError ? (
+                <p className="dialog-message error">{popularityHistoryError}</p>
+              ) : null}
+              {!popularityHistoryLoading &&
+              !popularityHistoryError &&
+              popularityHistoryChart == null ? (
+                <p className="dialog-message">
+                  No popularity history yet. Weekly history is recorded for
+                  keywords covered by the Apple Ads insights dataset.
+                </p>
+              ) : null}
+              {!popularityHistoryLoading &&
+              !popularityHistoryError &&
+              popularityHistoryChart != null ? (
+                <div className="position-history-chart-wrap">
+                  <div className="position-history-meta">
+                    <span>
+                      Peak:{" "}
+                      <strong>{popularityHistoryChart.bestPopularity}</strong>
+                    </span>
+                    <span>
+                      Low:{" "}
+                      <strong>{popularityHistoryChart.worstPopularity}</strong>
+                    </span>
+                    {popularityHistoryChart.latestGenre ? (
+                      <span>
+                        Genre:{" "}
+                        <strong>
+                          {popularityHistoryChart.latestGenre}
+                          {popularityHistoryChart.latestRankInGenre != null
+                            ? ` #${popularityHistoryChart.latestRankInGenre}`
+                            : ""}
+                        </strong>
+                      </span>
+                    ) : null}
+                    {popularityHistoryHoverPoint ? (
+                      <span className="position-history-hover-readout">
+                        {popularityHistoryHoverPoint.week}:{" "}
+                        <strong>{popularityHistoryHoverPoint.popularity}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                  <svg
+                    className="position-history-chart"
+                    viewBox={`0 0 ${popularityHistoryChart.chartWidth} ${popularityHistoryChart.chartHeight}`}
+                    role="img"
+                    aria-label={`Popularity trend for ${popularityHistoryKeyword}`}
+                  >
+                    {popularityHistoryChart.yTicks.map((tick) => (
+                      <g key={`y-${tick.score}`}>
+                        <line
+                          x1={POSITION_HISTORY_CHART_PADDING.left}
+                          y1={tick.y}
+                          x2={
+                            popularityHistoryChart.chartWidth -
+                            POSITION_HISTORY_CHART_PADDING.right
+                          }
+                          y2={tick.y}
+                          className="position-history-guide-line"
+                        />
+                        <text
+                          x={
+                            popularityHistoryChart.chartWidth -
+                            POSITION_HISTORY_CHART_PADDING.right +
+                            6
+                          }
+                          y={tick.y}
+                          className="position-history-tick-label"
+                          textAnchor="start"
+                          dominantBaseline="middle"
+                        >
+                          {tick.score}
+                        </text>
+                      </g>
+                    ))}
+                    {popularityHistoryChart.monthTicks.map((tick, index) => (
+                      <g key={`x-${tick.label}-${index}`}>
+                        <line
+                          x1={tick.x}
+                          y1={POSITION_HISTORY_CHART_PADDING.top}
+                          x2={tick.x}
+                          y2={
+                            popularityHistoryChart.chartHeight -
+                            POSITION_HISTORY_CHART_PADDING.bottom
+                          }
+                          className="position-history-guide-line position-history-guide-line-vertical"
+                        />
+                        <text
+                          x={tick.x}
+                          y={
+                            popularityHistoryChart.chartHeight -
+                            POSITION_HISTORY_CHART_PADDING.bottom +
+                            18
+                          }
+                          className="position-history-tick-label"
+                          textAnchor="middle"
+                        >
+                          {tick.label}
+                        </text>
+                      </g>
+                    ))}
+                    <line
+                      x1={POSITION_HISTORY_CHART_PADDING.left}
+                      y1={
+                        popularityHistoryChart.chartHeight -
+                        POSITION_HISTORY_CHART_PADDING.bottom
+                      }
+                      x2={
+                        popularityHistoryChart.chartWidth -
+                        POSITION_HISTORY_CHART_PADDING.right
+                      }
+                      y2={
+                        popularityHistoryChart.chartHeight -
+                        POSITION_HISTORY_CHART_PADDING.bottom
+                      }
+                      className="position-history-axis"
+                    />
+                    <path
+                      d={popularityHistoryChart.linePath}
+                      className="position-history-line"
+                    />
+                    {popularityHistoryChart.points.map((point) => (
+                      <circle
+                        key={`${point.week}-${point.popularity}`}
+                        cx={point.x}
+                        cy={point.y}
+                        r={4}
+                        className="position-history-point"
+                        tabIndex={0}
+                        onMouseEnter={() =>
+                          setPopularityHistoryHoverPoint(point)
+                        }
+                        onMouseLeave={() => setPopularityHistoryHoverPoint(null)}
+                        onFocus={() => setPopularityHistoryHoverPoint(point)}
+                        onBlur={() => setPopularityHistoryHoverPoint(null)}
+                      >
+                        <title>
+                          {`Week of ${point.week} • Popularity ${point.popularity}${point.genre ? ` • ${point.genre}` : ""}`}
+                        </title>
+                      </circle>
+                    ))}
                   </svg>
                 </div>
               ) : null}
