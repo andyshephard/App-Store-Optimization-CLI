@@ -20,6 +20,41 @@ Research ASO keywords, inspect competition, and manage results from one local-fi
 - Local ASO dashboard for reviewing keyword/app data
 - MCP tool (`aso_evaluate_keywords`) for agent workflows and automated keyword research
 
+For every keyword you get: **popularity** (how often people search it),
+**difficulty** (how competitive the results page is), **rank** (where your app
+sits in those results, with history), **app count**, **keyword match** (whether
+top apps carry the term in title/subtitle), and a **brand flag**. All of it is
+stored in a local SQLite database and served three ways: a CLI, a dashboard,
+and an MCP tool for agents.
+
+## Data Sources & APIs
+
+Everything is assembled from these upstreams:
+
+| API | Auth | What it provides | Good for |
+|---|---|---|---|
+| **Apple Ads Platform API** (`api.ads.apple.com/v1`, official, released Aug 2026) | OAuth2 (EC key pair) | Weekly search-term popularity per **storefront** on a 1–100 scale, with 65 weeks of history and genre rank | The best popularity signal: genuinely per-country, historical, and from an official API. Limitation: only terms in a genre's weekly top 500 (≥500 searches/week), so long-tail keywords are absent. Opt-in — see below. |
+| **Apple Search Ads campaign manager** (`app-ads.apple.com/cm/api/v2/keywords/popularities`, private endpoint behind the Search Ads UI) | Apple ID login (cookies + 2FA) | Popularity for **arbitrary** keywords, including long-tail | The fallback popularity source, and the only one covering low-volume terms. Account-level: the same score comes back for every storefront. |
+| **App Store search page** (`apps.apple.com/{cc}/iphone/search`, `MZSearch` as fallback) | None | The ranked list of apps a real user sees for a keyword in a given storefront | Everything competitive: your rank, app count, difficulty inputs, keyword-match detection, brand classification. Truly per-storefront — the URL path picks the country. |
+| **App Store app pages / lookup** (`apps.apple.com/app/id…` with per-locale `?l=`, iTunes Lookup as fallback) | None | App metadata: title, subtitle, ratings, release dates, icons, localizations | Feeds difficulty scoring (rating counts → competitiveness) and keyword-match detection against the metadata users actually see in each locale. Rate-limited per storefront (~100–200 rapid requests → 403). |
+| **SensorTower** (`app.sensortower.com/api/ios/apps`) | None | Monthly download and revenue estimates for top apps | Context in the Top Apps view: whether the apps ranking for a keyword actually earn anything. |
+
+How they combine per keyword: popularity comes from the Ads Platform API when
+configured (per-storefront, with trend history), else the campaign-manager
+endpoint; the search page provides the ranked app list; app pages enrich the
+top results so difficulty and match can be computed. Two TTL caches (popularity
+and search-order) keep repeat queries free.
+
+To enable the Apple Ads Platform API source: invite an API user in the
+[Apple Ads UI](https://ads.apple.com) (API Account Read Only is enough),
+upload an EC public key under Account Settings → API, then write
+`~/.aso/apple-ads-api/credentials.json` (`clientId`, `teamId`, `keyId`,
+optional `orgId`) with the private key alongside it as `private-key.pem`, or
+set `ASO_ADS_API_CLIENT_ID` / `ASO_ADS_API_TEAM_ID` / `ASO_ADS_API_KEY_ID` /
+`ASO_ADS_API_PRIVATE_KEY_PATH` / `ASO_ADS_API_ORG_ID`. Without credentials the
+tool behaves exactly as before — the campaign-manager endpoint serves all
+popularity.
+
 <h3 align="center">ASO Dashboard</h3>
 
 <p align="center">
@@ -210,8 +245,10 @@ What is and is not per storefront:
 
 - Per storefront: rank, `app_count`, `difficulty_score`, `keyword_match`,
   `is_brand_keyword`. These are computed from that storefront's search page.
-- Account-level: `popularity`. Apple returns the same score regardless of
-  storefront, so the same number appears under every storefront.
+- `popularity` depends on the source: with Apple Ads Platform API credentials
+  configured it is per-storefront for covered keywords (see Data Sources &
+  APIs); from the legacy campaign-manager endpoint it is account-level, so the
+  same number appears under every storefront.
 
 The dashboard shows a storefront picker when more than one is enabled; data
 routes reject a storefront that is not enabled with `COUNTRY_NOT_ENABLED`.
