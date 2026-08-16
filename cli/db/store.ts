@@ -122,6 +122,18 @@ function initializeDatabase(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_app_keyword_position_history_lookup
       ON app_keyword_position_history(country, app_id, keyword, captured_at);
 
+    CREATE TABLE IF NOT EXISTS aso_keyword_popularity_history (
+      country TEXT NOT NULL,
+      normalized_keyword TEXT NOT NULL,
+      week TEXT NOT NULL,
+      popularity REAL NOT NULL,
+      genre TEXT,
+      rank_in_genre INTEGER,
+      PRIMARY KEY (country, normalized_keyword, week)
+    );
+    CREATE INDEX IF NOT EXISTS idx_aso_keyword_popularity_history_lookup
+      ON aso_keyword_popularity_history(country, normalized_keyword, week);
+
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,

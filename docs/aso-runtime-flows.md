@@ -44,7 +44,15 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
 1. Normalize and validate keywords.
 2. Cache lookup (`/aso/cache-lookup`).
 3. Classify misses:
-   - popularity missing/expired -> fetch popularity from Search Ads, then full enrich.
+   - popularity missing/expired -> fetch popularity, then full enrich. Source
+     selection (`aso-popularity-source.ts`): with Apple Ads Platform API
+     credentials configured (`~/.aso/apple-ads-api/credentials.json` or
+     `ASO_ADS_API_*` env), keywords are first looked up in the insights
+     search-term-popularity dataset, which is per-storefront; covered keywords
+     also persist weekly history rows (`aso_keyword_popularity_history`).
+     Uncovered keywords (below ~500 weekly searches) and any Ads API failure
+     fall back to the legacy cookie-authenticated Search Ads endpoint.
+     Unconfigured -> legacy endpoint only, byte-identical to upstream.
    - popularity request retries are request-scoped and bounded (default: 2 total attempts); keyword-level isolation requests after terminal batch failure are single-attempt to avoid retry fan-out.
    - popularity fresh + difficulty/order incomplete -> full enrich with cached popularity.
    - popularity fresh + difficulty complete + order expired -> order-only refresh.

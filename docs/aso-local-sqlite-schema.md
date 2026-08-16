@@ -231,6 +231,24 @@ Indexes:
 - PK: (`app_id`, `keyword`, `country`, `captured_at`)
 - `idx_app_keyword_position_history_lookup`: (`country`, `app_id`, `keyword`, `captured_at`)
 
+### `aso_keyword_popularity_history`
+Weekly per-storefront popularity points from the Apple Ads Platform API
+insights dataset (Sunday-start weeks). Written only when Ads API credentials
+are configured; drives the dashboard popularity trend.
+
+| Column | SQLite Type | TS Type | Nullable | Notes |
+|---|---|---|---|---|
+| `country` | `TEXT` | `string` | No | PK part |
+| `normalized_keyword` | `TEXT` | `string` | No | PK part |
+| `week` | `TEXT` | `string` | No | PK part; week start date `YYYY-MM-DD` |
+| `popularity` | `REAL` | `number` | No | Country-wide 1-100 score |
+| `genre` | `TEXT` | `string \| null` | Yes | Best genre the term charted in |
+| `rank_in_genre` | `INTEGER` | `number \| null` | Yes | Rank within that genre's top 500 |
+
+Indexes:
+- PK: (`country`, `normalized_keyword`, `week`)
+- `idx_aso_keyword_popularity_history_lookup`: (`country`, `normalized_keyword`, `week`)
+
 ### `metadata`
 | Column | SQLite Type | TS Type | Nullable | Notes |
 |---|---|---|---|---|

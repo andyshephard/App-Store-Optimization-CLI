@@ -204,6 +204,25 @@ Known follow-ups, neither done:
    those storefronts, which is what trips the block. CA carries `["fr-CA"]`
    deliberately (Apple serves real French metadata there).
 
+## Apple Ads Platform API (popularity source)
+
+The official Apple Ads Platform API (`api.ads.apple.com/v1`, OAuth2, released
+Aug 2026) supersedes the old Search Ads API (sunset 2027-01-26). When
+credentials exist (`~/.aso/apple-ads-api/credentials.json` + `private-key.pem`,
+or `ASO_ADS_API_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY_PATH/ORG_ID`), the
+pipeline's popularity stage (`cli/services/keywords/aso-popularity-source.ts`)
+queries `insights/apps/search-term-popularity` first — genuinely
+**per-storefront** 1–100 scores, unlike the legacy cookie-authenticated
+endpoint whose score is account-level. Coverage: only terms in some genre's
+weekly top-500 (≥500 searches/week); everything else falls back to the legacy
+endpoint, as does any Ads API error. Unconfigured → legacy only, byte-identical
+to upstream. Weekly history lands in `aso_keyword_popularity_history` (65
+weeks retained upstream, published Mondays 07:00 UTC) and feeds the dashboard's
+popularity trend arrow. Gotchas: the insights `sorting` field is
+`sortOrder: ASC|DESC` (docs say `order`, which 400s); suggestions-endpoint
+popularity is global, not per-country — don't use it. Docs JSON:
+`developer.apple.com/tutorials/data/documentation/apple-ads-platform-api/<page>.json`.
+
 ## Rating counts are localized strings
 
 Search-page `ratingCount` is pre-formatted per locale, not a number:

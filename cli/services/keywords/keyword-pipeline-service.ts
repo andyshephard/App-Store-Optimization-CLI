@@ -1,8 +1,6 @@
 import { logger } from "../../utils/logger";
-import {
-  asoPopularityService,
-  summarizeFailedPopularityKeywords,
-} from "./aso-popularity-service";
+import { summarizeFailedPopularityKeywords } from "./aso-popularity-service";
+import { fetchKeywordPopularitiesPreferringAdsApi } from "./aso-popularity-source";
 import type {
   AsoCacheLookupResponse,
   AsoKeywordItem,
@@ -437,15 +435,13 @@ export class KeywordPipelineService {
       logger.debug(
         `Cache misses requiring popularity fetch: ${classified.popularityFetchKeywords.length}. Fetching popularities locally...`
       );
-      const popularityResult =
+      const popularityResult = await fetchKeywordPopularitiesPreferringAdsApi(
+        country,
+        classified.popularityFetchKeywords,
         options?.allowInteractiveAuthRecovery === false
-          ? await asoPopularityService.fetchKeywordPopularitiesWithFailures(
-              classified.popularityFetchKeywords,
-              { allowInteractiveAuthRecovery: false }
-            )
-          : await asoPopularityService.fetchKeywordPopularitiesWithFailures(
-              classified.popularityFetchKeywords
-            );
+          ? { allowInteractiveAuthRecovery: false }
+          : undefined
+      );
       const fetchedPopularityItems = classified.popularityFetchKeywords
         .filter((keyword) => popularityResult.popularities[keyword] != null)
         .map((keyword) => ({

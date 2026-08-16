@@ -12,6 +12,7 @@ import {
   insertAppKeywordPositionHistoryPoints,
   pruneAppKeywordPositionHistoryBefore,
 } from "../../db/app-keyword-position-history";
+import { upsertKeywordPopularityHistoryPoints } from "../../db/aso-keyword-popularity-history";
 import { getMetadataValue, setMetadataValue } from "../../db/metadata";
 import {
   computeOrderExpiryIso,
@@ -248,6 +249,27 @@ export class KeywordWriteRepository {
         attempts: failure.attempts,
         requestId: failure.requestId,
       }))
+    );
+  }
+
+  /**
+   * Record weekly popularity history points from the Apple Ads Platform API.
+   * Idempotent per (country, keyword, week), so re-fetching a window that was
+   * already stored simply refreshes the same rows.
+   */
+  persistPopularityHistory(
+    country: string,
+    points: Array<{
+      keyword: string;
+      week: string;
+      popularity: number;
+      genre?: string | null;
+      rankInGenre?: number | null;
+    }>
+  ): void {
+    if (points.length === 0) return;
+    upsertKeywordPopularityHistoryPoints(
+      points.map((point) => ({ ...point, country }))
     );
   }
 
