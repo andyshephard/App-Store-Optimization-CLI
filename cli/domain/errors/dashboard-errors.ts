@@ -2,6 +2,7 @@ export type DashboardErrorCode =
   | "INVALID_REQUEST"
   | "PAYLOAD_TOO_LARGE"
   | "MISSING_APPLE_CREDENTIALS"
+  | "ADS_API_NOT_CONFIGURED"
   | "AUTH_REQUIRED"
   | "AUTH_IN_PROGRESS"
   | "TTY_REQUIRED"
@@ -101,6 +102,7 @@ export function mapToDashboardUserSafeError(
 
 export function statusForDashboardErrorCode(errorCode: DashboardErrorCode): number {
   if (errorCode === "INVALID_REQUEST") return 400;
+  if (errorCode === "ADS_API_NOT_CONFIGURED") return 400;
   if (errorCode === "PAYLOAD_TOO_LARGE") return 413;
   if (errorCode === "AUTH_REQUIRED") return 401;
   if (errorCode === "PRIMARY_APP_ID_RECONFIGURE_REQUIRED") return 403;

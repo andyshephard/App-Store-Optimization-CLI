@@ -11,6 +11,9 @@ import {
   getLatestPopularityTrends,
   listKeywordPopularityHistory,
 } from "../../db/aso-keyword-popularity-history";
+import { isAppleAdsApiConfigured } from "../../services/apple-ads-api/apple-ads-api-config";
+import { buildKeywordSuggestions } from "../../services/apple-ads-api/suggest-service";
+import { getConfiguredAsoAdamId } from "../../services/keywords/aso-adam-id-service";
 import { getDb } from "../../db/store";
 import { keywordPipelineService } from "../../services/keywords/keyword-pipeline-service";
 import { isAsoAuthReauthRequiredError } from "../../services/keywords/aso-popularity-service";
@@ -802,6 +805,65 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     });
   }
 
+  async function handleApiAsoSuggestionsGet(
+    res: http.ServerResponse,
+    query: Record<string, string>
+  ): Promise<void> {
+    const country = resolveRequestCountry(res, query.country);
+    if (!country) {
+      return;
+    }
+    if (!isAppleAdsApiConfigured()) {
+      deps.sendApiError(
+        res,
+        400,
+        "ADS_API_NOT_CONFIGURED",
+        "Keyword suggestions need Apple Ads Platform API credentials on the server (~/.aso/apple-ads-api/ or ASO_ADS_API_* env). See the README's Data Sources & APIs section."
+      );
+      return;
+    }
+    const appId = getConfiguredAsoAdamId();
+    if (!appId) {
+      deps.sendApiError(
+        res,
+        400,
+        "INVALID_REQUEST",
+        "Set a primary App ID before requesting suggestions."
+      );
+      return;
+    }
+    const genre = query.genre?.trim() || undefined;
+    const seeds = (query.seeds ?? "")
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean);
+    const limitRaw = Number(query.limit);
+    const limit =
+      Number.isFinite(limitRaw) && limitRaw > 0
+        ? Math.min(Math.floor(limitRaw), 500)
+        : 50;
+    try {
+      const result = await buildKeywordSuggestions({
+        appId,
+        country,
+        genre,
+        seeds,
+        limit,
+      });
+      deps.sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      logger.debug(
+        `[dashboard] suggestions request failed: ${String(error)}`
+      );
+      deps.sendApiError(
+        res,
+        502,
+        "INTERNAL_ERROR",
+        "Fetching suggestions from the Apple Ads API failed. Try again shortly."
+      );
+    }
+  }
+
   function handleApiAsoKeywordPopularityHistoryGet(
     res: http.ServerResponse,
     query: Record<string, string>
@@ -1090,6 +1152,7 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     handleApiAsoKeywordsRetryFailedPost,
     handleApiAsoKeywordHistoryGet,
     handleApiAsoKeywordPopularityHistoryGet,
+    handleApiAsoSuggestionsGet,
     handleApiAsoKeywordsGet,
   };
 }

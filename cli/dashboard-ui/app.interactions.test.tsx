@@ -76,6 +76,11 @@ function buildFetchMock(params: {
   topAppsByKeyword?: Record<string, unknown>;
   historyByKeyword?: Record<string, { points: unknown[] }>;
   popularityHistoryByKeyword?: Record<string, { points: unknown[] }>;
+  suggestionsData?: {
+    country: string;
+    adsTargets: unknown[];
+    metadataCandidates: unknown[];
+  };
   appSearchByTerm?: Record<string, { appDocs: unknown[] }>;
   dashboardSettings?: {
     includeResearchAppsInKeywordRefresh: boolean;
@@ -188,6 +193,18 @@ function buildFetchMock(params: {
           country: "US",
           points: params.popularityHistoryByKeyword?.[keyword]?.points ?? [],
         },
+      });
+    }
+
+    if (method === "GET" && url.startsWith("/api/aso/suggestions?")) {
+      return jsonResponse(200, {
+        success: true,
+        data:
+          params.suggestionsData ?? {
+            country: "US",
+            adsTargets: [],
+            metadataCandidates: [],
+          },
       });
     }
 
@@ -569,6 +586,68 @@ describe("dashboard app interactions", () => {
     expect(within(dialog).getByText(/Peak:/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Low:/)).toBeInTheDocument();
     expect(within(dialog).getByText("HEALTH_FITNESS #9")).toBeInTheDocument();
+  });
+
+  it("opens the suggestions dialog and adds selected keywords", async () => {
+    const fetchMock = buildFetchMock({
+      initialApps: [
+        { id: DEFAULT_RESEARCH_APP_ID, name: "Research" },
+        { id: "111", name: "Owned App" },
+      ],
+      keywordsByAppId: { "111": [] },
+      suggestionsData: {
+        country: "US",
+        adsTargets: [
+          { keyword: "substack", popularity: 46, alreadyTracked: false },
+          { keyword: "deepstash", popularity: 43, alreadyTracked: true },
+        ],
+        metadataCandidates: [
+          {
+            keyword: "flashcards",
+            popularity: 49,
+            genre: "EDUCATION",
+            rankInGenre: 406,
+            alreadyTracked: false,
+          },
+        ],
+      },
+    });
+    global.fetch = fetchMock as typeof fetch;
+    localStorage.setItem("aso-dashboard:selected-app-id", "111");
+
+    render(<App />);
+
+    const suggestButton = await screen.findByRole("button", {
+      name: "Suggest",
+    });
+    fireEvent.click(suggestButton);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Keyword suggestions",
+    });
+    await within(dialog).findByText("substack");
+    // Tracked suggestions cannot be re-added.
+    expect(
+      within(dialog).getByRole("checkbox", { name: /deepstash/ })
+    ).toBeDisabled();
+
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /flashcards/ }));
+    const addSelected = within(dialog).getByRole("button", {
+      name: "Add selected (1)",
+    });
+    fireEvent.click(addSelected);
+
+    await waitFor(() => {
+      const addCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/aso/keywords" &&
+          (init as RequestInit | undefined)?.method === "POST"
+      );
+      expect(addCall).toBeTruthy();
+      const body = JSON.parse(String((addCall![1] as RequestInit).body));
+      expect(body.keywords).toEqual(["flashcards"]);
+      expect(body.appId).toBe("111");
+    });
   });
 
   it("opens top apps dialog and supports context delete", async () => {

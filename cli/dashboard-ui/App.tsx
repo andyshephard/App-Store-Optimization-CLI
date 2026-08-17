@@ -139,6 +139,20 @@ type PopularityHistoryHoverPoint = {
   popularity: number;
   genre: string | null;
 };
+type SuggestionItem = {
+  keyword: string;
+  popularity: number;
+  alreadyTracked: boolean;
+};
+type MetadataSuggestionItem = SuggestionItem & {
+  genre: string;
+  rankInGenre: number;
+};
+type SuggestionsPayload = {
+  country: string;
+  adsTargets: SuggestionItem[];
+  metadataCandidates: MetadataSuggestionItem[];
+};
 
 type FilterMenuKey = "popularity" | "difficulty" | "brand" | "favorite" | "rank";
 type KeywordActionMenuState = {
@@ -617,6 +631,18 @@ export function App() {
   const [popularityHistoryError, setPopularityHistoryError] = useState("");
   const [popularityHistoryHoverPoint, setPopularityHistoryHoverPoint] =
     useState<PopularityHistoryHoverPoint | null>(null);
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
+  const [suggestionsGenre, setSuggestionsGenre] = useState(
+    () => localStorage.getItem("aso-dashboard:suggestions-genre") ?? "EDUCATION"
+  );
+  const [suggestionsSeeds, setSuggestionsSeeds] = useState("");
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState("");
+  const [suggestionsData, setSuggestionsData] =
+    useState<SuggestionsPayload | null>(null);
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(
+    () => new Set()
+  );
   const [startupRefreshState, setStartupRefreshState] =
     useState<StartupRefreshStatusPayload | null>(null);
   const [appIconsById, setAppIconsById] = useState<Record<string, string | null>>(
@@ -1294,6 +1320,15 @@ export function App() {
   }, [popularityHistoryKeyword]);
 
   useEffect(() => {
+    if (!isSuggestionsOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsSuggestionsOpen(false);
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, [isSuggestionsOpen]);
+
+  useEffect(() => {
     if (!isSettingsOpen) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setIsSettingsOpen(false);
@@ -1804,6 +1839,50 @@ export function App() {
       country,
       keywords: kwsToAdd,
       inputKeywords: normalizedKeywords,
+    });
+  };
+
+  const loadSuggestions = async () => {
+    setSuggestionsLoading(true);
+    setSuggestionsError("");
+    setSuggestionsData(null);
+    setSelectedSuggestions(new Set());
+    localStorage.setItem("aso-dashboard:suggestions-genre", suggestionsGenre);
+    try {
+      const params = new URLSearchParams({ country, limit: "50" });
+      if (suggestionsGenre.trim()) params.set("genre", suggestionsGenre.trim());
+      if (suggestionsSeeds.trim()) params.set("seeds", suggestionsSeeds.trim());
+      const data = await apiGet<SuggestionsPayload>(
+        `/api/aso/suggestions?${params.toString()}`
+      );
+      setSuggestionsData(data);
+    } catch (error) {
+      setSuggestionsError(
+        toActionableErrorMessage(error, "Failed to load suggestions")
+      );
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const toggleSuggestion = (keyword: string) => {
+    setSelectedSuggestions((previous) => {
+      const next = new Set(previous);
+      if (next.has(keyword)) next.delete(keyword);
+      else next.add(keyword);
+      return next;
+    });
+  };
+
+  const onAddSelectedSuggestions = async () => {
+    const keywordsToAdd = [...selectedSuggestions];
+    if (keywordsToAdd.length === 0) return;
+    setIsSuggestionsOpen(false);
+    await submitKeywords({
+      appId: selectedAppId,
+      country,
+      keywords: keywordsToAdd,
+      inputKeywords: keywordsToAdd,
     });
   };
 
@@ -3040,6 +3119,20 @@ export function App() {
               <span className={`add-submit-label ${isAddKeywordsBusy ? "is-loading" : ""}`}>{addButtonLabel}</span>
               <span className={`button-loading-spinner ${isAddKeywordsBusy ? "visible" : ""}`} aria-hidden="true" />
             </Button>
+            <Button
+              id="open-suggestions"
+              type="button"
+              variant="outline"
+              disabled={isAddKeywordsBusy || isColdStart}
+              onClick={() => {
+                setIsSuggestionsOpen(true);
+                if (!suggestionsData && !suggestionsLoading) {
+                  void loadSuggestions();
+                }
+              }}
+            >
+              Suggest
+            </Button>
             {failedKeywordCount > 0 ? (
               <Button
                 id="retry-failed-submit"
@@ -4020,6 +4113,153 @@ export function App() {
                   </svg>
                 </div>
               ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {isSuggestionsOpen ? (
+        <div
+          className="dialog-backdrop"
+          onClick={() => setIsSuggestionsOpen(false)}
+          role="presentation"
+        >
+          <section
+            className="dialog-card ui-card suggestions-dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Keyword suggestions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="dialog-header">
+              <h2>Keyword suggestions for {country}</h2>
+              <button
+                type="button"
+                className="dialog-close"
+                aria-label="Close"
+                onClick={() => setIsSuggestionsOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="dialog-content">
+              <form
+                className="suggestions-controls"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void loadSuggestions();
+                }}
+              >
+                <Input
+                  type="text"
+                  placeholder="Genre chart, e.g. EDUCATION"
+                  value={suggestionsGenre}
+                  onChange={(e) => setSuggestionsGenre(e.target.value)}
+                />
+                <Input
+                  type="text"
+                  placeholder="Seed terms (comma-separated, optional)"
+                  value={suggestionsSeeds}
+                  onChange={(e) => setSuggestionsSeeds(e.target.value)}
+                />
+                <Button type="submit" disabled={suggestionsLoading}>
+                  {suggestionsLoading ? "Loading..." : "Refresh"}
+                </Button>
+              </form>
+              {suggestionsError ? (
+                <p className="dialog-message error">{suggestionsError}</p>
+              ) : null}
+              {suggestionsLoading ? (
+                <p className="dialog-message">Loading suggestions...</p>
+              ) : null}
+              {!suggestionsLoading && suggestionsData ? (
+                <div className="suggestions-columns">
+                  <div className="suggestions-column">
+                    <h3>Search Ads bid targets</h3>
+                    <p className="suggestions-hint">
+                      Apple's suggestions for this app — mostly competitor
+                      brands. Bid on these; don't put them in metadata.
+                    </p>
+                    <ul className="suggestions-list">
+                      {suggestionsData.adsTargets.map((item) => (
+                        <li key={`ads-${item.keyword}`}>
+                          <label className="suggestions-item">
+                            <input
+                              type="checkbox"
+                              disabled={item.alreadyTracked}
+                              checked={selectedSuggestions.has(item.keyword)}
+                              onChange={() => toggleSuggestion(item.keyword)}
+                            />
+                            <span className="suggestions-pop">
+                              {item.popularity}
+                            </span>
+                            <span className="suggestions-keyword">
+                              {item.keyword}
+                            </span>
+                            {item.alreadyTracked ? (
+                              <span className="suggestions-tracked">
+                                tracked
+                              </span>
+                            ) : null}
+                          </label>
+                        </li>
+                      ))}
+                      {suggestionsData.adsTargets.length === 0 ? (
+                        <li className="suggestions-empty">No suggestions.</li>
+                      ) : null}
+                    </ul>
+                  </div>
+                  <div className="suggestions-column">
+                    <h3>Metadata candidates</h3>
+                    <p className="suggestions-hint">
+                      Generic demand from the genre's weekly chart. Add the
+                      relevant ones to score difficulty before committing them
+                      to App Store metadata.
+                    </p>
+                    <ul className="suggestions-list">
+                      {suggestionsData.metadataCandidates.map((item) => (
+                        <li key={`meta-${item.keyword}`}>
+                          <label className="suggestions-item">
+                            <input
+                              type="checkbox"
+                              disabled={item.alreadyTracked}
+                              checked={selectedSuggestions.has(item.keyword)}
+                              onChange={() => toggleSuggestion(item.keyword)}
+                            />
+                            <span className="suggestions-pop">
+                              {item.popularity}
+                            </span>
+                            <span className="suggestions-keyword">
+                              {item.keyword}
+                            </span>
+                            <span className="suggestions-rank">
+                              #{item.rankInGenre}
+                            </span>
+                            {item.alreadyTracked ? (
+                              <span className="suggestions-tracked">
+                                tracked
+                              </span>
+                            ) : null}
+                          </label>
+                        </li>
+                      ))}
+                      {suggestionsData.metadataCandidates.length === 0 ? (
+                        <li className="suggestions-empty">
+                          No chart entries — set a genre and refresh.
+                        </li>
+                      ) : null}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+              <footer className="suggestions-footer">
+                <Button
+                  type="button"
+                  disabled={selectedSuggestions.size === 0 || isAddKeywordsBusy}
+                  onClick={() => void onAddSelectedSuggestions()}
+                >
+                  Add selected ({selectedSuggestions.size})
+                </Button>
+              </footer>
             </div>
           </section>
         </div>
