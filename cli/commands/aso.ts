@@ -5,6 +5,7 @@ import { ASO_ENV } from "../shared/aso-env";
 import { asoKeychainService } from "../services/auth/aso-keychain-service";
 import { asoCookieStoreService } from "../services/auth/aso-cookie-store-service";
 import { resolveAsoAdamId } from "../services/keywords/aso-adam-id-service";
+import { buildKeywordSuggestions } from "../services/apple-ads-api/suggest-service";
 import { asoAuthService } from "../services/auth/aso-auth-service";
 import {
   resolveKeywordAssociationAppId,
@@ -182,18 +183,34 @@ async function runKeywordFetch(
 const asoCommand: CommandModule = {
   command: "$0 [subcommand] [terms]",
   describe:
-    "Open ASO dashboard (default), fetch ASO keyword metrics (`aso keywords`), reauthenticate (`aso auth`), or reset saved ASO auth state (`aso reset-credentials`). `aso keywords` supports optional popularity/difficulty filters and keyword association controls (default target app: research).",
+    "Open ASO dashboard (default), fetch ASO keyword metrics (`aso keywords`), discover keyword opportunities (`aso suggest`), reauthenticate (`aso auth`), or reset saved ASO auth state (`aso reset-credentials`). `aso keywords` supports optional popularity/difficulty filters and keyword association controls (default target app: research).",
   builder: (yargs) =>
     yargs
       .positional("subcommand", {
         type: "string",
-        choices: ["keywords", "auth", "reset-credentials"],
+        choices: ["keywords", "suggest", "auth", "reset-credentials"],
         describe: "ASO subcommand",
       })
       .positional("terms", {
         type: "string",
         describe:
-          'Comma-separated keywords for `keywords`, e.g. aso keywords "x,y,z"',
+          'Comma-separated keywords for `keywords`, or seed terms describing the app niche for `suggest`, e.g. aso suggest "microlearning, daily learning"',
+      })
+      .option("genre", {
+        type: "string",
+        demandOption: false,
+        describe:
+          "For `suggest`: App Store genre chart to mine for metadata candidates, e.g. EDUCATION. Omit to fetch only Search Ads bid targets.",
+      })
+      .option("limit", {
+        type: "number",
+        default: 25,
+        describe: "For `suggest`: maximum results per list.",
+      })
+      .option("json", {
+        type: "boolean",
+        default: false,
+        describe: "For `suggest`: emit JSON instead of formatted text.",
       })
       .option("country", {
         type: "string",
@@ -272,17 +289,66 @@ const asoCommand: CommandModule = {
         argv["min-popularity"] != null ||
         argv["max-difficulty"] != null ||
         argv["app-id"] != null ||
+        argv.genre != null ||
+        (argv.json as boolean) ||
         isExcludeExistingEnabled(argv as Record<string, unknown>) ||
         argv.associate != null
       ) {
         throw new Error(
-          "Keyword options are only supported in `aso keywords`."
+          "Keyword options are only supported in `aso keywords` or `aso suggest`."
         );
       }
       if (primaryAppId != null) {
         await resolveAsoAdamId({ adamId: primaryAppId, allowPrompt: false });
       }
       await startDashboard(ASO_ENV.openBrowser);
+      return;
+    }
+
+    if (subcommand === "suggest") {
+      const adamId = await resolveAsoAdamId({
+        adamId: (argv["app-id"] as string | undefined) ?? primaryAppId,
+        allowPrompt: false,
+      });
+      const seeds = ((argv.terms as string | undefined) ?? "")
+        .split(",")
+        .map((term) => term.trim())
+        .filter(Boolean);
+      const result = await buildKeywordSuggestions({
+        appId: adamId,
+        country,
+        genre: argv.genre as string | undefined,
+        seeds,
+        limit: argv.limit as number,
+      });
+      if (argv.json as boolean) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      const trackedMark = (alreadyTracked: boolean) =>
+        alreadyTracked ? "  (tracked)" : "";
+      console.log(
+        `\nSearch Ads bid targets for ${result.country} (Apple's suggestions; mostly competitor brands — bid on these, don't put them in metadata):`
+      );
+      for (const target of result.adsTargets) {
+        console.log(
+          `  ${String(target.popularity).padStart(3)}  ${target.keyword}${trackedMark(target.alreadyTracked)}`
+        );
+      }
+      if (argv.genre != null) {
+        console.log(
+          `\nMetadata candidates from the ${argv.genre} chart in ${result.country} (generic demand; score difficulty with \`aso keywords\` before committing):`
+        );
+        for (const candidate of result.metadataCandidates) {
+          console.log(
+            `  ${String(candidate.popularity).padStart(3)}  #${candidate.rankInGenre}  ${candidate.keyword}${trackedMark(candidate.alreadyTracked)}`
+          );
+        }
+      } else {
+        console.log(
+          "\nPass --genre (e.g. --genre EDUCATION) to also mine the genre chart for metadata candidates."
+        );
+      }
       return;
     }
 

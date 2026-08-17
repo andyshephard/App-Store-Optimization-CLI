@@ -279,7 +279,7 @@ describe("aso command", () => {
         associate: false,
       } as any)
     ).rejects.toThrow(
-      "Keyword options are only supported in `aso keywords`."
+      "Keyword options are only supported in `aso keywords` or `aso suggest`."
     );
   });
 

@@ -132,6 +132,7 @@ aso
 | `aso`                           | Starts the local dashboard (default command)            |
 | `aso keywords "k1,k2,k3"`       | Fetches keyword popularity/difficulty and prints JSON   |
 | `aso keywords "k1,k2" --stdout` | Machine-readable mode for automation/agents              |
+| `aso suggest "seed terms" --genre EDUCATION` | Discovers keyword opportunities: Search Ads bid targets (Apple's suggestions, competitor-brand-heavy) and metadata candidates from the genre's weekly top chart. Needs Apple Ads Platform API credentials. |
 | `aso auth`                      | Reauthenticates Apple Search Ads session                |
 | `aso reset-credentials`         | Clears saved credentials/cookies                        |
 | `aso --primary-app-id <id>`     | Sets primary App ID used for popularity requests        |
@@ -142,6 +143,8 @@ aso
 - `--primary-app-id <id>`: saved locally for future runs
 - `--min-popularity <number>`: filters out low-popularity keywords before enrichment
 - `--max-difficulty <number>`: filters out high-difficulty keywords after enrichment
+- `--genre <name>` / `--limit <n>` / `--json`: `aso suggest` options — genre chart to
+  mine (e.g. `EDUCATION`), results per list (default 25), machine output
 - `--app-id <id>`: associates keywords to this local app id (default: `research`)
 - `--exclude-existing`: skips keywords already associated with the target app/country before evaluation
 - `--no-associate`: skips app-keyword association writes for the current `aso keywords` run

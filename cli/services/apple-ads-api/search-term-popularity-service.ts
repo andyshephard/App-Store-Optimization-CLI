@@ -78,6 +78,48 @@ async function fetchRowsForBatch(
 }
 
 /**
+ * The latest complete week of a genre's top search terms in a storefront —
+ * the actual demand map for that market. Rows come back for every week in the
+ * window, so keep only each term's newest row.
+ */
+export async function fetchGenreTopSearchTerms(
+  country: string,
+  genre: string,
+  options: { limit?: number; nowMs?: number } = {}
+): Promise<SearchTermPopularityRow[]> {
+  const nowMs = options.nowMs ?? Date.now();
+  const limit = options.limit ?? 100;
+  const response = await appleAdsApiPost<{
+    result: { rows: SearchTermPopularityRow[] } | null;
+  }>(INSIGHTS_PATH, {
+    filters: [
+      {
+        field: "countryOrRegion",
+        operator: "EQUALS",
+        value: country.toUpperCase(),
+      },
+      { field: "genre", operator: "EQUALS", value: genre },
+    ],
+    // Weeks only count when fully inside the range and the newest week can
+    // lag until Monday 07:00 UTC, so a three-week window is the shortest one
+    // guaranteed to contain a complete published Sunday-Saturday week.
+    timeRange: buildTimeRange(3, nowMs),
+    sorting: [{ field: "rankInGenre", sortOrder: "ASC" }],
+    pagination: { offset: 0, pageSize: PAGE_SIZE },
+  });
+  const latestByTerm = new Map<string, SearchTermPopularityRow>();
+  for (const row of response.result?.rows ?? []) {
+    const existing = latestByTerm.get(row.searchTerm);
+    if (!existing || row.week > existing.week) {
+      latestByTerm.set(row.searchTerm, row);
+    }
+  }
+  return [...latestByTerm.values()]
+    .sort((a, b) => a.rankInGenre - b.rankInGenre)
+    .slice(0, limit);
+}
+
+/**
  * Fetch per-country popularity snapshots for the given keywords from the
  * Apple Ads Platform API insights endpoint.
  *
