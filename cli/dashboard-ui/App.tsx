@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card, Input } from "./ui-react";
 import { DEFAULT_RESEARCH_APP_ID } from "../shared/aso-research";
 import {
+  DashboardApiError,
   apiGet,
   apiWrite,
   buildAppStoreUrl,
@@ -638,8 +639,12 @@ export function App() {
   const [suggestionsSeeds, setSuggestionsSeeds] = useState("");
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsError, setSuggestionsError] = useState("");
-  const [suggestionsData, setSuggestionsData] =
-    useState<SuggestionsPayload | null>(null);
+  const [suggestionsByCountry, setSuggestionsByCountry] = useState<
+    Record<string, SuggestionsPayload>
+  >({});
+  // Set when the server reports ADS_API_NOT_CONFIGURED; hides the button so
+  // an install without Ads API credentials looks exactly like upstream.
+  const [suggestionsUnavailable, setSuggestionsUnavailable] = useState(false);
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(
     () => new Set()
   );
@@ -1842,28 +1847,64 @@ export function App() {
     });
   };
 
-  const loadSuggestions = async () => {
-    setSuggestionsLoading(true);
-    setSuggestionsError("");
-    setSuggestionsData(null);
-    setSelectedSuggestions(new Set());
-    localStorage.setItem("aso-dashboard:suggestions-genre", suggestionsGenre);
-    try {
-      const params = new URLSearchParams({ country, limit: "50" });
-      if (suggestionsGenre.trim()) params.set("genre", suggestionsGenre.trim());
-      if (suggestionsSeeds.trim()) params.set("seeds", suggestionsSeeds.trim());
-      const data = await apiGet<SuggestionsPayload>(
-        `/api/aso/suggestions?${params.toString()}`
-      );
-      setSuggestionsData(data);
-    } catch (error) {
-      setSuggestionsError(
-        toActionableErrorMessage(error, "Failed to load suggestions")
-      );
-    } finally {
-      setSuggestionsLoading(false);
-    }
-  };
+  const loadSuggestions = useCallback(
+    async (options: { quiet?: boolean } = {}) => {
+      setSuggestionsLoading(true);
+      if (!options.quiet) {
+        setSuggestionsError("");
+        setSelectedSuggestions(new Set());
+      }
+      localStorage.setItem("aso-dashboard:suggestions-genre", suggestionsGenre);
+      const requestCountry = country;
+      try {
+        const params = new URLSearchParams({
+          country: requestCountry,
+          limit: "50",
+        });
+        if (suggestionsGenre.trim())
+          params.set("genre", suggestionsGenre.trim());
+        if (suggestionsSeeds.trim())
+          params.set("seeds", suggestionsSeeds.trim());
+        const data = await apiGet<SuggestionsPayload>(
+          `/api/aso/suggestions?${params.toString()}`
+        );
+        setSuggestionsByCountry((previous) => ({
+          ...previous,
+          [requestCountry]: data,
+        }));
+      } catch (error) {
+        if (
+          error instanceof DashboardApiError &&
+          error.errorCode === "ADS_API_NOT_CONFIGURED"
+        ) {
+          setSuggestionsUnavailable(true);
+        } else if (!options.quiet) {
+          setSuggestionsError(
+            toActionableErrorMessage(error, "Failed to load suggestions")
+          );
+        }
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    },
+    [country, suggestionsGenre, suggestionsSeeds]
+  );
+
+  const suggestionsData = suggestionsByCountry[country] ?? null;
+  const availableSuggestionCount = suggestionsData
+    ? suggestionsData.adsTargets.filter((item) => !item.alreadyTracked).length +
+      suggestionsData.metadataCandidates.filter((item) => !item.alreadyTracked)
+        .length
+    : null;
+
+  useEffect(() => {
+    if (suggestionsUnavailable) return;
+    if (suggestionsByCountry[country]) return;
+    void loadSuggestions({ quiet: true });
+    // Refetching when only genre/seeds change is the dialog's Refresh
+    // button's job; the background prefetch runs once per storefront.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [country, suggestionsUnavailable]);
 
   const toggleSuggestion = (keyword: string) => {
     setSelectedSuggestions((previous) => {
@@ -1878,12 +1919,18 @@ export function App() {
     const keywordsToAdd = [...selectedSuggestions];
     if (keywordsToAdd.length === 0) return;
     setIsSuggestionsOpen(false);
-    await submitKeywords({
+    const added = await submitKeywords({
       appId: selectedAppId,
       country,
       keywords: keywordsToAdd,
       inputKeywords: keywordsToAdd,
     });
+    if (added) {
+      // The added keywords are tracked now, so the cached list (and the
+      // count on the button) is stale for this storefront.
+      setSelectedSuggestions(new Set());
+      void loadSuggestions({ quiet: true });
+    }
   };
 
   const retryFailedKeywords = useCallback(
@@ -3119,20 +3166,25 @@ export function App() {
               <span className={`add-submit-label ${isAddKeywordsBusy ? "is-loading" : ""}`}>{addButtonLabel}</span>
               <span className={`button-loading-spinner ${isAddKeywordsBusy ? "visible" : ""}`} aria-hidden="true" />
             </Button>
-            <Button
-              id="open-suggestions"
-              type="button"
-              variant="outline"
-              disabled={isAddKeywordsBusy || isColdStart}
-              onClick={() => {
-                setIsSuggestionsOpen(true);
-                if (!suggestionsData && !suggestionsLoading) {
-                  void loadSuggestions();
-                }
-              }}
-            >
-              Suggest
-            </Button>
+            {!suggestionsUnavailable ? (
+              <Button
+                id="open-suggestions"
+                type="button"
+                variant="outline"
+                className="suggestions-button"
+                disabled={isAddKeywordsBusy || isColdStart}
+                onClick={() => {
+                  setIsSuggestionsOpen(true);
+                  if (!suggestionsData && !suggestionsLoading) {
+                    void loadSuggestions();
+                  }
+                }}
+              >
+                {availableSuggestionCount != null
+                  ? `${availableSuggestionCount} suggestion${availableSuggestionCount === 1 ? "" : "s"}`
+                  : "Suggestions"}
+              </Button>
+            ) : null}
             {failedKeywordCount > 0 ? (
               <Button
                 id="retry-failed-submit"

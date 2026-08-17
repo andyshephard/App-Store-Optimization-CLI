@@ -617,8 +617,10 @@ describe("dashboard app interactions", () => {
 
     render(<App />);
 
+    // The button prefetches per storefront and shows the count of
+    // suggestions that are not yet tracked (substack + flashcards).
     const suggestButton = await screen.findByRole("button", {
-      name: "Suggest",
+      name: "2 suggestions",
     });
     fireEvent.click(suggestButton);
 
