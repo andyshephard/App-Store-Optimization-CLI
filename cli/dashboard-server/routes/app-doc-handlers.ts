@@ -136,8 +136,13 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       iconArtwork?: { url?: string; [key: string]: unknown };
     }> = [];
     try {
-      const orderData = await refreshAsoKeywordOrderLocal(country, term);
-      orderedAppIds = orderData.orderedAppIds;
+      const orderData = isNumericTerm
+        ? {
+            appDocs: await fetchAsoAppDocsFromApi(country, [term]),
+            orderedAppIds: [term],
+          }
+        : await refreshAsoKeywordOrderLocal(country, term);
+      orderedAppIds = orderData.orderedAppIds ?? [];
       searchPageAppDocs = [];
       for (const doc of orderData.appDocs ?? []) {
         const appId = `${doc.appId ?? ""}`.trim();
@@ -161,7 +166,7 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
         path: "/api/aso/apps/search",
         country,
         term,
-        context: "apps-search-order",
+        context: isNumericTerm ? "apps-search-lookup" : "apps-search-order",
       });
     }
 
@@ -169,7 +174,9 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
       searchPageAppDocs.map((doc) => [doc.appId, doc] as const)
     );
     const orderOnlyFallback =
-      orderedAppIds.length > 0 && searchPageAppDocs.length === 0;
+      !isNumericTerm &&
+      orderedAppIds.length > 0 &&
+      searchPageAppDocs.length === 0;
 
     if (orderOnlyFallback) {
       deps.sendJson(res, 200, {
