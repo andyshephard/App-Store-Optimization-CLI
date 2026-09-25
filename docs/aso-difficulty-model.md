@@ -39,3 +39,17 @@ Astro's.
 
 Measured on 40 Chunks keywords: 1.2 s per keyword, 0 errors, difficulty MAE
 4.65 vs Astro, exact rank match 18/40 (rank drift comes from MZSearch order).
+
+## Popularity: 5 means "no data" (decided 2026-09-25)
+
+Popularity comes from the legacy Search Ads endpoint (`ASO_POPULARITY_SOURCE`,
+default `legacy`). Where it returns a real value it agrees with Astro. For
+~270 of ~1,080 Chunks keywords it returns Apple's floor of 5 while Astro shows
+6–54 (e.g. `history` 5 vs 54). Probed directly: the endpoint returns 5 for
+these whether `storefronts` is `[]` or `["US"]`, so it is not a storefront or
+account-country issue. Only 12 of those keywords appear in Astro's own
+popularity list (genre top lists, all ≥45, apparently the Ads Platform API's
+insights data), so Astro's source for the rest is unknown.
+
+We keep Apple's 5 and treat it as "no data" rather than backfilling from
+another source. Expect Astro to show higher popularity for these keywords.
