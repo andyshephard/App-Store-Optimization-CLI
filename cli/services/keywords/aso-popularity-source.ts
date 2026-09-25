@@ -4,6 +4,7 @@ import type { FailedKeyword } from "./aso-types";
 import { isAppleAdsApiConfigured } from "../apple-ads-api/apple-ads-api-config";
 import { fetchSearchTermPopularitySnapshots } from "../apple-ads-api/search-term-popularity-service";
 import { keywordWriteRepository } from "./keyword-write-repository";
+import { ASO_ENV } from "../../shared/aso-env";
 
 type PopularityFetchResult = {
   popularities: Record<string, number>;
@@ -46,6 +47,9 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
 ): Promise<PopularityFetchResult> {
   if (!isAppleAdsApiConfigured()) {
     return fetchLegacy(keywords, options);
+  }
+  if (ASO_ENV.popularitySource === "legacy") {
+    return fetchLegacyWithAdsApiHistory(country, keywords, options);
   }
 
   let snapshots;
@@ -127,4 +131,60 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
     popularities: { ...legacy.popularities, ...popularities },
     failedKeywords: legacy.failedKeywords,
   };
+}
+
+/**
+ * Legacy endpoint as the score of record. Measured against Astro on
+ * 2026-09-25: legacy scores matched Astro on 680 of 687 keywords where both
+ * had a value, while the Ads Platform API's per-storefront scores differed on
+ * 149 of 157. The Ads API is still queried, best effort, for its weekly
+ * history (the dashboard trend arrow) and to fill keywords the legacy call
+ * failed.
+ */
+async function fetchLegacyWithAdsApiHistory(
+  country: string,
+  keywords: string[],
+  options?: PopularityFetchOptions
+): Promise<PopularityFetchResult> {
+  // Errors propagate unchanged: they carry the reauth signals surfaces act on.
+  const legacy = await fetchLegacy(keywords, options);
+
+  let snapshots: Awaited<ReturnType<typeof fetchSearchTermPopularitySnapshots>>;
+  try {
+    snapshots = await fetchSearchTermPopularitySnapshots(country, keywords);
+  } catch (error) {
+    logger.debug(
+      `[aso-popularity-source] Ads API history skipped for ${country}: ${String(error)}`
+    );
+    return legacy;
+  }
+
+  const historyPoints: Array<{
+    keyword: string;
+    week: string;
+    popularity: number;
+    genre: string | null;
+    rankInGenre: number | null;
+  }> = [];
+  for (const [keyword, snapshot] of snapshots) {
+    for (const row of snapshot.history) {
+      historyPoints.push({
+        keyword,
+        week: row.week,
+        popularity: row.searchPopularity1to100,
+        genre: row.genre,
+        rankInGenre: row.rankInGenre,
+      });
+    }
+  }
+  keywordWriteRepository.persistPopularityHistory(country, historyPoints);
+
+  const popularities = { ...legacy.popularities };
+  const failedKeywords = legacy.failedKeywords.filter((failed) => {
+    const snapshot = snapshots.get(failed.keyword);
+    if (!snapshot) return true;
+    popularities[failed.keyword] = snapshot.popularity;
+    return false;
+  });
+  return { popularities, failedKeywords };
 }

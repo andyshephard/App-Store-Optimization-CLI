@@ -213,7 +213,12 @@ Aug 2026) supersedes the old Search Ads API (sunset 2027-01-26). When
 credentials exist (`~/.aso/apple-ads-api/credentials.json` + `private-key.pem`,
 or `ASO_ADS_API_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY_PATH/ORG_ID`), the
 pipeline's popularity stage (`cli/services/keywords/aso-popularity-source.ts`)
-queries `insights/apps/search-term-popularity` first — genuinely
+can query `insights/apps/search-term-popularity` first. **Default since
+2026-09-25 is `ASO_POPULARITY_SOURCE=legacy`**: the legacy endpoint is the
+score of record because it matches Astro (680/687 where both have a value; the
+Ads API differed on 149/157), and the Ads API only records weekly history and
+fills keywords the legacy call failed. `ASO_POPULARITY_SOURCE=ads-api` restores
+the behaviour below, which — genuinely
 **per-storefront** 1–100 scores, unlike the legacy cookie-authenticated
 endpoint whose score is account-level. Coverage: only terms in some genre's
 weekly top-500 (≥500 searches/week); everything else falls back to the legacy

@@ -21,6 +21,7 @@ export const ASO_DEFAULTS = {
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
   enrichmentMode: "ratings" as "ratings" | "legacy",
+  popularitySource: "legacy" as "legacy" | "ads-api",
   alertEmailFrom: "keywords@chunks.app",
   refreshDailyAt: null as string | null,
   refreshTimeZone: "UTC",
@@ -54,6 +55,13 @@ export type AsoEnvConfig = {
    * search-page + app-page + localized-page path with aso-difficulty.ts.
    */
   enrichmentMode: "ratings" | "legacy";
+  /**
+   * "legacy" (default): the cookie-authenticated Search Ads popularity
+   * endpoint is the score, matching Astro; the Ads Platform API only feeds
+   * weekly history and fills keywords the legacy call failed. "ads-api":
+   * prefer the Ads Platform API's per-storefront score where it has one.
+   */
+  popularitySource: "legacy" | "ads-api";
   /** Daily wall-clock time ("HH:MM") to run the refresh; null disables it. */
   refreshDailyAt: string | null;
   /** IANA timezone the daily time is interpreted in. */
@@ -203,6 +211,10 @@ function readAsoEnv(
       parseTrimmed(env.ASO_ENRICHMENT_MODE)?.toLowerCase() === "legacy"
         ? "legacy"
         : ASO_DEFAULTS.enrichmentMode,
+    popularitySource:
+      parseTrimmed(env.ASO_POPULARITY_SOURCE)?.toLowerCase() === "ads-api"
+        ? "ads-api"
+        : ASO_DEFAULTS.popularitySource,
     refreshDailyAt: parseTrimmed(env.ASO_REFRESH_DAILY_AT),
     refreshTimeZone:
       parseTrimmed(env.ASO_REFRESH_TIMEZONE) ?? ASO_DEFAULTS.refreshTimeZone,

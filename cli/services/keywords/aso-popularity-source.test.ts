@@ -49,7 +49,12 @@ const snapshot = (popularity: number) => ({
 
 describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
   beforeEach(() => {
+    process.env.ASO_POPULARITY_SOURCE = "ads-api";
     jest.clearAllMocks();
+  });
+
+  afterAll(() => {
+    delete process.env.ASO_POPULARITY_SOURCE;
   });
 
   it("passes straight through to the legacy service when not configured", async () => {
@@ -150,5 +155,69 @@ describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
     expect(result).toBe(legacyResult);
     expect(mockLegacy).toHaveBeenCalledWith(["a", "b"]);
     expect(mockPersistHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchKeywordPopularitiesPreferringAdsApi (legacy source, the default)", () => {
+  beforeEach(() => {
+    delete process.env.ASO_POPULARITY_SOURCE;
+    jest.clearAllMocks();
+    mockConfigured.mockReturnValue(true);
+  });
+
+  it("scores from the legacy endpoint even where the Ads API covers the keyword", async () => {
+    mockLegacy.mockResolvedValue({ popularities: { covered: 54, longtail: 8 }, failedKeywords: [] });
+    mockSnapshots.mockResolvedValue(new Map([["covered", snapshot(70)]]));
+
+    const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["covered", "longtail"]);
+
+    expect(result.popularities).toEqual({ covered: 54, longtail: 8 });
+    expect(result.failedKeywords).toEqual([]);
+  });
+
+  it("still records Ads API weekly history", async () => {
+    mockLegacy.mockResolvedValue({ popularities: { covered: 54 }, failedKeywords: [] });
+    mockSnapshots.mockResolvedValue(new Map([["covered", snapshot(70)]]));
+
+    await fetchKeywordPopularitiesPreferringAdsApi("US", ["covered"]);
+
+    expect(mockPersistHistory).toHaveBeenCalledWith(
+      "US",
+      [expect.objectContaining({ keyword: "covered", popularity: 70 })]
+    );
+  });
+
+  it("fills a keyword the legacy call failed from the Ads API", async () => {
+    const failure = {
+      keyword: "covered",
+      stage: "popularity",
+      reasonCode: "X",
+      message: "failed",
+      retryable: true,
+      attempts: 1,
+    };
+    mockLegacy.mockResolvedValue({ popularities: {}, failedKeywords: [failure] });
+    mockSnapshots.mockResolvedValue(new Map([["covered", snapshot(70)]]));
+
+    const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["covered"]);
+
+    expect(result.popularities).toEqual({ covered: 70 });
+    expect(result.failedKeywords).toEqual([]);
+  });
+
+  it("returns the legacy result unchanged when the Ads API errors", async () => {
+    const legacyResult = { popularities: { a: 12 }, failedKeywords: [] };
+    mockLegacy.mockResolvedValue(legacyResult);
+    mockSnapshots.mockRejectedValue(new Error("ads api down"));
+
+    await expect(fetchKeywordPopularitiesPreferringAdsApi("US", ["a"])).resolves.toBe(legacyResult);
+  });
+
+  it("propagates legacy errors so reauth signals reach the surfaces", async () => {
+    const reauth = new Error("reauth required");
+    mockLegacy.mockRejectedValue(reauth);
+
+    await expect(fetchKeywordPopularitiesPreferringAdsApi("US", ["a"])).rejects.toBe(reauth);
+    expect(mockSnapshots).not.toHaveBeenCalled();
   });
 });
