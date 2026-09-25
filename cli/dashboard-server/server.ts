@@ -7,6 +7,7 @@ import {
   upsertOwnedAppSnapshots,
 } from "../db/owned-apps";
 import { listKeywords } from "../db/aso-keywords";
+import { listDailyPositionHistory } from "../db/app-keyword-position-history";
 import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
   clearReauthenticationAlertState,
@@ -388,6 +389,35 @@ function handleApiAsoSetupStatusGet(res: http.ServerResponse): void {
   sendJson(res, 200, { success: true, data: getDashboardSetupState() });
 }
 
+const POSITION_HISTORY_MAX_PAGE = 5000;
+
+/**
+ * Daily rank history for export (warehouse sync). Read-only.
+ * ?since=YYYY-MM-DD (default 30 days ago) &appIds=a,b &limit=&offset=
+ */
+function handleApiAsoPositionHistoryGet(
+  res: http.ServerResponse,
+  query: Record<string, string>
+): void {
+  const since = /^\d{4}-\d{2}-\d{2}$/.test(query.since ?? "")
+    ? query.since
+    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const limit = Math.min(
+    POSITION_HISTORY_MAX_PAGE,
+    Math.max(1, Number.parseInt(query.limit ?? "", 10) || POSITION_HISTORY_MAX_PAGE)
+  );
+  const offset = Math.max(0, Number.parseInt(query.offset ?? "", 10) || 0);
+  const appIds = (query.appIds ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const items = listDailyPositionHistory({ since, appIds, limit, offset });
+  sendJson(res, 200, {
+    success: true,
+    data: { items, since, limit, offset, hasNextPage: items.length === limit },
+  });
+}
+
 function handleApiAsoRefreshStatusGet(res: http.ServerResponse): void {
   sendJson(res, 200, {
     success: true,
@@ -705,6 +735,11 @@ export function createServerRequestHandler(): http.RequestListener {
 
       if (req.method === "GET" && pathname === "/api/aso/refresh-status") {
         handleApiAsoRefreshStatusGet(res);
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/aso/position-history") {
+        handleApiAsoPositionHistoryGet(res, query);
         return;
       }
 

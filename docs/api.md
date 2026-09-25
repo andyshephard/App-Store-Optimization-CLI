@@ -203,8 +203,8 @@ Field notes that matter for reporting:
 
 ## `GET /api/aso/keywords/history`
 
-Rank over time for one app/keyword/storefront. Pure database read. Retained 90
-days; points are written by each refresh.
+Rank over time for one app/keyword/storefront. Pure database read. Retained 730
+days (two years); points are written by each refresh.
 
 ```bash
 curl -H "Authorization: Bearer $ASO_API_TOKEN" \
@@ -218,6 +218,27 @@ curl -H "Authorization: Bearer $ASO_API_TOKEN" \
 A point is only recorded when the app actually appears in the ranked list, so
 gaps mean "not ranking", not "not measured". Empty until the scheduler has run
 at least twice.
+
+## `GET /api/aso/position-history`
+
+Free (SQLite only). Daily rank history for export — one point per app,
+keyword, country and UTC day, taken from the day's last capture. Includes
+history imported from Astro (`scripts/astro/`).
+
+| Param | Default | |
+|---|---|---|
+| `since` | 30 days ago | `YYYY-MM-DD`, inclusive |
+| `appIds` | all | comma-separated |
+| `limit` | 5000 | max 5000 |
+| `offset` | 0 | page with `hasNextPage` |
+
+```json
+{"success":true,"data":{"items":[{"appId":"6692632196","keyword":"microlearning","country":"US","date":"2026-09-25","position":24}],"since":"2026-09-01","limit":5000,"offset":0,"hasNextPage":false}}
+```
+
+`position` null means the app was not in the ~250 results that day. Positions
+below ~10 come from MZSearch order and are approximate (see
+`docs/aso-difficulty-model.md`).
 
 ## `GET /api/aso/storefronts`
 

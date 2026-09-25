@@ -4,6 +4,7 @@ import * as path from "path";
 import {
   insertAppKeywordPositionHistoryPoints,
   listAppKeywordPositionHistory,
+  listDailyPositionHistory,
   pruneAppKeywordPositionHistoryBefore,
 } from "./app-keyword-position-history";
 import { closeDbForTests } from "./store";
@@ -156,5 +157,28 @@ describe("app-keyword-position-history", () => {
         capturedAt: "2026-04-10T00:00:00.000Z",
       },
     ]);
+  });
+  it("exports one point per app, keyword and day: the day's last capture", () => {
+    insertAppKeywordPositionHistoryPoints([
+      { appId: "a", keyword: "k", country: "US", position: 9, capturedAt: "2026-09-01T02:00:00.000Z" },
+      { appId: "a", keyword: "k", country: "US", position: 7, capturedAt: "2026-09-01T20:00:00.000Z" },
+      { appId: "a", keyword: "k", country: "US", position: null, capturedAt: "2026-09-02T02:00:00.000Z" },
+      { appId: "b", keyword: "k", country: "US", position: 3, capturedAt: "2026-09-01T02:00:00.000Z" },
+      { appId: "a", keyword: "k", country: "US", position: 50, capturedAt: "2026-08-01T02:00:00.000Z" },
+    ]);
+
+    const all = listDailyPositionHistory({ since: "2026-09-01", limit: 100, offset: 0 });
+    expect(all).toEqual([
+      { appId: "a", keyword: "k", country: "US", date: "2026-09-01", position: 7 },
+      { appId: "b", keyword: "k", country: "US", date: "2026-09-01", position: 3 },
+      { appId: "a", keyword: "k", country: "US", date: "2026-09-02", position: null },
+    ]);
+
+    expect(
+      listDailyPositionHistory({ since: "2026-09-01", appIds: ["b"], limit: 100, offset: 0 })
+    ).toHaveLength(1);
+    expect(
+      listDailyPositionHistory({ since: "2026-09-01", limit: 2, offset: 2 })
+    ).toEqual([all[2]]);
   });
 });

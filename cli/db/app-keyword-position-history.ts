@@ -99,3 +99,52 @@ export function pruneAppKeywordPositionHistoryBefore(cutoffIso: string): number 
     .run(cutoffIso);
   return result.changes;
 }
+
+export type DailyPositionPoint = {
+  appId: string;
+  keyword: string;
+  country: string;
+  date: string;
+  position: number | null;
+};
+
+/**
+ * One point per app, keyword, country and UTC day — the day's last capture —
+ * for exporting history (the middleware warehouse sync). Ordered for stable
+ * offset pagination.
+ */
+export function listDailyPositionHistory(params: {
+  since: string;
+  appIds?: string[];
+  limit: number;
+  offset: number;
+}): DailyPositionPoint[] {
+  const db = getDb();
+  const appFilter =
+    params.appIds && params.appIds.length > 0
+      ? `AND app_id IN (${params.appIds.map(() => "?").join(",")})`
+      : "";
+  return db
+    .prepare(
+      `SELECT app_id AS appId, keyword, country, day AS date, position
+       FROM (
+         SELECT app_id, keyword, country, position,
+                substr(captured_at, 1, 10) AS day,
+                ROW_NUMBER() OVER (
+                  PARTITION BY app_id, keyword, country, substr(captured_at, 1, 10)
+                  ORDER BY captured_at DESC
+                ) AS rn
+         FROM app_keyword_position_history
+         WHERE captured_at >= ? ${appFilter}
+       )
+       WHERE rn = 1
+       ORDER BY date, app_id, keyword, country
+       LIMIT ? OFFSET ?`
+    )
+    .all(
+      params.since,
+      ...(params.appIds ?? []),
+      params.limit,
+      params.offset
+    ) as DailyPositionPoint[];
+}
