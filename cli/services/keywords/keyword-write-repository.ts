@@ -22,7 +22,9 @@ import {
 import type { KeywordMatchType } from "../../shared/aso-keyword-match";
 import type { FailedKeyword } from "../../shared/aso-keyword-types";
 
-const POSITION_HISTORY_RETENTION_DAYS = 90;
+// Two years: long enough to keep rank history imported from Astro
+// (scripts/astro/), which starts in 2025.
+const POSITION_HISTORY_RETENTION_DAYS = 730;
 const POSITION_HISTORY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const POSITION_HISTORY_LAST_PRUNED_METADATA_KEY =
   "app-keyword-position-history-pruned-at";
