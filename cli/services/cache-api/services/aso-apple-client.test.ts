@@ -1,5 +1,5 @@
 import { jest } from "@jest/globals";
-import { asoAppleGet } from "./aso-apple-client";
+import { asoAppleGet, resetAppleThrottleGateForTests } from "./aso-apple-client";
 
 jest.mock("axios", () => {
   const get = jest.fn();
@@ -23,6 +23,7 @@ const mockGet = (jest.requireMock("axios") as { __mockGet: jest.Mock }).__mockGe
 describe("aso-apple-client", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetAppleThrottleGateForTests();
     jest.useFakeTimers();
     jest.spyOn(Math, "random").mockReturnValue(0);
     process.env.ASO_RETRY_MAX_ATTEMPTS = "2";
@@ -65,5 +66,48 @@ describe("aso-apple-client", () => {
 
     expect(response.status).toBe(200);
     expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+  it("holds every request to a host after one of them is told to back off", async () => {
+    const throttled = {
+      response: { status: 429, statusText: "Too Many Requests", headers: { "retry-after": "4" } },
+      message: "Request failed with status code 429",
+    };
+    const ok = { status: 200, statusText: "OK", headers: {}, data: {} };
+    (mockGet as any).mockRejectedValueOnce(throttled).mockResolvedValue(ok);
+
+    const first = asoAppleGet("https://apps.apple.com/a", { operation: "op" });
+    await jest.advanceTimersByTimeAsync(0);
+    // Issued after the 429 landed: must wait for the gate, not go straight out.
+    const second = asoAppleGet("https://apps.apple.com/b", { operation: "op" });
+    const otherHost = asoAppleGet("https://itunes.apple.com/lookup", { operation: "op" });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockGet).toHaveBeenCalledTimes(2); // first + otherHost
+
+    await jest.advanceTimersByTimeAsync(4000);
+    await Promise.all([first, second, otherHost]);
+    expect(mockGet).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries a 403 as a throttle only when the caller says the endpoint uses it", async () => {
+    const forbidden = {
+      response: { status: 403, statusText: "Forbidden", headers: {} },
+      message: "Request failed with status code 403",
+    };
+    const ok = { status: 200, statusText: "OK", headers: {}, data: {} };
+
+    (mockGet as any).mockRejectedValueOnce(forbidden);
+    await expect(
+      asoAppleGet("https://example.com/plain", { operation: "op" })
+    ).rejects.toBe(forbidden);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    (mockGet as any).mockRejectedValueOnce(forbidden).mockResolvedValueOnce(ok);
+    const promise = asoAppleGet("https://example.com/throttled", {
+      operation: "op",
+      throttleStatusCodes: [403],
+    });
+    await jest.advanceTimersByTimeAsync(5000);
+    await expect(promise).resolves.toBe(ok);
+    expect(mockGet).toHaveBeenCalledTimes(3);
   });
 });

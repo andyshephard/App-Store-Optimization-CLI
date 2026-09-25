@@ -17,7 +17,51 @@ type AsoAppleGetConfig<T = unknown> = AxiosRequestConfig<T> & {
   operation: string;
   maxAttempts?: number;
   delayMs?: number;
+  /**
+   * Extra statuses this endpoint uses to mean "slow down". 429 always counts;
+   * the app-detail endpoint answers 403 instead.
+   */
+  throttleStatusCodes?: number[];
 };
+
+/**
+ * Host-wide pause after Apple throttles a request.
+ *
+ * Retry-After used to slow down only the request that received it, while every
+ * other worker kept firing at the same host and collected its own 429 — one
+ * burst on 2026-09-25 produced ~1,000 of them. Now a throttle response closes
+ * the gate for the whole host until the backoff has passed, and every request
+ * to that host waits at the gate before going out.
+ */
+const throttledUntilByHost = new Map<string, number>();
+
+function getRequestHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+async function waitForThrottleGate(host: string): Promise<void> {
+  // Loop: another request may extend the gate while this one sleeps.
+  while (true) {
+    const waitMs = (throttledUntilByHost.get(host) ?? 0) - Date.now();
+    if (waitMs <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+function extendThrottleGate(host: string, delayMs: number): void {
+  const until = Date.now() + delayMs;
+  if (until > (throttledUntilByHost.get(host) ?? 0)) {
+    throttledUntilByHost.set(host, until);
+  }
+}
+
+export function resetAppleThrottleGateForTests(): void {
+  throttledUntilByHost.clear();
+}
 
 function generateRequestId(): string {
   return (
@@ -53,20 +97,21 @@ function shouldRetry(error: AxiosError): boolean {
   });
 }
 
-async function waitBeforeRetry(
+function computeRetryDelayMs(
   error: AxiosError,
   attempt: number,
-  delayMs: number
-): Promise<number> {
-  const waitedMs = getRetryDelayMs({
-    statusCode: error.response?.status,
+  delayMs: number,
+  throttled: boolean
+): number {
+  return getRetryDelayMs({
+    // A 403 throttle carries no Retry-After; treating it as 429 gives it the
+    // rate-limit backoff rather than the short transient one.
+    statusCode: throttled ? 429 : error.response?.status,
     headers: error.response?.headers as Record<string, unknown> | undefined,
     attempt,
     defaultBaseDelayMs: delayMs,
     rateLimitBaseDelayMs: getAsoResilienceConfig().rateLimitBaseDelayMs,
   });
-  await new Promise((resolve) => setTimeout(resolve, waitedMs));
-  return waitedMs;
 }
 
 export async function asoAppleGet<T = unknown>(
@@ -77,10 +122,12 @@ export async function asoAppleGet<T = unknown>(
     operation,
     maxAttempts = getAsoResilienceConfig().maxAttempts,
     delayMs = getAsoResilienceConfig().baseDelayMs,
+    throttleStatusCodes = [],
     ...requestConfig
   } = config;
   const requestId = generateRequestId();
   const startedAt = Date.now();
+  const host = getRequestHost(url);
 
   logger.debug(`[${requestId}] ASO APPLE REQ GET ${operation}`, {
     requestId,
@@ -95,6 +142,7 @@ export async function asoAppleGet<T = unknown>(
   });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await waitForThrottleGate(host);
     try {
       const response = await asoAppleHttpClient.get<T>(url, requestConfig);
       logger.debug(`[${requestId}] ASO APPLE RES GET ${operation}`, {
@@ -114,10 +162,25 @@ export async function asoAppleGet<T = unknown>(
       return response;
     } catch (error) {
       const axiosError = error as AxiosError;
-      const retryable = shouldRetry(axiosError);
+      const status = axiosError.response?.status;
+      const throttled =
+        status === 429 || (status != null && throttleStatusCodes.includes(status));
+      const retryable = throttled || shouldRetry(axiosError);
+      const waitedMs = computeRetryDelayMs(axiosError, attempt, delayMs, throttled);
+
+      // Close the gate even when this request is giving up, so the requests
+      // behind it back off too.
+      if (throttled) {
+        extendThrottleGate(host, waitedMs);
+      }
 
       if (!retryable || attempt >= maxAttempts) {
-        logger.error(`[${requestId}] ASO APPLE ERR GET ${operation}`, {
+        // One line per failure. Response headers go to debug only: at info
+        // they made every error ~35 lines, which was 51k lines in 48h.
+        logger.error(
+          `[${requestId}] ASO APPLE ERR GET ${operation} status=${status ?? axiosError.code ?? "?"} attempt=${attempt}/${maxAttempts} ${url}`
+        );
+        logger.debug(`[${requestId}] ASO APPLE ERR DETAIL GET ${operation}`, {
           requestId,
           operation,
           method: "GET",
@@ -125,8 +188,9 @@ export async function asoAppleGet<T = unknown>(
           attempt,
           maxAttempts,
           retryable,
+          throttled,
           durationMs: Date.now() - startedAt,
-          status: axiosError.response?.status,
+          status,
           statusText: axiosError.response?.statusText,
           code: axiosError.code,
           message: axiosError.message,
@@ -138,11 +202,11 @@ export async function asoAppleGet<T = unknown>(
         throw error;
       }
 
-      const waitedMs = await waitBeforeRetry(
-        axiosError,
-        attempt,
-        delayMs
-      );
+      // A throttled request waits at the gate at the top of the loop;
+      // anything else sleeps its own backoff.
+      if (!throttled) {
+        await new Promise((resolve) => setTimeout(resolve, waitedMs));
+      }
 
       logger.debug(`[${requestId}] ASO APPLE RETRY GET ${operation}`, {
         requestId,
@@ -151,10 +215,9 @@ export async function asoAppleGet<T = unknown>(
         url,
         attempt,
         nextAttempt: attempt + 1,
-        retryCause:
-          axiosError.response?.status === 429
-            ? "rate_limit"
-            : axiosError.response?.status != null
+        retryCause: throttled
+          ? "rate_limit"
+          : axiosError.response?.status != null
               ? "upstream_5xx"
               : "network",
         waitedMs: Math.round(waitedMs),

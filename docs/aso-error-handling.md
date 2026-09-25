@@ -28,6 +28,9 @@ Define failure boundaries, retry rules, and recovery behavior across CLI, dashbo
 - Shared resilience config lives in `cli/shared/aso-resilience.ts` (env defaults/parsing centralized in `cli/shared/aso-env.ts`).
 - Popularity fetch retries transient responses (`429`, `5xx`, `KWS_NO_ORG_CONTENT_PROVIDERS`) and transient network errors with bounded request attempts (default: 2 total attempts, i.e. one retry).
 - App Store web fetches retry `429`, `5xx`, and transient network errors with jittered exponential backoff using the same bounded request-attempt policy (default: 2 total attempts).
+- A throttle response (`429`, or `403` from `appstore.app-lookup`, which passes `throttleStatusCodes: [403]`) closes a per-host gate in `asoAppleGet` for the backoff (Retry-After when present, else `ASO_RATE_LIMIT_BASE_DELAY_MS` doubling). Every request to that host waits at the gate, so one throttle slows the whole crawl rather than only the request that received it. Other `403`s are not retried.
+- `fetchAppStoreLookupAppDocs` resolves a failed app-page lookup to `null` per id, so the remaining ids still resolve and the failed ones still reach the iTunes lookup fallback.
+- Final-attempt failures log one `error` line; response headers and full context are at `debug`.
 - Popularity batch isolation requests (`one keyword per request` after a terminal batch failure) run single-attempt (`maxAttempts=1`) to avoid retry multiplication.
 - Enrichment applies one bounded retry/backoff cycle for competitive keywords when top-5 difficulty docs are incomplete (`reasonCode=INSUFFICIENT_DOCS` when still unresolved).
 - Enrichment applies a short in-process cooldown for top-app IDs that still return incomplete lookup docs, so nearby keywords do not repeat the same expensive lookup loop immediately.

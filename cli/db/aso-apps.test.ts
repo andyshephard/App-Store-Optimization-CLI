@@ -152,4 +152,39 @@ describe("aso-apps", () => {
       })
     );
   });
+  it("keeps stored dates, icon and expiry when a lockup-only doc arrives", () => {
+    upsertCompetitorAppDocs("US", [
+      {
+        appId: "comp1",
+        name: "Full Doc",
+        averageUserRating: 4.5,
+        userRatingCount: 100,
+        releaseDate: "2024-01-01",
+        currentVersionReleaseDate: "2025-01-01",
+        iconArtwork: { url: "https://cdn/icon.png" },
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
+    // Same app seen at #6+ on another keyword's search page.
+    upsertCompetitorAppDocs("US", [
+      {
+        appId: "comp1",
+        name: "Lockup Name",
+        averageUserRating: 4.6,
+        userRatingCount: 120,
+      },
+    ]);
+
+    const [doc] = getCompetitorAppDocs("US", ["comp1"]);
+    expect(doc).toEqual(
+      expect.objectContaining({
+        name: "Lockup Name",
+        userRatingCount: 120,
+        releaseDate: "2024-01-01",
+        currentVersionReleaseDate: "2025-01-01",
+        iconArtwork: { url: "https://cdn/icon.png" },
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      })
+    );
+  });
 });

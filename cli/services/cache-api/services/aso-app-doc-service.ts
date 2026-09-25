@@ -3,6 +3,7 @@ import type { AsoCacheRepository, AsoAppDoc } from "./aso-types";
 import { normalizeCountryOnAppDocs } from "./aso-app-doc-utils";
 import { asoAppleGet } from "./aso-apple-client";
 import { ASO_ENV } from "../../../shared/aso-env";
+import { mapWithConcurrency } from "../../../shared/aso-concurrency";
 import { logger } from "../../../utils/logger";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
 import { ASO_APPLE_WEB_USER_AGENT } from "../../../shared/aso-apple-http";
@@ -286,6 +287,8 @@ async function fetchAppDocById(country: string, appId: string): Promise<AsoAppDo
       "https://apps.apple.com/app/id" + encodeURIComponent(appId),
       {
         operation: "appstore.app-lookup",
+        // This endpoint signals throttling with 403 rather than 429.
+        throttleStatusCodes: [403],
         headers: {
           "X-Apple-Store-Front": getStoreFrontHeader(country),
           Host: "apps.apple.com",
@@ -352,35 +355,6 @@ async function fetchAppDocById(country: string, appId: string): Promise<AsoAppDo
   return parsedDoc;
 }
 
-/**
- * Runs `worker` over `items` with a bounded number in flight, preserving order.
- *
- * This was an unbounded `Promise.all`. Apple throttles the app-detail endpoint
- * per storefront and answers 403 once a burst is too large — asking for the top
- * 100 apps of a keyword fired 100 simultaneous requests and got the whole
- * storefront blocked for a while. Concurrency follows
- * ASO_KEYWORD_ENRICHMENT_CONCURRENCY (default 4).
- */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  worker: (item: T) => Promise<R>
-): Promise<R[]> {
-  const limit = Math.max(1, ASO_ENV.keywordEnrichmentConcurrency);
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index]);
-    }
-  });
-
-  await Promise.all(runners);
-  return results;
-}
-
 export async function fetchAppStoreLookupAppDocs(params: {
   country: string;
   appIds: string[];
@@ -389,8 +363,14 @@ export async function fetchAppStoreLookupAppDocs(params: {
   assertSupportedCountry(country);
   if (params.appIds.length === 0) return [];
   const uniqueIds = Array.from(new Set(params.appIds.map((id) => id.trim()).filter(Boolean)));
-  const docs = await mapWithConcurrency(uniqueIds, (appId) =>
-    fetchAppDocById(country, appId)
+  // Concurrency follows ASO_KEYWORD_ENRICHMENT_CONCURRENCY. A failed id (403
+  // throttle, timeout) resolves to null rather than rejecting the batch, so it
+  // still reaches the iTunes lookup fallback below instead of failing every
+  // other id with it.
+  const docs = await mapWithConcurrency(
+    uniqueIds,
+    ASO_ENV.keywordEnrichmentConcurrency,
+    (appId) => fetchAppDocById(country, appId).catch(() => null)
   );
   const byId = new Map(
     docs.filter((doc): doc is AsoAppDoc => doc != null).map((doc) => [doc.appId, doc])

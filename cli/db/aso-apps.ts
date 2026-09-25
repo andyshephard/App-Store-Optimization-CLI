@@ -184,12 +184,20 @@ export function upsertCompetitorAppDocs(
       publisher_name = excluded.publisher_name,
       average_user_rating = excluded.average_user_rating,
       user_rating_count = excluded.user_rating_count,
-      release_date = excluded.release_date,
-      current_version_release_date = excluded.current_version_release_date,
-      icon_json = excluded.icon_json,
-      icon_artwork_json = excluded.icon_artwork_json,
+      -- Search-page lockups (apps outside a keyword's top 5) carry no dates,
+      -- icon artwork or expiry. Overwriting with NULL expired the full doc an
+      -- app had from being top 5 elsewhere, and the next keyword with it in
+      -- its top 5 refetched the app page and every localized page. Keep what
+      -- is already stored when the incoming value is missing.
+      release_date = COALESCE(excluded.release_date, aso_apps.release_date),
+      current_version_release_date = COALESCE(
+        excluded.current_version_release_date,
+        aso_apps.current_version_release_date
+      ),
+      icon_json = COALESCE(excluded.icon_json, aso_apps.icon_json),
+      icon_artwork_json = COALESCE(excluded.icon_artwork_json, aso_apps.icon_artwork_json),
       additional_localizations_json = excluded.additional_localizations_json,
-      expires_at = excluded.expires_at
+      expires_at = COALESCE(excluded.expires_at, aso_apps.expires_at)
   `);
 
   const tx = db.transaction(() => {

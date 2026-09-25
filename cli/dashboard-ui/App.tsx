@@ -1112,7 +1112,7 @@ export function App() {
     let cancelled = false;
     const ids = Array.from(wanted).slice(0, APP_ICON_FETCH_LIMIT);
     void apiGet<AppDoc[]>(
-      `/api/aso/apps?country=${encodeURIComponent(country)}&ids=${ids
+      `/api/aso/apps?country=${encodeURIComponent(country)}&cacheOnly=1&ids=${ids
         .map((id) => encodeURIComponent(id))
         .join(",")}`
     )

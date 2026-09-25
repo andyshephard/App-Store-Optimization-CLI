@@ -144,4 +144,20 @@ describe("aso-app-store-details", () => {
       })
     );
   });
+  it("fetches additional localizations at most two at a time", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockedAsoAppleGet.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { status: 404, data: "" } as never;
+    });
+
+    await fetchAppStoreAdditionalLocalizations("123", "US");
+
+    expect(mockedAsoAppleGet.mock.calls.length).toBeGreaterThan(2);
+    expect(maxInFlight).toBe(2);
+  });
 });

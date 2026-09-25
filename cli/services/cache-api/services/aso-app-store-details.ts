@@ -1,4 +1,5 @@
 import { asoAppleGet } from "./aso-apple-client";
+import { mapWithConcurrency } from "../../../shared/aso-concurrency";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
 import {
   getStorefrontAdditionalLanguages,
@@ -6,6 +7,7 @@ import {
 } from "../../../shared/aso-storefront-localizations";
 
 const APP_STORE_BASE = "https://apps.apple.com";
+const LOCALIZED_PAGE_CONCURRENCY = 2;
 
 type LocalizedAppPageData = {
   title: string;
@@ -194,8 +196,13 @@ export async function fetchAppStoreAdditionalLocalizations(
     return {};
   }
 
-  const localizedResults = await Promise.all(
-    languages.map(async (language) => {
+  // Bounded: an unbounded fan-out here fired every extra language for every
+  // top-5 app at once (45 requests for one cold US keyword) and was the main
+  // source of 429s from the localized app page.
+  const localizedResults = await mapWithConcurrency(
+    languages,
+    LOCALIZED_PAGE_CONCURRENCY,
+    async (language) => {
       try {
         const localized = await fetchAppStoreLocalizedAppData(appId, country, language);
         if (!localized) return null;
@@ -212,7 +219,7 @@ export async function fetchAppStoreAdditionalLocalizations(
       } catch {
         return null;
       }
-    })
+    }
   );
 
   const additionalLocalizations: Record<string, AppLocalizationNameSubtitle> = {};

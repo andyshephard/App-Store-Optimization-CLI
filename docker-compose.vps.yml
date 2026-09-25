@@ -24,7 +24,18 @@ services:
       ASO_SUPPORTED_COUNTRIES: "US,GB,CA,AU,IE,NZ,DE,FR,ES,IT,PT,VN"
       ASO_PRIMARY_APP_ID: "${ASO_PRIMARY_APP_ID}"
       # Apple throttles the app-detail endpoint per storefront; keep bursts small.
-      ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "3"
+      # This caps keywords in flight AND app lookups per keyword, so 2 means at
+      # most 4 app-page requests at once (3 meant 9).
+      ASO_KEYWORD_ENRICHMENT_CONCURRENCY: "2"
+      # A throttle now pauses every request to the host (see aso-apple-client),
+      # so a third attempt is cheap and turns most 429/403s into successes.
+      ASO_RETRY_MAX_ATTEMPTS: "3"
+      # Pause between 25-keyword batches inside a storefront (default 5s).
+      ASO_REFRESH_INTER_BATCH_DELAY_MS: "15000"
+      # Without this V8 sizes the heap from the 512m cgroup (~256MB), and a
+      # cold-cache crawl hit that limit on 2026-09-25. Leaves ~128MB headroom
+      # under mem_limit for buffers and native memory.
+      NODE_OPTIONS: "--max-old-space-size=384"
       # 60s between storefronts. Measured 2026-07-28: a full forced crawl of 12
       # storefronts does only ~152s of actual work, so pacing dominates. Kept at
       # 60s rather than tuned to the edge because the runs that set this were on

@@ -445,7 +445,17 @@ export function createAppDocHandlers(deps: AsoRouteDeps) {
     }
 
     const docs = getCompetitorAppDocs(country, ids);
-    const staleIds = forceRefresh ? ids : getMissingOrExpiredAppIds(ids, docs);
+    // cacheOnly (the keyword table's icon strip) needs name and icon, which
+    // every stored doc has, so only ids with no doc at all go to Apple. Without
+    // it, each page load forced an app-page lookup for up to 120 apps whose
+    // doc had merely aged — traffic that competes with the refresh crawl.
+    const cacheOnly = deps.isTruthyQueryParam(query.cacheOnly);
+    const cachedIds = new Set(docs.map((doc) => doc.appId));
+    const staleIds = forceRefresh
+      ? ids
+      : cacheOnly
+        ? ids.filter((id) => !cachedIds.has(id))
+        : getMissingOrExpiredAppIds(ids, docs);
 
     if (staleIds.length === 0) {
       deps.sendJson(res, 200, { success: true, data: docs });

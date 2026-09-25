@@ -410,4 +410,59 @@ describe("aso-app-doc-service", () => {
       }
     }
   });
+  it("keeps resolving other ids and falls back to iTunes lookup when one app page throws", async () => {
+    mockedAsoAppleGet.mockImplementation(async (url: string) => {
+      if (url === "https://apps.apple.com/app/id1") {
+        throw Object.assign(new Error("Request failed with status code 403"), {
+          response: { status: 403 },
+        });
+      }
+      if (url === "https://apps.apple.com/app/id2") {
+        return {
+          data: {
+            storePlatformData: {
+              "product-dv": {
+                results: {
+                  "2": {
+                    id: "2",
+                    name: "Two",
+                    releaseDate: "2025-01-01",
+                    userRating: { value: 4, ratingCount: 10 },
+                  },
+                },
+              },
+            },
+            pageData: { versionHistory: [{ releaseDate: "2025-02-01T00:00:00Z" }] },
+          },
+        } as never;
+      }
+      if (url === "https://itunes.apple.com/lookup") {
+        return {
+          data: {
+            results: [
+              {
+                kind: "software",
+                trackId: 1,
+                trackName: "One",
+                releaseDate: "2024-01-01T00:00:00Z",
+                currentVersionReleaseDate: "2025-03-01T00:00:00Z",
+                averageUserRating: 4.2,
+                userRatingCount: 50,
+              },
+            ],
+          },
+        } as never;
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const result = await fetchAppStoreLookupAppDocs({ country: "US", appIds: ["1", "2"] });
+
+    expect(result.map((doc) => doc.appId)).toEqual(["1", "2"]);
+    expect(result[0]).toEqual(expect.objectContaining({ name: "One" }));
+    expect(mockedAsoAppleGet).toHaveBeenCalledWith(
+      "https://apps.apple.com/app/id1",
+      expect.objectContaining({ throttleStatusCodes: [403] })
+    );
+  });
 });

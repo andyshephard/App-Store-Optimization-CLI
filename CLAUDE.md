@@ -197,10 +197,12 @@ curl -s -o /dev/null -w "%{http_code}" \
   https://apps.apple.com/app/id324715238     # 200 = open, 403 = blocked
 ```
 
-Known follow-ups, neither done:
-1. Classify 403 on `appstore.app-lookup` as a throttle and back off, instead of
-   reporting `INSUFFICIENT_DOCS`.
-2. `additionalLanguages: ["en-GB"]` on DE/FR/ES/IT/PT doubles app-doc requests in
+403 on `appstore.app-lookup` is now classified as a throttle: it is retried
+and closes the host-wide backoff gate in `aso-apple-client.ts` (see
+`docs/aso-error-handling.md`). Localized-page fetches run at most 2 at a time.
+
+Known follow-up, not done:
+1. `additionalLanguages: ["en-GB"]` on DE/FR/ES/IT/PT doubles app-doc requests in
    those storefronts, which is what trips the block. CA carries `["fr-CA"]`
    deliberately (Apple serves real French metadata there).
 
