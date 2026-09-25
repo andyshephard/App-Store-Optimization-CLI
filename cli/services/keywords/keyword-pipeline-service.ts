@@ -619,6 +619,7 @@ export class KeywordPipelineService {
         normalizedKeyword: string;
         appCount: number;
         orderedAppIds: string[];
+        difficultyScore?: number;
       } | null = null;
       try {
         updatedOrder = await refreshAsoKeywordOrderLocal(country, keyword);
@@ -635,8 +636,8 @@ export class KeywordPipelineService {
         normalizedKeyword: existing.normalizedKeyword,
         country: existing.country,
         popularity: existing.popularity,
-        difficultyScore: existing.difficultyScore,
-        minDifficultyScore: existing.minDifficultyScore,
+        difficultyScore: updatedOrder.difficultyScore ?? existing.difficultyScore,
+        minDifficultyScore: updatedOrder.difficultyScore ?? existing.minDifficultyScore,
         isBrandKeyword: existing.isBrandKeyword,
         appCount: updatedOrder.appCount,
         keywordMatch: existing.keywordMatch,

@@ -9,7 +9,15 @@ import {
   fetchAppStoreLocalizedAppData,
 } from "./aso-app-store-details";
 import { normalizeCountryOnAppDocs } from "./aso-app-doc-utils";
-import { fetchAppStoreLookupAppDocs } from "./aso-app-doc-service";
+import {
+  fetchAppStoreLookupAppDocs,
+  fetchItunesLookupAppDocs,
+} from "./aso-app-doc-service";
+import {
+  calculateRatingDifficulty,
+  RATING_DIFFICULTY_TOP_N,
+} from "./aso-rating-difficulty";
+import { ASO_ENV } from "../../../shared/aso-env";
 import type { AsoAppDoc, AsoAppDocIcon } from "./aso-types";
 import { asoAppleGet } from "./aso-apple-client";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
@@ -472,7 +480,24 @@ export async function refreshKeywordOrder(params: {
   appCount: number;
   orderedAppIds: string[];
   appDocs: AsoAppDoc[];
+  /** Set in ratings mode, where difficulty is cheap enough to recompute with the order. */
+  difficultyScore?: number;
 }> {
+  if (ASO_ENV.enrichmentMode !== "legacy") {
+    const enriched = await enrichKeywordFromRatings({
+      keyword: params.keyword,
+      country: params.country,
+      popularity: 0,
+    });
+    return {
+      keyword: enriched.keyword,
+      normalizedKeyword: enriched.normalizedKeyword,
+      appCount: enriched.appCount,
+      orderedAppIds: enriched.orderedAppIds,
+      appDocs: enriched.appDocs,
+      difficultyScore: enriched.difficultyScore,
+    };
+  }
   const country = params.country.toUpperCase();
   const normalizedKeyword = normalizeKeyword(params.keyword);
   let orderedAppIds: string[] = [];
@@ -840,14 +865,17 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function enrichKeyword(
-  params: {
-    keyword: string;
-    country: string;
-    popularity: number;
-  },
-  options?: { getAppDocs?: (appIds: string[]) => Promise<AsoAppDoc[]> }
-): Promise<{
+type EnrichKeywordParams = {
+  keyword: string;
+  country: string;
+  popularity: number;
+};
+
+type EnrichKeywordOptions = {
+  getAppDocs?: (appIds: string[]) => Promise<AsoAppDoc[]>;
+};
+
+type EnrichKeywordResult = {
   keyword: string;
   normalizedKeyword: string;
   popularity: number;
@@ -858,7 +886,123 @@ export async function enrichKeyword(
   keywordMatch: KeywordMatchType;
   orderedAppIds: string[];
   appDocs: AsoAppDoc[];
-}> {
+};
+
+export async function enrichKeyword(
+  params: EnrichKeywordParams,
+  options?: EnrichKeywordOptions
+): Promise<EnrichKeywordResult> {
+  if (ASO_ENV.enrichmentMode === "legacy") {
+    return enrichKeywordLegacy(params, options);
+  }
+  return enrichKeywordFromRatings(params, options);
+}
+
+/**
+ * Two requests per keyword: MZSearch for the full ordered result list (~250
+ * apps, so ranks are tracked deep), then one iTunes lookup for the top 10's
+ * rating counts, names, publishers and release dates. Difficulty comes from
+ * those rating counts (aso-rating-difficulty.ts).
+ *
+ * The App Store search page stopped carrying `nextPage` ids and now yields
+ * only ~11 apps, and the legacy path needed an app page plus one page per
+ * extra language for each top app — the requests Apple throttles.
+ */
+export async function enrichKeywordFromRatings(
+  params: EnrichKeywordParams,
+  options?: EnrichKeywordOptions
+): Promise<EnrichKeywordResult> {
+  const country = params.country.toUpperCase();
+  const normalizedKeyword = normalizeKeyword(params.keyword);
+
+  const orderedAppIds = await fetchPopularityOrderedIds({
+    keyword: normalizedKeyword,
+    country: params.country,
+  });
+  const appCount = orderedAppIds.length;
+  const topIds = orderedAppIds.slice(0, RATING_DIFFICULTY_TOP_N);
+
+  const lookupById =
+    topIds.length > 0
+      ? await fetchItunesLookupAppDocs({ country, appIds: topIds })
+      : new Map<string, AsoAppDoc>();
+
+  if (topIds.length > 0 && lookupById.size === 0) {
+    throw new InsufficientDifficultyDocsError({
+      keyword: params.keyword,
+      country,
+      appCount,
+      docsForDifficultyCount: 0,
+      missingTopIds: topIds,
+    });
+  }
+
+  // iTunes lookup has no subtitle; keep one we already hold so keyword-match
+  // and brand detection still see it.
+  const cachedById = new Map(
+    (options?.getAppDocs
+      ? normalizeCountryOnAppDocs(country, await options.getAppDocs(topIds))
+      : []
+    ).map((doc) => [doc.appId, doc] as const)
+  );
+  const expiresAt = computeAppExpiryIsoForApp();
+  const appDocs: AsoAppDoc[] = normalizeCountryOnAppDocs(
+    country,
+    topIds
+      .map((id): AsoAppDoc | null => {
+        const fresh = lookupById.get(id);
+        if (!fresh) return null;
+        const cached = cachedById.get(id);
+        return {
+          ...fresh,
+          ...(fresh.subtitle || !cached?.subtitle ? {} : { subtitle: cached.subtitle }),
+          ...(cached?.additionalLocalizations
+            ? { additionalLocalizations: cached.additionalLocalizations }
+            : {}),
+          ...(fresh.icon || !cached?.icon ? {} : { icon: cached.icon }),
+          expiresAt,
+        };
+      })
+      .filter((doc): doc is AsoAppDoc => doc != null)
+  );
+
+  const difficultyScore = calculateRatingDifficulty({
+    topRatingCounts: topIds.map((id) => lookupById.get(id)?.userRatingCount ?? 0),
+    resultCount: appCount,
+  });
+
+  const docsForMatch = orderedAppIds
+    .slice(0, TOP_DIFFICULTY_DOC_LIMIT)
+    .map((id) => appDocs.find((doc) => doc.appId === id))
+    .filter((doc): doc is AsoAppDoc => doc != null);
+
+  logger.debug("[aso-enrichment] enrich result", {
+    keyword: params.keyword,
+    country,
+    mode: "ratings",
+    appCount,
+    topLookedUp: lookupById.size,
+    difficultyScore,
+  });
+
+  return {
+    keyword: params.keyword,
+    normalizedKeyword,
+    popularity: params.popularity,
+    difficultyScore,
+    minDifficultyScore: difficultyScore,
+    isBrandKeyword: detectIsBrandKeyword(params.keyword, docsForMatch),
+    appCount,
+    keywordMatch: detectTopKeywordMatchType(docsForMatch, params.keyword),
+    orderedAppIds,
+    appDocs,
+  };
+}
+
+async function enrichKeywordLegacy(
+  params: EnrichKeywordParams,
+  options?: EnrichKeywordOptions
+): Promise<EnrichKeywordResult> {
   const country = params.country.toUpperCase();
   const normalizedKeyword = normalizeKeyword(params.keyword);
   let orderedAppIds: string[] = [];

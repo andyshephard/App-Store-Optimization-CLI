@@ -20,6 +20,7 @@ export const ASO_DEFAULTS = {
   rateLimitBaseDelayMs: 5000,
   retryJitterFactor: 0.1,
   keywordEnrichmentConcurrency: 4,
+  enrichmentMode: "ratings" as "ratings" | "legacy",
   alertEmailFrom: "keywords@chunks.app",
   refreshDailyAt: null as string | null,
   refreshTimeZone: "UTC",
@@ -47,6 +48,12 @@ export type AsoEnvConfig = {
   rateLimitBaseDelayMs: number;
   retryJitterFactor: number;
   keywordEnrichmentConcurrency: number;
+  /**
+   * "ratings" (default): MZSearch order + one batched iTunes lookup, difficulty
+   * from top-10 rating counts (aso-rating-difficulty.ts). "legacy": the
+   * search-page + app-page + localized-page path with aso-difficulty.ts.
+   */
+  enrichmentMode: "ratings" | "legacy";
   /** Daily wall-clock time ("HH:MM") to run the refresh; null disables it. */
   refreshDailyAt: string | null;
   /** IANA timezone the daily time is interpreted in. */
@@ -192,6 +199,10 @@ function readAsoEnv(
       env.ASO_KEYWORD_ENRICHMENT_CONCURRENCY,
       ASO_DEFAULTS.keywordEnrichmentConcurrency
     ),
+    enrichmentMode:
+      parseTrimmed(env.ASO_ENRICHMENT_MODE)?.toLowerCase() === "legacy"
+        ? "legacy"
+        : ASO_DEFAULTS.enrichmentMode,
     refreshDailyAt: parseTrimmed(env.ASO_REFRESH_DAILY_AT),
     refreshTimeZone:
       parseTrimmed(env.ASO_REFRESH_TIMEZONE) ?? ASO_DEFAULTS.refreshTimeZone,

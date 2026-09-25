@@ -205,7 +205,7 @@ function parseItunesLookupResult(
   };
 }
 
-async function fetchItunesLookupAppDocs(params: {
+export async function fetchItunesLookupAppDocs(params: {
   country: string;
   appIds: string[];
 }): Promise<Map<string, AsoAppDoc>> {

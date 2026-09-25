@@ -5,7 +5,10 @@ import {
   refreshKeywordOrder,
 } from "./aso-enrichment-service";
 import { asoAppleGet } from "./aso-apple-client";
-import { fetchAppStoreLookupAppDocs } from "./aso-app-doc-service";
+import {
+  fetchAppStoreLookupAppDocs,
+  fetchItunesLookupAppDocs,
+} from "./aso-app-doc-service";
 import { fetchAppStoreAdditionalLocalizations } from "./aso-app-store-details";
 import { logger } from "../../../utils/logger";
 
@@ -15,6 +18,7 @@ jest.mock("./aso-apple-client", () => ({
 
 jest.mock("./aso-app-doc-service", () => ({
   fetchAppStoreLookupAppDocs: jest.fn(),
+  fetchItunesLookupAppDocs: jest.fn(),
 }));
 
 jest.mock("./aso-app-store-details", () => ({
@@ -40,6 +44,7 @@ jest.mock("../../../utils/logger", () => ({
 
 const mockedAsoAppleGet = jest.mocked(asoAppleGet);
 const mockedFetchAppStoreLookupAppDocs = jest.mocked(fetchAppStoreLookupAppDocs);
+const mockedFetchItunesLookupAppDocs = jest.mocked(fetchItunesLookupAppDocs);
 const mockedFetchAppStoreAdditionalLocalizations = jest.mocked(
   fetchAppStoreAdditionalLocalizations
 );
@@ -117,6 +122,7 @@ function buildCompleteCachedTopDocs(
 
 describe("aso-enrichment-service", () => {
   beforeEach(() => {
+    process.env.ASO_ENRICHMENT_MODE = "legacy";
     jest.clearAllMocks();
     __resetIncompleteTopDocLookupCooldownForTests();
     mockedFetchAppStoreAdditionalLocalizations.mockResolvedValue({});
@@ -1039,5 +1045,108 @@ describe("aso-enrichment-service", () => {
     );
 
     expect(result.isBrandKeyword).toBe(false);
+  });
+});
+
+describe("aso-enrichment-service (ratings mode)", () => {
+  function mzsearch(ids: string[]) {
+    return {
+      data: {
+        pageData: {
+          bubbles: [{ name: "software", results: ids.map((id) => ({ id })) }],
+        },
+      },
+    } as never;
+  }
+
+  function itunesDocs(counts: Record<string, number>, publisher?: Record<string, string>) {
+    return new Map(
+      Object.entries(counts).map(([appId, userRatingCount]) => [
+        appId,
+        {
+          appId,
+          country: "US",
+          name: `App ${appId}`,
+          publisherName: publisher?.[appId] ?? `Publisher ${appId}`,
+          averageUserRating: 4.5,
+          userRatingCount,
+          releaseDate: "2020-01-01",
+          currentVersionReleaseDate: "2026-01-01",
+        },
+      ])
+    );
+  }
+
+  beforeEach(() => {
+    delete process.env.ASO_ENRICHMENT_MODE;
+    jest.clearAllMocks();
+  });
+
+  it("orders from MZSearch, looks up only the top 10 and scores difficulty from their ratings", async () => {
+    const ids = Array.from({ length: 240 }, (_, i) => String(i + 1));
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch(ids));
+    const counts = Object.fromEntries(ids.slice(0, 10).map((id) => [id, 100000]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(itunesDocs(counts) as never);
+
+    const result = await enrichKeyword({ keyword: "budget", country: "US", popularity: 40 });
+
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(1);
+    expect(mockedFetchItunesLookupAppDocs).toHaveBeenCalledWith({
+      country: "US",
+      appIds: ids.slice(0, 10),
+    });
+    expect(mockedFetchAppStoreLookupAppDocs).not.toHaveBeenCalled();
+    expect(mockedFetchAppStoreAdditionalLocalizations).not.toHaveBeenCalled();
+    expect(result.appCount).toBe(240);
+    expect(result.orderedAppIds).toHaveLength(240);
+    expect(result.appDocs.map((doc) => doc.appId)).toEqual(ids.slice(0, 10));
+    expect(result.difficultyScore).toBeGreaterThan(50);
+    expect(result.difficultyScore).toBe(result.minDifficultyScore);
+  });
+
+  it("keeps a cached subtitle, which iTunes lookup does not return", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch(["1", "2"]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(itunesDocs({ "1": 10, "2": 20 }) as never);
+
+    const result = await enrichKeyword(
+      { keyword: "budget", country: "US", popularity: 40 },
+      {
+        getAppDocs: async () => [
+          {
+            appId: "1",
+            country: "US",
+            name: "Old",
+            subtitle: "Budget planner",
+            averageUserRating: 4,
+            userRatingCount: 5,
+          },
+        ],
+      }
+    );
+
+    expect(result.appDocs[0]).toEqual(
+      expect.objectContaining({ name: "App 1", subtitle: "Budget planner", userRatingCount: 10 })
+    );
+  });
+
+  it("fails as insufficient docs when the lookup returns none of the top apps", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch(["1", "2", "3"]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(new Map() as never);
+
+    await expect(
+      enrichKeyword({ keyword: "budget", country: "US", popularity: 40 })
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_DOCS" });
+  });
+
+  it("recomputes difficulty when only the order is refreshed", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch(["1", "2", "3"]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(
+      itunesDocs({ "1": 1_000_000, "2": 1_000_000, "3": 1_000_000 }) as never
+    );
+
+    const result = await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(result.orderedAppIds).toEqual(["1", "2", "3"]);
+    expect(typeof result.difficultyScore).toBe("number");
   });
 });
