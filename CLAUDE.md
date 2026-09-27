@@ -206,6 +206,27 @@ Known follow-up, not done:
    those storefronts, which is what trips the block. CA carries `["fr-CA"]`
    deliberately (Apple serves real French metadata there).
 
+## Deployment-specific additions (2026-09-25 → 27)
+
+Features added for the Chunks deployment; details in `docs/`:
+
+- **Ratings mode** (`ASO_ENRICHMENT_MODE`, default `ratings`): MZSearch order
+  (~250 results) + one batched iTunes lookup for the top 10; difficulty from
+  top-10 rating counts, fitted to Astro (`aso-rating-difficulty.ts`,
+  `docs/aso-difficulty-model.md`). `legacy` restores the search-page path.
+- **Popularity floor fill:** when the legacy endpoint returns 5, the latest
+  MONTHLY Ads Platform insights figure is used if Apple has one.
+- **Autocomplete demand** (`services/keywords/autocomplete-demand-service.ts`,
+  table `aso_keyword_autocomplete`): fewest letters typed before App Store
+  search suggests a keyword (MZSearchHints, plist). `POST
+  /api/aso/autocomplete/refresh` (weekly, single-flight), `GET
+  /api/aso/autocomplete`.
+- **`GET /api/aso/position-history`**: daily rank export for the warehouse;
+  position history retained 730 days; Astro history imported via
+  `scripts/astro/`.
+- **Rate-limit hardening:** host-wide throttle gate in `aso-apple-client.ts`,
+  bounded localized fetches, 403 on app-lookup treated as throttle.
+
 ## Apple Ads Platform API (popularity source)
 
 The official Apple Ads Platform API (`api.ads.apple.com/v1`, OAuth2, released
