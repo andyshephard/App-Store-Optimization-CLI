@@ -8,6 +8,11 @@ import {
 } from "../db/owned-apps";
 import { listKeywords } from "../db/aso-keywords";
 import { listDailyPositionHistory } from "../db/app-keyword-position-history";
+import { listKeywordAutocomplete } from "../db/aso-keyword-autocomplete";
+import {
+  isAutocompleteRefreshRunning,
+  refreshAutocomplete,
+} from "../services/keywords/autocomplete-demand-service";
 import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
   clearReauthenticationAlertState,
@@ -740,6 +745,30 @@ export function createServerRequestHandler(): http.RequestListener {
 
       if (req.method === "GET" && pathname === "/api/aso/position-history") {
         handleApiAsoPositionHistoryGet(res, query);
+        return;
+      }
+
+      // Autocomplete demand signal. POST starts a background refresh of
+      // keywords not checked in 7 days (single-flight); GET returns results.
+      if (req.method === "POST" && pathname === "/api/aso/autocomplete/refresh") {
+        const country = (query.country || "US").toUpperCase();
+        const alreadyRunning = isAutocompleteRefreshRunning();
+        if (!alreadyRunning) {
+          void refreshAutocomplete(country).then(
+            (r) => logger.info(`[autocomplete] ${country}: checked ${r.checked}, suggested ${r.suggested}`),
+            (e) => logger.error(`[autocomplete] ${country} failed: ${String(e)}`)
+          );
+        }
+        sendJson(res, 202, { success: true, data: { country, started: !alreadyRunning } });
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/aso/autocomplete") {
+        const country = (query.country || "US").toUpperCase();
+        sendJson(res, 200, {
+          success: true,
+          data: { country, running: isAutocompleteRefreshRunning(), items: listKeywordAutocomplete(country) },
+        });
         return;
       }
 

@@ -122,6 +122,15 @@ function initializeDatabase(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_app_keyword_position_history_lookup
       ON app_keyword_position_history(country, app_id, keyword, captured_at);
 
+    CREATE TABLE IF NOT EXISTS aso_keyword_autocomplete (
+      country TEXT NOT NULL,
+      normalized_keyword TEXT NOT NULL,
+      letters_needed INTEGER,
+      hint_rank INTEGER,
+      checked_at TEXT NOT NULL,
+      PRIMARY KEY (country, normalized_keyword)
+    );
+
     CREATE TABLE IF NOT EXISTS aso_keyword_popularity_history (
       country TEXT NOT NULL,
       normalized_keyword TEXT NOT NULL,

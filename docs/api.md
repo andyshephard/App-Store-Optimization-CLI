@@ -240,6 +240,21 @@ history imported from Astro (`scripts/astro/`).
 below ~10 come from MZSearch order and are approximate (see
 `docs/aso-difficulty-model.md`).
 
+## `POST /api/aso/autocomplete/refresh` · `GET /api/aso/autocomplete`
+
+Autocomplete demand signal. POST starts a background job (single-flight,
+returns 202 at once) that re-measures tracked keywords not checked in 7
+days: for each, the fewest letters typed (from 2) before App Store search
+suggests the term, and its position in the suggestions (MZSearchHints). GET
+returns the stored results:
+
+```json
+{"success":true,"data":{"country":"US","running":false,"items":[{"country":"US","keyword":"stoicism","lettersNeeded":4,"hintRank":3,"checkedAt":"2026-09-27T12:00:00.000Z"}]}}
+```
+
+`lettersNeeded: null` = never suggested. Use it where Apple's popularity is 5
+(no data): a term suggested within a few letters is genuinely searched.
+
 ## `GET /api/aso/storefronts`
 
 Enabled storefronts. Pure read. Use it to drive a per-country loop rather than
