@@ -224,6 +224,9 @@ Features added for the Chunks deployment; details in `docs/`:
 - **`GET /api/aso/position-history`**: daily rank export for the warehouse;
   position history retained 730 days; Astro history imported via
   `scripts/astro/`.
+- **Session keeper** (`dashboard-server/session-keeper.ts`): re-authenticates
+  every 6h with env credentials; never blocks on 2FA (records needsTwoFactor
+  and sends the re-auth alert). `POST /api/aso/session/check`.
 - **Rate-limit hardening:** host-wide throttle gate in `aso-apple-client.ts`,
   bounded localized fetches, 403 on app-lookup treated as throttle.
 
