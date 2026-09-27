@@ -59,6 +59,8 @@ import {
 } from "./http-utils";
 import { enforceRequestAuth } from "./request-auth";
 import { createRefreshScheduler } from "./refresh-scheduler";
+import { createSessionKeeper } from "./session-keeper";
+import { hasEnvAppleCredentials } from "../services/auth/aso-keychain-service";
 import { closeDb } from "../db/store";
 import { shutdownPostHog } from "../services/telemetry/posthog-usage-tracking";
 import {
@@ -203,6 +205,20 @@ const startupRefreshManager = createStartupRefreshManager({
     });
   },
   onRunHealthy: () => clearReauthenticationAlertState(),
+});
+
+/**
+ * Re-authenticates Apple silently every 6 hours (see session-keeper.ts), so
+ * popularity never waits on a human while the 2FA trust cookie lasts.
+ * Only runs with ASO_APPLE_ID/ASO_APPLE_PASSWORD in the environment.
+ */
+const sessionKeeper = createSessionKeeper({
+  reAuthenticate: (options) => asoAuthService.reAuthenticate(options as never),
+  onNeedsTwoFactor: (detail) => {
+    void sendReauthenticationAlert({ detail }).then((outcome) => {
+      logger.debug(`[aso-dashboard] session-keeper alert ${outcome}`);
+    });
+  },
 });
 
 /**
@@ -387,7 +403,10 @@ const appsHandlers = createAppsHandlers({
 });
 
 function handleApiAsoAuthStatusGet(res: http.ServerResponse): void {
-  sendJson(res, 200, { success: true, data: getDashboardAuthState() });
+  sendJson(res, 200, {
+    success: true,
+    data: { ...getDashboardAuthState(), sessionKeeper: sessionKeeper.getState() },
+  });
 }
 
 function handleApiAsoSetupStatusGet(res: http.ServerResponse): void {
@@ -763,6 +782,11 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
+      if (req.method === "POST" && pathname === "/api/aso/session/check") {
+        sendJson(res, 200, { success: true, data: await sessionKeeper.check() });
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/aso/autocomplete") {
         const country = (query.country || "US").toUpperCase();
         sendJson(res, 200, {
@@ -1064,6 +1088,7 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
 
     registerShutdownHandlers(server);
     refreshScheduler.start();
+    if (hasEnvAppleCredentials()) sessionKeeper.start();
 
     server.listen(dashboardPort, dashboardHost, () => {
       const address = server.address();
