@@ -2,7 +2,10 @@ import { logger } from "../../utils/logger";
 import { asoPopularityService } from "./aso-popularity-service";
 import type { FailedKeyword } from "./aso-types";
 import { isAppleAdsApiConfigured } from "../apple-ads-api/apple-ads-api-config";
-import { fetchSearchTermPopularitySnapshots } from "../apple-ads-api/search-term-popularity-service";
+import {
+  fetchMonthlyPopularity,
+  fetchSearchTermPopularitySnapshots,
+} from "../apple-ads-api/search-term-popularity-service";
 import { keywordWriteRepository } from "./keyword-write-repository";
 import { ASO_ENV } from "../../shared/aso-env";
 
@@ -186,5 +189,26 @@ async function fetchLegacyWithAdsApiHistory(
     popularities[failed.keyword] = snapshot.popularity;
     return false;
   });
+
+  // The legacy endpoint answers 5 (its floor) for many terms that do have
+  // demand. Where Apple's monthly insights have a figure, use it instead
+  // (decided 2026-09-27; docs/aso-difficulty-model.md).
+  const atFloor = Object.entries(popularities)
+    .filter(([, value]) => value <= LEGACY_POPULARITY_FLOOR)
+    .map(([keyword]) => keyword);
+  if (atFloor.length > 0) {
+    try {
+      const monthly = await fetchMonthlyPopularity(country, atFloor);
+      for (const [keyword, { popularity }] of monthly) {
+        if (popularity > LEGACY_POPULARITY_FLOOR) popularities[keyword] = popularity;
+      }
+    } catch (error) {
+      logger.debug(
+        `[aso-popularity-source] monthly popularity skipped for ${country}: ${String(error)}`
+      );
+    }
+  }
   return { popularities, failedKeywords };
 }
+
+const LEGACY_POPULARITY_FLOOR = 5;

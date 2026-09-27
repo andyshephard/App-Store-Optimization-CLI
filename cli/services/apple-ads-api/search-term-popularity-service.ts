@@ -189,3 +189,51 @@ export async function fetchSearchTermPopularitySnapshots(
   );
   return snapshots;
 }
+
+/**
+ * Latest MONTHLY country-wide popularity (1-100) per keyword. Used when the
+ * legacy endpoint returns its floor of 5: the monthly figure matched Astro
+ * where the weekly one didn't (anatomy: monthly 55 = Astro 55, weekly 53).
+ * Same coverage limit as the weekly data: only terms in some genre's top
+ * chart exist; others are simply absent from the map.
+ */
+export async function fetchMonthlyPopularity(
+  country: string,
+  keywords: string[],
+  options: { nowMs?: number } = {}
+): Promise<Map<string, { popularity: number; month: string }>> {
+  const nowMs = options.nowMs ?? Date.now();
+  const storefront = country.toUpperCase();
+  const normalizedToOriginal = new Map<string, string>();
+  for (const keyword of keywords) {
+    normalizedToOriginal.set(normalizeKeyword(keyword), keyword);
+  }
+  const terms = [...normalizedToOriginal.keys()];
+  const out = new Map<string, { popularity: number; month: string }>();
+  // Three months back always contains the latest complete published month.
+  const start = isoDate(new Date(nowMs - 92 * 24 * 60 * 60 * 1000));
+  const end = isoDate(new Date(nowMs));
+  for (let i = 0; i < terms.length; i += SEARCH_TERM_BATCH_SIZE) {
+    const batch = terms.slice(i, i + SEARCH_TERM_BATCH_SIZE);
+    const response = await appleAdsApiPost<{
+      result: { rows: Array<SearchTermPopularityRow & { month?: string }> } | null;
+    }>(INSIGHTS_PATH, {
+      filters: [
+        { field: "countryOrRegion", operator: "EQUALS", value: storefront },
+        { field: "searchTerm", operator: "IN", value: batch },
+      ],
+      timeRange: { start, end, granularity: "MONTHLY" },
+      pagination: { offset: 0, pageSize: PAGE_SIZE },
+    });
+    for (const row of response.result?.rows ?? []) {
+      const original = normalizedToOriginal.get(normalizeKeyword(row.searchTerm));
+      const month = row.month ?? "";
+      if (!original || !month) continue;
+      const existing = out.get(original);
+      if (!existing || month > existing.month) {
+        out.set(original, { popularity: row.searchPopularity1to100, month });
+      }
+    }
+  }
+  return out;
+}

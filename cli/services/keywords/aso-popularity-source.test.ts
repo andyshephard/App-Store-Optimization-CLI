@@ -1,7 +1,10 @@
 import { fetchKeywordPopularitiesPreferringAdsApi } from "./aso-popularity-source";
 import { asoPopularityService } from "./aso-popularity-service";
 import { isAppleAdsApiConfigured } from "../apple-ads-api/apple-ads-api-config";
-import { fetchSearchTermPopularitySnapshots } from "../apple-ads-api/search-term-popularity-service";
+import {
+  fetchMonthlyPopularity,
+  fetchSearchTermPopularitySnapshots,
+} from "../apple-ads-api/search-term-popularity-service";
 import { keywordWriteRepository } from "./keyword-write-repository";
 
 jest.mock("./aso-popularity-service", () => ({
@@ -15,6 +18,7 @@ jest.mock("../apple-ads-api/apple-ads-api-config", () => ({
 }));
 jest.mock("../apple-ads-api/search-term-popularity-service", () => ({
   fetchSearchTermPopularitySnapshots: jest.fn(),
+  fetchMonthlyPopularity: jest.fn(async () => new Map()),
 }));
 jest.mock("./keyword-write-repository", () => ({
   keywordWriteRepository: {
@@ -25,6 +29,7 @@ jest.mock("./keyword-write-repository", () => ({
 const mockLegacy = asoPopularityService.fetchKeywordPopularitiesWithFailures as jest.Mock;
 const mockConfigured = isAppleAdsApiConfigured as jest.Mock;
 const mockSnapshots = fetchSearchTermPopularitySnapshots as jest.Mock;
+const mockMonthly = fetchMonthlyPopularity as jest.Mock;
 const mockPersistHistory =
   keywordWriteRepository.persistPopularityHistory as jest.Mock;
 
@@ -219,5 +224,33 @@ describe("fetchKeywordPopularitiesPreferringAdsApi (legacy source, the default)"
 
     await expect(fetchKeywordPopularitiesPreferringAdsApi("US", ["a"])).rejects.toBe(reauth);
     expect(mockSnapshots).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchKeywordPopularitiesPreferringAdsApi (floor values)", () => {
+  beforeEach(() => {
+    delete process.env.ASO_POPULARITY_SOURCE;
+    jest.clearAllMocks();
+    mockConfigured.mockReturnValue(true);
+    mockSnapshots.mockResolvedValue(new Map());
+  });
+
+  it("replaces the legacy floor of 5 with Apple's monthly figure where one exists", async () => {
+    mockLegacy.mockResolvedValue({ popularities: { anatomy: 5, stoicism: 5, deepstash: 64 }, failedKeywords: [] });
+    mockMonthly.mockResolvedValue(new Map([["anatomy", { popularity: 55, month: "2026-08" }]]));
+
+    const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["anatomy", "stoicism", "deepstash"]);
+
+    expect(mockMonthly).toHaveBeenCalledWith("US", ["anatomy", "stoicism"]);
+    expect(result.popularities).toEqual({ anatomy: 55, stoicism: 5, deepstash: 64 });
+  });
+
+  it("keeps the floor when the monthly lookup fails", async () => {
+    mockLegacy.mockResolvedValue({ popularities: { anatomy: 5 }, failedKeywords: [] });
+    mockMonthly.mockRejectedValue(new Error("insights down"));
+
+    const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["anatomy"]);
+
+    expect(result.popularities).toEqual({ anatomy: 5 });
   });
 });

@@ -53,3 +53,12 @@ insights data), so Astro's source for the rest is unknown.
 
 We keep Apple's 5 and treat it as "no data" rather than backfilling from
 another source. Expect Astro to show higher popularity for these keywords.
+
+**Update 2026-09-27 — monthly fill.** When the legacy endpoint returns 5, the
+latest MONTHLY `searchPopularity1to100` from the Ads Platform API insights is
+used if Apple has one (`fetchMonthlyPopularity`). It matched Astro on anatomy
+(55; weekly said 53). Coverage is limited to terms in some genre's top chart,
+so mid-tail terms (stoicism, mythology) stay at 5. Probes that day ruled out
+batch size, storefront and adamId as causes; Astro returns 5 for brand-new
+terms too, which suggests it serves its own stored values for terms it has
+seen before rather than calling a different Apple endpoint.
