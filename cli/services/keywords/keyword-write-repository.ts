@@ -14,6 +14,7 @@ import {
 } from "../../db/app-keyword-position-history";
 import { upsertKeywordPopularityHistoryPoints } from "../../db/aso-keyword-popularity-history";
 import { getMetadataValue, setMetadataValue } from "../../db/metadata";
+import { withTransaction } from "../../db/store";
 import {
   computeOrderExpiryIso,
   computePopularityExpiryIso,
@@ -148,6 +149,16 @@ export class KeywordWriteRepository {
     options: { recordPositions?: boolean } = {}
   ): void {
     if (items.length === 0) return;
+    // One commit for the batch's keyword rows, previous positions, history
+    // points and observations, instead of one per statement.
+    withTransaction(() => this.upsertKeywordItemsInTransaction(country, items, options));
+  }
+
+  private upsertKeywordItemsInTransaction(
+    country: string,
+    items: KeywordWriteItem[],
+    options: { recordPositions?: boolean }
+  ): void {
     const recordPositions = options.recordPositions !== false;
 
     const now = new Date();

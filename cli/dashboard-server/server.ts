@@ -97,7 +97,7 @@ import { enforceRequestAuth } from "./request-auth";
 import { createRefreshScheduler } from "./refresh-scheduler";
 import { createSessionKeeper } from "./session-keeper";
 import { hasEnvAppleCredentials } from "../services/auth/aso-keychain-service";
-import { closeDb } from "../db/store";
+import { closeDb, optimizeDb } from "../db/store";
 import { shutdownPostHog } from "../services/telemetry/posthog-usage-tracking";
 import {
   resolveStaticPath,
@@ -245,6 +245,8 @@ const startupRefreshManager = createStartupRefreshManager({
   },
   onRunHealthy: () => clearReauthenticationAlertState(),
   onRunFinished: () => {
+    // Runs are daily, so this keeps planner statistics fresh daily.
+    optimizeDb();
     void evaluateHealthAlerts();
   },
   recorder: {

@@ -12,6 +12,7 @@ import {
 import { getMetadataValue, setMetadataValue } from "../../db/metadata";
 import { insertKeywordObservations } from "../../db/keyword-observations";
 import { withObservationRun } from "./observation-context";
+import { withTransaction } from "../../db/store";
 
 jest.mock("../../db/aso-keywords", () => ({
   getKeywords: jest.fn(() => []),
@@ -26,6 +27,10 @@ jest.mock("../../db/app-keywords", () => ({
 jest.mock("../../db/app-keyword-position-history", () => ({
   insertAppKeywordPositionHistoryPoints: jest.fn(),
   pruneAppKeywordPositionHistoryBefore: jest.fn(() => 0),
+}));
+
+jest.mock("../../db/store", () => ({
+  withTransaction: jest.fn((fn: () => unknown) => fn()),
 }));
 
 jest.mock("../../db/keyword-observations", () => ({
@@ -338,5 +343,13 @@ describe("upsertPopularityOnly", () => {
       ).not.toThrow();
       expect(mockUpsertKeywords).toHaveBeenCalled();
     });
+  });
+
+  it("writes a batch in one transaction", () => {
+    new KeywordWriteRepository().upsertKeywordItems("GB", [
+      { keyword: "a", popularity: 1, difficultyScore: 1, minDifficultyScore: 1, appCount: 1, keywordMatch: "none", orderedAppIds: [] },
+      { keyword: "b", popularity: 1, difficultyScore: 1, minDifficultyScore: 1, appCount: 1, keywordMatch: "none", orderedAppIds: [] },
+    ]);
+    expect(jest.mocked(withTransaction)).toHaveBeenCalledTimes(1);
   });
 });

@@ -107,6 +107,15 @@ function applyVersionedMigrations(database: Database.Database): void {
 function initializeDatabase(database: Database.Database): void {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  // WAL + NORMAL is durable across process crashes (only an OS crash or power
+  // loss can drop the last commits) and avoids an fsync per write.
+  database.pragma("synchronous = NORMAL");
+  // The dashboard and the background crawl share the file; wait briefly for a
+  // lock instead of failing with SQLITE_BUSY.
+  database.pragma("busy_timeout = 5000");
+  database.pragma("temp_store = MEMORY");
+  // 16 MB page cache (negative = KiB).
+  database.pragma("cache_size = -16000");
   database.exec(`
     CREATE TABLE IF NOT EXISTS owned_apps (
       id TEXT PRIMARY KEY,
@@ -286,8 +295,27 @@ export function getDb(): Database.Database {
  * WAL means an abrupt kill is not corrupting, so this is about leaving a tidy
  * single file behind on shutdown rather than about durability.
  */
+/**
+ * Runs `fn` in one transaction (a savepoint when already inside one), so a
+ * batch of writes costs one commit instead of one per statement.
+ */
+export function withTransaction<T>(fn: () => T): T {
+  return getDb().transaction(fn)();
+}
+
+/** Lets SQLite refresh its planner statistics. Cheap; run daily and on close. */
+export function optimizeDb(): void {
+  if (!db) return;
+  try {
+    db.pragma("optimize");
+  } catch {
+    // Statistics only; never worth failing for.
+  }
+}
+
 export function closeDb(): void {
   if (!db) return;
+  optimizeDb();
   try {
     db.pragma("wal_checkpoint(TRUNCATE)");
   } catch {

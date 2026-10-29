@@ -61,6 +61,15 @@ describe("refresh-runs", () => {
     delete process.env.ASO_DB_PATH;
   });
 
+  it("opens with the performance pragmas", () => {
+    const db = getDb();
+    expect(db.pragma("synchronous", { simple: true })).toBe(1); // NORMAL
+    expect(db.pragma("busy_timeout", { simple: true })).toBe(5000);
+    expect(db.pragma("temp_store", { simple: true })).toBe(2); // MEMORY
+    expect(db.pragma("cache_size", { simple: true })).toBe(-16000);
+    expect(db.pragma("journal_mode", { simple: true })).toBe("wal");
+  });
+
   it("stamps the schema version on a new database", () => {
     expect(getDb().pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
   });

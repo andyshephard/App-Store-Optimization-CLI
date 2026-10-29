@@ -162,6 +162,8 @@ jest.mock("../db/store", () => ({
       run: jest.fn(),
     })),
   })),
+  optimizeDb: jest.fn(),
+  closeDb: jest.fn(),
 }));
 
 jest.mock("./owned-app-details", () => ({
