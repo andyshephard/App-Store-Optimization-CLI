@@ -24,6 +24,8 @@ export const READ_TOKEN_PATHS = new Set([
   "/api/aso/health",
   "/api/aso/v1/observations",
   "/api/aso/storefronts",
+  // In-memory login state and session-keeper state: no database, no Apple.
+  "/api/aso/auth/status",
 ]);
 
 function digest(value: string): Buffer {

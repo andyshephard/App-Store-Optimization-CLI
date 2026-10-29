@@ -31,8 +31,8 @@ In n8n use a **Header Auth** credential (`Authorization` / `Bearer <token>`).
 `ASO_API_TOKEN`) to give a consumer that only reads a token that can do
 nothing else. It may only `GET` these pure database reads:
 `/api/aso/keywords`, `/api/aso/position-history`, `/api/aso/autocomplete`,
-`/api/aso/refresh-status`, `/api/aso/health`, `/api/aso/v1/observations` and
-`/api/aso/storefronts`. Anything else with it - a write, the dashboard, an
+`/api/aso/refresh-status`, `/api/aso/health`, `/api/aso/v1/observations`,
+`/api/aso/storefronts` and `/api/aso/auth/status`. Anything else with it - a write, the dashboard, an
 endpoint that calls Apple - is `403 AUTHORIZATION_FAILED`. The full token keeps
 working everywhere.
 
@@ -352,9 +352,9 @@ hardcoding the list.
 
 Unauthenticated. Static `{"success":true}`, no database access. Liveness only:
 they answer whenever the event loop does, including while every storefront has
-silently stopped refreshing. Docker's `HEALTHCHECK` uses `/health`; `/livez` is
-the same response under a name that says what it is. For "is the data
-current?" use `/api/aso/health`.
+silently stopped refreshing. Docker's `HEALTHCHECK` uses `/livez` (via bash
+`/dev/tcp`); `/health` is the same response, kept for existing probes. For "is
+the data current?" use `/api/aso/health`.
 
 ## `GET /api/aso/health`
 

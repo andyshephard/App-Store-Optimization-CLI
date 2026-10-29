@@ -575,6 +575,7 @@ describe("dashboard server routes", () => {
           "/api/aso/storefronts",
           "/api/aso/v1/observations",
           "/api/aso/autocomplete",
+          "/api/aso/auth/status",
         ]) {
           const response = await request({ method: "GET", path, headers: auth(READ) });
           expect([path, response.statusCode]).toEqual([path, 200]);
