@@ -113,31 +113,42 @@ export function isAsoAuthReauthRequiredError(error: unknown): boolean {
 /** Any common term works; only the auth outcome of the call matters. */
 const SESSION_PROBE_TERM = "music";
 
+export type SessionProbeResult = "ok" | "rejected" | "unknown";
+
 /**
  * One cheap popularity request with the stored cookies, no reauthentication
- * and no retries. True when Apple accepted the session.
+ * and no retries.
+ *
+ * - "ok": Apple accepted the session.
+ * - "rejected": no cookies, or Apple answered with an auth failure - a login
+ *   is what fixes it.
+ * - "unknown": throttled (429), 5xx, an unexpected business error, or the
+ *   request failed outright. A login would not help and adds load, so the
+ *   caller should simply try again next cycle.
  *
  * The session keeper used to run a full SRP login every six hours just to
  * learn whether the session was alive. A login is many requests, can trip
- * Apple's anti-abuse checks, and rotates the cookies under a running crawl;
- * a single popularity call answers the same question.
+ * Apple's anti-abuse checks, and rotates the cookies under a running crawl.
  */
-export async function probeAsoPopularitySession(): Promise<boolean> {
+export async function probeAsoPopularitySession(): Promise<SessionProbeResult> {
   const cookieHeader = asoAuthService.getCookieHeader(APPLE_POPULARITY_URL);
-  if (!cookieHeader.trim()) return false;
+  if (!cookieHeader.trim()) return "rejected";
   const adamId = getConfiguredAsoAdamId();
-  if (!adamId) return false;
-  const response = await requestPopularitiesWithKwsRetry(
-    [SESSION_PROBE_TERM],
-    cookieHeader,
-    adamId,
-    { maxAttempts: 1 }
-  );
-  return (
-    response.statusCode >= 200 &&
-    response.statusCode < 300 &&
-    !isAuthFailure(response.statusCode, response.data)
-  );
+  if (!adamId) return "unknown";
+  let response: { statusCode: number; data: PopularityResponse };
+  try {
+    response = await requestPopularitiesWithKwsRetry(
+      [SESSION_PROBE_TERM],
+      cookieHeader,
+      adamId,
+      { maxAttempts: 1 }
+    );
+  } catch {
+    return "unknown";
+  }
+  if (isAuthFailure(response.statusCode, response.data)) return "rejected";
+  if (response.statusCode >= 200 && response.statusCode < 300) return "ok";
+  return "unknown";
 }
 
 function sanitizeKeyword(keyword: string): string {

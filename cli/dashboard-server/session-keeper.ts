@@ -26,10 +26,11 @@ export type SessionKeeperState = {
 type Deps = {
   /**
    * Cheap check that the stored session still works (one popularity call).
-   * Resolves true when it does, in which case no login is attempted. Optional
-   * so existing callers keep the login-every-check behaviour.
+   * "ok": no login. "rejected": log in. "unknown" (throttled, 5xx, timeout):
+   * do nothing and try again next cycle - a login would not help. Optional so
+   * existing callers keep the login-every-check behaviour.
    */
-  probe?: () => Promise<boolean>;
+  probe?: () => Promise<"ok" | "rejected" | "unknown">;
   /** True while a human-driven login is in progress; the keeper stays out of its way. */
   isAuthInProgress?: () => boolean;
   reAuthenticate: (options: {
@@ -94,19 +95,26 @@ export function createSessionKeeper(deps: Deps) {
     }
     state.lastCheckAt = now().toISOString();
     if (deps.probe) {
+      let outcome: "ok" | "rejected" | "unknown";
+      let detail = "";
       try {
-        if (await withTimeout(deps.probe())) {
-          markHealthy("probe");
-          return { ...state };
-        }
-        logger.info("[session-keeper] session probe rejected; logging in again");
+        outcome = await withTimeout(deps.probe());
       } catch (error) {
-        logger.warn(
-          `[session-keeper] session probe failed (${String(
-            error instanceof Error ? error.message : error
-          ).slice(0, 200)}); logging in again`
-        );
+        outcome = "unknown";
+        detail = String(error instanceof Error ? error.message : error).slice(0, 200);
       }
+      if (outcome === "ok") {
+        markHealthy("probe");
+        return { ...state };
+      }
+      if (outcome === "unknown") {
+        // Throttled, 5xx or timed out: says nothing about the session, and a
+        // login would only add load. Keep the last known state; retry later.
+        state.lastError = `session probe inconclusive${detail ? `: ${detail}` : ""}`;
+        logger.warn(`[session-keeper] ${state.lastError}; will retry next cycle`);
+        return { ...state };
+      }
+      logger.info("[session-keeper] session probe rejected; logging in again");
     }
     try {
       const attempt = deps.reAuthenticate({

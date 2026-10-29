@@ -2,6 +2,7 @@ import { jest } from "@jest/globals";
 import {
   asoPopularityService,
   resetUnattendedReauthCooldown,
+  probeAsoPopularitySession,
 } from "./aso-popularity-service";
 import { asoAuthService } from "../auth/aso-auth-service";
 import { requestPopularitiesWithKwsRetry } from "./aso-apple-popularity-client";
@@ -417,5 +418,35 @@ describe("AsoPopularityService", () => {
       expect(results).toEqual([{ x: 7 }, { x: 7 }]);
       expect(asoAuthService.reAuthenticate).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("probeAsoPopularitySession", () => {
+  beforeEach(() => {
+    jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("cookie=value");
+    jest.mocked(getConfiguredAsoAdamId).mockReturnValue("1234567890");
+  });
+
+  it.each([
+    [200, {}, "ok"],
+    [401, {}, "rejected"],
+    [403, { internalErrorCode: "REFRESH" }, "rejected"],
+    [429, {}, "unknown"],
+    [503, {}, "unknown"],
+  ])("classifies HTTP %s as %s", async (statusCode, data, expected) => {
+    jest
+      .mocked(requestPopularitiesWithKwsRetry)
+      .mockResolvedValueOnce({ statusCode, data, attempts: 1 } as never);
+    await expect(probeAsoPopularitySession()).resolves.toBe(expected);
+  });
+
+  it("treats a failed request as unknown, and missing cookies as rejected", async () => {
+    jest
+      .mocked(requestPopularitiesWithKwsRetry)
+      .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded") as never);
+    await expect(probeAsoPopularitySession()).resolves.toBe("unknown");
+
+    jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("");
+    await expect(probeAsoPopularitySession()).resolves.toBe("rejected");
   });
 });

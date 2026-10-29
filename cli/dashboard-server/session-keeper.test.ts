@@ -59,7 +59,7 @@ describe("session-keeper probe", () => {
   it("skips the full login when the probe says the session works", async () => {
     const reAuthenticate = jest.fn(async () => "cookie");
     const keeper = createSessionKeeper({
-      probe: async () => true,
+      probe: async () => "ok" as const,
       reAuthenticate,
       onNeedsTwoFactor: jest.fn(),
     });
@@ -68,10 +68,22 @@ describe("session-keeper probe", () => {
     expect(reAuthenticate).not.toHaveBeenCalled();
   });
 
-  it("logs in when the probe is rejected or throws", async () => {
+  it("logs in only when the probe is rejected", async () => {
     const reAuthenticate = jest.fn(async () => "cookie");
     const rejected = createSessionKeeper({
-      probe: async () => false,
+      probe: async () => "rejected" as const,
+      reAuthenticate,
+      onNeedsTwoFactor: jest.fn(),
+    });
+
+    await expect(rejected.check()).resolves.toMatchObject({ ok: true });
+    expect(reAuthenticate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not log in when the probe is inconclusive (throttled, 5xx, timeout)", async () => {
+    const reAuthenticate = jest.fn(async () => "cookie");
+    const unknown = createSessionKeeper({
+      probe: async () => "unknown" as const,
       reAuthenticate,
       onNeedsTwoFactor: jest.fn(),
     });
@@ -82,10 +94,20 @@ describe("session-keeper probe", () => {
       reAuthenticate,
       onNeedsTwoFactor: jest.fn(),
     });
+    const hung = createSessionKeeper({
+      probe: () => new Promise(() => {}),
+      reAuthenticate,
+      onNeedsTwoFactor: jest.fn(),
+      timeoutMs: 20,
+    });
 
-    await expect(rejected.check()).resolves.toMatchObject({ ok: true });
-    await expect(throwing.check()).resolves.toMatchObject({ ok: true });
-    expect(reAuthenticate).toHaveBeenCalledTimes(2);
+    await expect(unknown.check()).resolves.toMatchObject({
+      lastError: expect.stringContaining("inconclusive"),
+      needsTwoFactor: false,
+    });
+    await throwing.check();
+    await hung.check();
+    expect(reAuthenticate).not.toHaveBeenCalled();
   });
 
   it("shares one attempt between overlapping checks", async () => {
@@ -94,7 +116,7 @@ describe("session-keeper probe", () => {
       () => new Promise<string>((resolve) => (release = () => resolve("cookie")))
     );
     const keeper = createSessionKeeper({
-      probe: async () => false,
+      probe: async () => "rejected" as const,
       reAuthenticate,
       onNeedsTwoFactor: jest.fn(),
     });
@@ -113,7 +135,7 @@ describe("session-keeper probe", () => {
 
   it("stays out of the way of an interactive login", async () => {
     const reAuthenticate = jest.fn(async () => "cookie");
-    const probe = jest.fn(async () => true);
+    const probe = jest.fn(async () => "ok" as const);
     const keeper = createSessionKeeper({
       probe,
       isAuthInProgress: () => true,
