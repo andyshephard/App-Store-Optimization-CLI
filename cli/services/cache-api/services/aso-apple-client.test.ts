@@ -1,5 +1,9 @@
 import { jest } from "@jest/globals";
 import { asoAppleGet, resetAppleThrottleGateForTests } from "./aso-apple-client";
+import {
+  AppleRateLimiter,
+  __setAppleRateLimiterForTests,
+} from "../../../shared/apple-rate-limiter";
 
 jest.mock("axios", () => {
   const get = jest.fn();
@@ -109,5 +113,39 @@ describe("aso-apple-client", () => {
     await jest.advanceTimersByTimeAsync(5000);
     await expect(promise).resolves.toBe(ok);
     expect(mockGet).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("aso-apple-client rate limiting", () => {
+  afterEach(() => {
+    process.env.ASO_RATE_LIMIT_DISABLED = "1";
+    __setAppleRateLimiterForTests(new AppleRateLimiter());
+  });
+
+  it("takes a limiter slot per request and records throttles against the host", async () => {
+    delete process.env.ASO_RATE_LIMIT_DISABLED;
+    const sleeps: number[] = [];
+    const limiter = new AppleRateLimiter({
+      now: () => 0,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    __setAppleRateLimiterForTests(limiter);
+    (mockGet as any)
+      .mockResolvedValueOnce({ status: 200, data: {}, headers: {} })
+      .mockRejectedValueOnce({
+        response: { status: 404, statusText: "Not Found", headers: {} },
+        message: "nope",
+      });
+
+    await asoAppleGet("https://itunes.apple.com/lookup", { operation: "itunes.lookup", maxAttempts: 1 });
+    await expect(
+      asoAppleGet("https://itunes.apple.com/lookup", { operation: "itunes.lookup", maxAttempts: 1 })
+    ).rejects.toBeDefined();
+
+    expect(limiter.counters().lookup.requests).toBe(2);
+    // The second request waited for its slot: 60s / 15 per minute.
+    expect(sleeps).toEqual([4000]);
   });
 });

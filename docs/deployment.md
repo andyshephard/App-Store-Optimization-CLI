@@ -134,6 +134,84 @@ reads and safe to poll: `/health`, `/api/aso/keywords`,
 effect and should be avoided by automation: `/api/apps`, `/api/aso/top-apps`,
 `/api/aso/apps` and `/api/aso/apps/search`.
 
+## Request rates
+
+Every request to Apple goes through a per-host limiter
+(`cli/shared/apple-rate-limiter.ts`). Each host class has a cap in requests per
+minute and requests are spaced at least `60s / cap` apart, so no 60-second
+window carries more than the cap - whatever the concurrency settings.
+
+| Host class | Host | Env (requests/min) | Default |
+|---|---|---|---|
+| `mzsearch` | `search.itunes.apple.com` (MZSearch order and autocomplete hints) | `ASO_RATE_MZSEARCH_PER_MIN` | 30 |
+| `searchpage` | `apps.apple.com` (search page and app pages) | `ASO_RATE_SEARCHPAGE_PER_MIN` | 30 |
+| `lookup` | `itunes.apple.com/lookup` | `ASO_RATE_LOOKUP_PER_MIN` | 15 |
+| `popularity` | `app-ads.apple.com` | `ASO_RATE_POPULARITY_PER_MIN` | 4 |
+
+**How the defaults were set (today's effective rate).** Before the limiter the
+only pacing was sleeps: a 15 s pause after each 25-keyword batch and 60 s
+between storefronts. Per keyword the crawl made one MZSearch request and one
+lookup, back to back, at Apple's latency (~0.3 s each). So a batch was ~15 s of
+requests then 15 s of pause: about 25 MZSearch and 25 lookups per 30 s, i.e.
+~50/min each while inside a storefront, and lower on average once the 60 s
+storefront pauses are counted (the 2026-07-28 measurement: ~152 s of request
+work across 12 storefronts, the rest pauses). The defaults sit below that:
+MZSearch 30/min; lookups 15/min (lookups are now merged per batch, ~3-5 per 25
+keywords, so 15/min is not the bottleneck); the search page 30/min, one per
+keyword like MZSearch; popularity 4/min (1-2 requests per batch). The sleeps are
+now only breathing room: 5 s between batches, 15 s between storefronts. These
+estimates assume ~0.3 s latency; the first run's `requests` line (below) gives
+the measured figures.
+
+**Concurrency** (`ASO_STOREFRONT_CONCURRENCY`, `ASO_SEARCH_CONCURRENCY`,
+default 1) only fills the schedule faster - several storefronts or keywords
+waiting on the same host still get one slot per `60s / cap`. Raising
+concurrency alone cannot raise the request rate; raising a cap does.
+
+**Adaptive guard.** A 429 or 503 (and 403, except from `app-ads.apple.com`,
+where 403 is usually auth) halves that host's effective rate for 30 minutes,
+logged as `[apple-rate] <host> answered <status>; rate A -> B/min`. After the
+hold it recovers by 10% of the cap every 5 minutes, never above the cap.
+
+**Metrics.** Each run stores, in `refresh_runs.counters_json.requests` and in
+`GET /api/aso/health` under `lastRun.requests`: run duration and, per host,
+requests, 429/403/5xx and throttle counts, and requests per minute; plus the
+caps and effective rates at the end of the run. `rateLimits` in the health
+report shows the current effective rate per host. The run log has one line:
+`[aso-refresh] requests durationMs=... mzsearch=N(R/min,429=..,403=..,5xx=..) ...`.
+
+**Expected runtime.** Per keyword the crawl needs one MZSearch and one
+search-page request (separate hosts, so they pace side by side), so at the
+defaults it runs at ~30 keywords/min: total minutes ≈ keywords / 30, plus 5 s
+per batch and 15 s per storefront. For example 1,000 tracked keywords across 12
+storefronts: ~33 + ~3.5 + ~2.75 ≈ 40 min, at most 30 requests/min to each search
+host and ~4-10/min to lookup. The old pacing did the same keywords in roughly
+30-35 min (without the search-page request), but in bursts of ~50/min per host
+inside a storefront, and with no limit on retries or on dashboard traffic
+running at the same time.
+
+### Rate experiment plan
+
+Goal: find how fast Apple lets this box crawl without being throttled.
+
+1. **Night 1 - defaults.** Caps as above, `ASO_STOREFRONT_CONCURRENCY=1`.
+   Next morning read `lastRun.requests` in `/api/aso/health`: every host should
+   show 0 for 429/403/5xx and `throttles`. Note the run duration.
+2. **Night 2.** `ASO_STOREFRONT_CONCURRENCY=2`, and raise
+   `ASO_RATE_LOOKUP_PER_MIN` and `ASO_RATE_MZSEARCH_PER_MIN` (and
+   `ASO_RATE_SEARCHPAGE_PER_MIN` with it) by ~25%: 30 -> 38, 15 -> 19.
+3. **Each following night**, if the previous run had no 429/403/5xx and no
+   `[apple-rate]` warnings, raise those caps by another ~25% (38 -> 48 -> 60 ...).
+4. **Stop at the first night with any throttle** on that host. The adaptive
+   guard will already have halved the rate for that run.
+5. **Settle at 75% of the highest clean rate**: e.g. clean at 48, throttled at
+   60 -> set 36. Record the result here with the date.
+
+Change one thing per night (in the compose `environment` block or the
+environment file, then `docker compose -f docker-compose.vps.yml up -d`). Keep
+popularity at its default - that endpoint is the Apple ID session, not a search
+host.
+
 ## When the Apple session expires
 
 It will, and there is no unattended fix: Apple requires a 2FA code from a

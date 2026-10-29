@@ -1,3 +1,7 @@
+import {
+  afterAppleResponse,
+  beforeAppleRequest,
+} from "../../shared/apple-rate-limiter";
 import axios from "axios";
 import { logger } from "../../utils/logger";
 import { getAsoResilienceConfig } from "../../shared/aso-resilience";
@@ -77,6 +81,7 @@ async function requestPopularitiesOnce(
     Origin: "https://app-ads.apple.com",
     Cookie: cookieHeader,
   };
+  const hostClass = await beforeAppleRequest(requestUrl);
   try {
     const response = await applePopularityClient.post<PopularityResponse>(
       requestUrl,
@@ -85,6 +90,7 @@ async function requestPopularitiesOnce(
         headers: requestHeaders,
       }
     );
+    afterAppleResponse(hostClass, response.status);
 
     return {
       statusCode: response.status,

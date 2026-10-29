@@ -1316,17 +1316,33 @@ export async function refreshKeywordOrdersBatch(params: {
     order: RatingsKeywordOrder;
     observedAt: string;
   }> = [];
-  for (const keyword of params.keywords) {
-    try {
-      const order = await resolveRatingsKeywordOrder(
-        { keyword, country: params.country, popularity: 0 },
-        options
-      );
-      ordered.push({ keyword, order, observedAt: new Date().toISOString() });
-    } catch (error) {
-      outcomes.push({ keyword, ok: false, error });
+  // ASO_SEARCH_CONCURRENCY workers (default 1). More workers only fill the
+  // per-host request schedule faster; the limiter caps the rate.
+  let cursor = 0;
+  const resolveNext = async (): Promise<void> => {
+    while (cursor < params.keywords.length) {
+      const keyword = params.keywords[cursor];
+      cursor += 1;
+      try {
+        const order = await resolveRatingsKeywordOrder(
+          { keyword, country: params.country, popularity: 0 },
+          options
+        );
+        ordered.push({ keyword, order, observedAt: new Date().toISOString() });
+      } catch (error) {
+        outcomes.push({ keyword, ok: false, error });
+      }
     }
-  }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.max(1, Math.min(ASO_ENV.searchConcurrency, params.keywords.length)) },
+      () => resolveNext()
+    )
+  );
+  // Score in input order whatever order the workers finished in.
+  const inputRank = new Map(params.keywords.map((keyword, index) => [keyword, index]));
+  ordered.sort((a, b) => (inputRank.get(a.keyword) ?? 0) - (inputRank.get(b.keyword) ?? 0));
 
   const country = params.country.toUpperCase();
   const lookups = await lookupTopDocs(

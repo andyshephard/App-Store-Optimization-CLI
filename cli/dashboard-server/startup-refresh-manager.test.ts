@@ -1052,4 +1052,58 @@ describe("startup-refresh-manager", () => {
       ]);
     });
   });
+
+  describe("storefront concurrency and request metrics", () => {
+    it("refreshes storefronts in parallel workers and records requests per host", async () => {
+      const active: string[] = [];
+      let maxActive = 0;
+      let counters = { mzsearch: { requests: 10, status429: 0, status403: 0, status5xx: 0, throttles: 0 } };
+      let now = Date.parse("2026-03-10T00:00:00.000Z");
+      const releases: Array<() => void> = [];
+      const manager = createStartupRefreshManager({
+        country: "US",
+        listRefreshCountries: () => ["US", "GB", "DE"],
+        listKeywords: (country) => [
+          buildKeyword({ keyword: `${country}-k`, normalizedKeyword: `${country}-k`, country, orderExpiresAt: "2026-03-06T00:00:00.000Z" }),
+        ],
+        listAppKeywords: (country) => [buildAssociation({ keyword: `${country}-k`, country })],
+        listAssociatedAppIds: () => new Set(["app-1"]),
+        listOrderRelevantAppIds: () => new Set(["app-1"]),
+        isForegroundBusy: () => false,
+        nowMs: () => now,
+        sleep: async () => {},
+        readMemoryUsage: () => ({ rss: 0, heapUsed: 0 }),
+        storefrontConcurrency: 2,
+        readRequestCounters: () => counters,
+        readRateSnapshot: () => ({ mzsearch: { capPerMin: 30 } }),
+        enrichKeywords: async (country, items) => {
+          active.push(country);
+          maxActive = Math.max(maxActive, active.length);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          active.splice(active.indexOf(country), 1);
+          return { items, failedKeywords: [] };
+        },
+      });
+
+      manager.start({ force: true });
+      for (let i = 0; i < 20 && releases.length < 2; i += 1) await Promise.resolve();
+      expect(maxActive).toBe(2);
+      counters = { mzsearch: { requests: 40, status429: 1, status403: 0, status5xx: 0, throttles: 1 } };
+      now += 3 * 60_000;
+      while (manager.getState().status === "running") {
+        releases.shift()?.();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const state = manager.getState();
+      expect(state.counters.refreshedKeywordCount).toBe(3);
+      expect(state.counters.requests).toEqual({
+        durationMs: 180_000,
+        byHost: {
+          mzsearch: { requests: 30, status429: 1, status403: 0, status5xx: 0, throttles: 1, perMin: 10 },
+        },
+        rates: { mzsearch: { capPerMin: 30 } },
+      });
+    });
+  });
 });

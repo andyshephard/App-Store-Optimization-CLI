@@ -43,6 +43,20 @@ export type StorefrontRefreshCounters = {
   finishedAt: string | null;
 };
 
+export type RequestHostCounters = {
+  requests: number;
+  status429: number;
+  status403: number;
+  status5xx: number;
+  throttles: number;
+};
+
+export type StartupRefreshRequestMetrics = {
+  durationMs: number;
+  byHost: Record<string, RequestHostCounters & { perMin: number }>;
+  rates: Record<string, unknown> | null;
+};
+
 export type StartupRefreshCounters = {
   eligibleKeywordCount: number;
   refreshedKeywordCount: number;
@@ -53,6 +67,8 @@ export type StartupRefreshCounters = {
   skippedCountries: string[];
   /** Per-storefront breakdown, in run order. */
   storefronts: StorefrontRefreshCounters[];
+  /** Apple requests made during the run, per host; set when the run ends. */
+  requests?: StartupRefreshRequestMetrics;
 };
 
 /**
@@ -115,6 +131,12 @@ type StartupRefreshDeps = {
   recorder?: RefreshRunRecorder;
   /** Called after every run, whatever the outcome. */
   onRunFinished?: (state: StartupRefreshState) => void;
+  /** Storefronts refreshed at once (default 1). */
+  storefrontConcurrency?: number;
+  /** Per-host Apple request counters, diffed per run into counters.requests. */
+  readRequestCounters?: () => Record<string, RequestHostCounters>;
+  /** Current per-host caps and effective rates, stored with the run. */
+  readRateSnapshot?: () => Record<string, unknown>;
   /** Resident memory, logged per batch. Defaults to process.memoryUsage(). */
   readMemoryUsage?: () => { rss: number; heapUsed: number };
   isForegroundBusy: () => boolean;
@@ -655,14 +677,64 @@ export function createStartupRefreshManager(
 
   const refreshKeywordsInBatches = async (force: boolean): Promise<void> => {
     const countries = resolveRefreshCountries();
-    for (const [index, country] of countries.entries()) {
-      if (stopRequested) break;
-      if (index > 0 && interCountryDelayMs > 0) {
-        await sleep(interCountryDelayMs);
+    // Each worker takes the next storefront and pauses between its own
+    // storefronts. With one worker (the default) this is the old loop.
+    const workerCount = Math.max(
+      1,
+      Math.min(Math.floor(deps.storefrontConcurrency ?? 1), countries.length)
+    );
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < countries.length) {
         if (stopRequested) break;
+        const index = next;
+        next += 1;
+        // The first storefront of each worker starts at once; every later
+        // one waits the inter-storefront pause.
+        if (index >= workerCount && interCountryDelayMs > 0) {
+          await sleep(interCountryDelayMs);
+          if (stopRequested) break;
+        }
+        await refreshCountryInBatches(countries[index], force);
       }
-      await refreshCountryInBatches(country, force);
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  };
+
+  let requestCountersAtStart: Record<string, RequestHostCounters> | null = null;
+  const readCountersSafely = (): Record<string, RequestHostCounters> | null => {
+    try {
+      return deps.readRequestCounters?.() ?? null;
+    } catch {
+      return null;
     }
+  };
+  const requestMetrics = (
+    startedAtMs: number
+  ): StartupRefreshRequestMetrics | undefined => {
+    const after = readCountersSafely();
+    if (!after) return undefined;
+    const durationMs = Math.max(0, nowMs() - startedAtMs);
+    const minutes = Math.max(durationMs / 60_000, 1 / 60);
+    const byHost: StartupRefreshRequestMetrics["byHost"] = {};
+    for (const [host, counters] of Object.entries(after)) {
+      const before = requestCountersAtStart?.[host];
+      const diff = {
+        requests: counters.requests - (before?.requests ?? 0),
+        status429: counters.status429 - (before?.status429 ?? 0),
+        status403: counters.status403 - (before?.status403 ?? 0),
+        status5xx: counters.status5xx - (before?.status5xx ?? 0),
+        throttles: counters.throttles - (before?.throttles ?? 0),
+      };
+      byHost[host] = { ...diff, perMin: Math.round((diff.requests / minutes) * 10) / 10 };
+    }
+    let rates: Record<string, unknown> | null = null;
+    try {
+      rates = deps.readRateSnapshot?.() ?? null;
+    } catch {
+      rates = null;
+    }
+    return { durationMs, byHost, rates };
   };
 
   const run = async (
@@ -678,6 +750,7 @@ export function createStartupRefreshManager(
         deps.reportError?.(error, { phase: "refresh-run-record-start" });
       }
     }
+    requestCountersAtStart = readCountersSafely();
     logger.info(
       `[aso-refresh] run started trigger=${trigger} force=${force} runId=${runId ?? "none"}`
     );
@@ -729,6 +802,21 @@ export function createStartupRefreshManager(
     // Once per run, even if the unhandled-error path below runs after it.
     if (state.runId != null && finishedRunId === state.runId) return;
     finishedRunId = state.runId;
+    const startedAtMs = Date.parse(state.startedAt ?? "");
+    if (Number.isFinite(startedAtMs)) {
+      const metrics = requestMetrics(startedAtMs);
+      if (metrics) {
+        state.counters.requests = metrics;
+        logger.info(
+          `[aso-refresh] requests durationMs=${metrics.durationMs} ${Object.entries(metrics.byHost)
+            .map(
+              ([host, m]) =>
+                `${host}=${m.requests}(${m.perMin}/min,429=${m.status429},403=${m.status403},5xx=${m.status5xx})`
+            )
+            .join(" ")}`
+        );
+      }
+    }
     const c = state.counters;
     const level = state.status === "completed" ? "info" : "warn";
     logger[level](

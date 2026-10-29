@@ -29,6 +29,8 @@ export const ASO_DEFAULTS = {
   refreshInterBatchDelayMs: 5000,
   refreshMaxCatchUpsPerDay: 2,
   popularityPerStorefront: true,
+  storefrontConcurrency: 1,
+  searchConcurrency: 1,
   rankSearchPagePrefix: true,
   keywordOrderTtlHours: 24,
   popularityCacheTtlHours: 720,
@@ -85,6 +87,13 @@ export type AsoEnvConfig = {
    * for anything it does not answer. ASO_POPULARITY_PER_STOREFRONT=0 turns it off.
    */
   popularityPerStorefront: boolean;
+  /**
+   * Storefronts refreshed at once. Only fills the per-host request schedule
+   * (shared/apple-rate-limiter.ts) faster; it cannot exceed the caps.
+   */
+  storefrontConcurrency: number;
+  /** Keyword orders resolved at once within a batch; same rule. */
+  searchConcurrency: number;
   /**
    * Ratings mode: take the first ~11 ranks from the App Store search page and
    * append MZSearch's remaining ids as the tail. ASO_RANK_SEARCHPAGE_PREFIX=0
@@ -263,6 +272,14 @@ function readAsoEnv(
       ASO_DEFAULTS.refreshMaxCatchUpsPerDay
     ),
     popularityPerStorefront: parseDefaultOn(env.ASO_POPULARITY_PER_STOREFRONT),
+    storefrontConcurrency: Math.min(
+      12,
+      parsePositiveInt(env.ASO_STOREFRONT_CONCURRENCY, ASO_DEFAULTS.storefrontConcurrency)
+    ),
+    searchConcurrency: Math.min(
+      8,
+      parsePositiveInt(env.ASO_SEARCH_CONCURRENCY, ASO_DEFAULTS.searchConcurrency)
+    ),
     rankSearchPagePrefix: parseDefaultOn(env.ASO_RANK_SEARCHPAGE_PREFIX),
     keywordOrderTtlHours: parsePositiveInt(
       env.ASO_KEYWORD_ORDER_TTL_HOURS,

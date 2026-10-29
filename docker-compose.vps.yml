@@ -31,8 +31,21 @@ services:
       # A throttle now pauses every request to the host (see aso-apple-client),
       # so a third attempt is cheap and turns most 429/403s into successes.
       ASO_RETRY_MAX_ATTEMPTS: "3"
-      # Pause between 25-keyword batches inside a storefront (default 5s).
-      ASO_REFRESH_INTER_BATCH_DELAY_MS: "15000"
+      # Per-host request caps (requests per minute) are what pace the crawl now;
+      # see shared/apple-rate-limiter.ts and docs/deployment.md "Request rates".
+      # These are the defaults, i.e. today's effective rates. Raising a cap is
+      # the experiment; a 429/403/503 halves that host's rate for 30 min.
+      ASO_RATE_MZSEARCH_PER_MIN: "30"
+      ASO_RATE_SEARCHPAGE_PER_MIN: "30"
+      ASO_RATE_LOOKUP_PER_MIN: "15"
+      ASO_RATE_POPULARITY_PER_MIN: "4"
+      # Workers. They only fill the per-host schedule faster and can never
+      # exceed the caps above, so raising these alone is safe.
+      ASO_STOREFRONT_CONCURRENCY: "1"
+      ASO_SEARCH_CONCURRENCY: "1"
+      # With the limiter doing the pacing, these sleeps are only breathing room
+      # (were 15s and 60s when they were the pacing).
+      ASO_REFRESH_INTER_BATCH_DELAY_MS: "5000"
       # Without this V8 sizes the heap from the 512m cgroup (~256MB), and a
       # cold-cache crawl hit that limit on 2026-09-25. 384 left only ~128MB
       # under mem_limit for everything outside the V8 heap - better-sqlite3,
@@ -42,13 +55,10 @@ services:
       # batch now logs rssMb/heapUsedMb; if heapUsedMb nears 320, raise
       # mem_limit to 768m (and this to 448) rather than raising this alone.
       NODE_OPTIONS: "--max-old-space-size=320"
-      # 60s between storefronts. Measured 2026-07-28: a full forced crawl of 12
-      # storefronts does only ~152s of actual work, so pacing dominates. Kept at
-      # 60s rather than tuned to the edge because the runs that set this were on
-      # warm app-doc caches; those expire every 168h, and on a cold day each
-      # storefront fetches several times more requests - which is the case the
-      # pacing exists for.
-      ASO_REFRESH_INTER_COUNTRY_DELAY_MS: "60000"
+      # Between storefronts. Was 60s when sleeps were the only pacing (a cold
+      # app-doc cache could make a storefront fetch several times more); the
+      # per-host caps now bound the rate however many requests a storefront needs.
+      ASO_REFRESH_INTER_COUNTRY_DELAY_MS: "15000"
       # The app owns its own clock: it refreshes daily at this wall-clock time
       # and writes straight to SQLite, so the data is current whether or not
       # anything calls the API.

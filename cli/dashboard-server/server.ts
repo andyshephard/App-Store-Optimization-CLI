@@ -41,6 +41,7 @@ import {
   buildHealthReport,
   listHealthAlertConditions,
   type HealthReport,
+  type HealthRunInput,
 } from "./health-report";
 import {
   clearOperationalAlertState,
@@ -54,6 +55,7 @@ import {
 } from "../db/app-keywords";
 import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
 import { withObservationRun } from "../services/keywords/observation-context";
+import { appleRateLimiter } from "../shared/apple-rate-limiter";
 import { listKeywordObservations } from "../db/keyword-observations";
 import { asoAuthService } from "../services/auth/aso-auth-service";
 import {
@@ -227,6 +229,9 @@ const startupRefreshManager = createStartupRefreshManager({
     ),
   isForegroundBusy: () => foregroundMutationCount > 0,
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
+  storefrontConcurrency: ASO_ENV.storefrontConcurrency,
+  readRequestCounters: () => appleRateLimiter().counters(),
+  readRateSnapshot: () => appleRateLimiter().snapshot(),
   interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
   // Two full batches of nothing but failures means the storefront is throttled,
   // not that these particular keywords are bad.
@@ -424,6 +429,9 @@ function collectHealthReport(): HealthReport {
         finishedAt: lastRunRow.finishedAt,
         lastError: lastRunRow.lastError,
         storefronts: safeRead(() => listRefreshRunStorefronts(lastRunRow.id), []),
+        requests:
+          (lastRunRow.counters as { requests?: HealthRunInput["requests"] } | null)
+            ?.requests ?? null,
       }
     : null;
   const current = getStartupRefreshState();
@@ -465,6 +473,7 @@ function collectHealthReport(): HealthReport {
       needsTwoFactor: keeper.needsTwoFactor,
     },
     restartLoop: currentRestartLoopState(nowMs),
+    rateLimits: safeRead<Record<string, unknown>>(() => appleRateLimiter().snapshot(), {}),
   });
 }
 

@@ -8,6 +8,10 @@ import {
   isTransientTransportFailure,
 } from "../../../shared/aso-transient-error";
 import { attachAppleHttpTracing } from "../../keywords/apple-http-trace";
+import {
+  afterAppleResponse,
+  beforeAppleRequest,
+} from "../../../shared/apple-rate-limiter";
 
 const SENSITIVE_HEADER_KEYS = ["authorization", "cookie", "set-cookie", "x-api-key"];
 const asoAppleHttpClient = axios.create();
@@ -143,8 +147,11 @@ export async function asoAppleGet<T = unknown>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await waitForThrottleGate(host);
+    // Every attempt, retries included, takes a slot from the host's limiter.
+    const hostClass = await beforeAppleRequest(url);
     try {
       const response = await asoAppleHttpClient.get<T>(url, requestConfig);
+      afterAppleResponse(hostClass, response.status);
       logger.debug(`[${requestId}] ASO APPLE RES GET ${operation}`, {
         requestId,
         operation,
@@ -163,6 +170,7 @@ export async function asoAppleGet<T = unknown>(
     } catch (error) {
       const axiosError = error as AxiosError;
       const status = axiosError.response?.status;
+      afterAppleResponse(hostClass, status);
       const throttled =
         status === 429 || (status != null && throttleStatusCodes.includes(status));
       const retryable = throttled || shouldRetry(axiosError);

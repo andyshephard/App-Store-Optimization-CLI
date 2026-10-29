@@ -36,6 +36,22 @@ export type HealthRunInput = {
     failureReasons: Record<string, number>;
     finishedAt: string | null;
   }>;
+  /** Apple requests during the run, per host (refresh_runs counters). */
+  requests?: {
+    durationMs: number;
+    byHost: Record<
+      string,
+      {
+        requests: number;
+        status429: number;
+        status403: number;
+        status5xx: number;
+        throttles: number;
+        perMin: number;
+      }
+    >;
+    rates: Record<string, unknown> | null;
+  } | null;
 };
 
 export type HealthInputs = {
@@ -74,6 +90,8 @@ export type HealthInputs = {
     needsTwoFactor: boolean;
   };
   restartLoop: { detected: boolean; recentStarts: number };
+  /** Per-host request caps and current effective rates (AIMD-reduced after a throttle). */
+  rateLimits?: Record<string, unknown>;
 };
 
 export type HealthStorefront = {
@@ -115,12 +133,15 @@ export type HealthReport = {
     failed: number;
     popularityFailed: number;
     failuresByReason: Record<string, number>;
+    /** Apple requests per host, 429/403/5xx and per-minute rate, and duration. */
+    requests: HealthRunInput["requests"] | null;
   } | null;
   lastCompletedRunAt: string | null;
   currentRun: HealthInputs["currentRun"];
   storefronts: HealthStorefront[];
   session: HealthInputs["session"];
   restartLoop: HealthInputs["restartLoop"];
+  rateLimits: Record<string, unknown>;
 };
 
 function ageMs(iso: string | null, nowMs: number): number | null {
@@ -236,6 +257,7 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
           failed,
           popularityFailed,
           failuresByReason,
+          requests: run.requests ?? null,
         }
       : null,
     lastCompletedRunAt: inputs.lastFinishedRunAt,
@@ -243,6 +265,7 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
     storefronts,
     session: inputs.session,
     restartLoop: inputs.restartLoop,
+    rateLimits: inputs.rateLimits ?? {},
   };
 }
 

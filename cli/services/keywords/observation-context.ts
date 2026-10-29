@@ -15,23 +15,32 @@ const storage = new AsyncLocalStorage<RunContext>();
 
 /**
  * iTunes lookup docs already fetched in this background run, keyed by
- * (country, appId). Only one storefront is held at a time - a run walks
- * storefronts in order - so memory stays bounded to one storefront's top
- * apps. Rating counts do not move meaningfully within a run.
+ * (country, appId). Only the few most recently used storefronts are held
+ * (a run walks storefronts in order, a few at a time with
+ * ASO_STOREFRONT_CONCURRENCY), so memory stays bounded. Rating counts do not
+ * move meaningfully within a run.
  */
 class RunLookupCache {
-  private country: string | null = null;
-  private readonly docs = new Map<string, unknown>();
-  static readonly MAX_ENTRIES = 5000;
+  private readonly byCountry = new Map<string, Map<string, unknown>>();
+  static readonly MAX_COUNTRIES = 4;
+  static readonly MAX_ENTRIES_PER_COUNTRY = 5000;
 
   forCountry<T>(country: string): Map<string, T> {
     const normalized = country.toUpperCase();
-    if (this.country !== normalized) {
-      this.docs.clear();
-      this.country = normalized;
+    let docs = this.byCountry.get(normalized);
+    if (docs) {
+      // Mark as most recently used.
+      this.byCountry.delete(normalized);
+    } else {
+      docs = new Map<string, unknown>();
     }
-    if (this.docs.size > RunLookupCache.MAX_ENTRIES) this.docs.clear();
-    return this.docs as Map<string, T>;
+    this.byCountry.set(normalized, docs);
+    while (this.byCountry.size > RunLookupCache.MAX_COUNTRIES) {
+      const oldest = this.byCountry.keys().next().value as string;
+      this.byCountry.delete(oldest);
+    }
+    if (docs.size > RunLookupCache.MAX_ENTRIES_PER_COUNTRY) docs.clear();
+    return docs as Map<string, T>;
   }
 }
 

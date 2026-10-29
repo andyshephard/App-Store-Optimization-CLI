@@ -413,6 +413,13 @@ HTTP 200 for `ok` and `degraded`, **503 for `down`**.
   ranking was kept. `popularity:`-prefixed reasons are popularity failures,
   which no longer stop the ranking crawl.
 - `memory` is the process's RSS and V8 heap, in MB.
+- `lastRun.requests` (null for runs before this field existed): run
+  `durationMs`, and per Apple host class (`mzsearch`, `searchpage`, `lookup`,
+  `popularity`) `requests`, `status429`, `status403`, `status5xx`, `throttles`
+  and `perMin`, plus the caps and effective rates at the end of the run.
+  `rateLimits` is the current `{ capPerMin, effectivePerMin, reducedSince }` per
+  host; `reducedSince` is set while a throttle has the rate halved. See
+  docs/deployment.md "Request rates".
 
 **Alerts.** The same conditions (stale storefront, no completed run in 26h,
 restart loop) are emailed through the Resend alert path, at most once per day

@@ -1,5 +1,8 @@
 process.env.DOTENV_CONFIG_SILENT = "true";
 process.env.LOG_LEVEL = "error";
+// Unit tests must not wait on the per-host Apple request limiter; its own
+// tests drive an AppleRateLimiter with a fake clock.
+process.env.ASO_RATE_LIMIT_DISABLED = "1";
 
 console.log = () => {};
 console.warn = () => {};
