@@ -99,6 +99,7 @@ Replace `PASTE_API_TOKEN` with the value from step 4.
 cd /opt/asocli
 docker compose -f docker-compose.vps.yml up -d
 docker compose -f docker-compose.vps.yml logs --tail 20
+docker image prune -f   # drop the image this deploy replaced
 ```
 
 Expect `ASO Dashboard: http://0.0.0.0:3456` and no exposure warning.

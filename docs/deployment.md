@@ -178,7 +178,7 @@ joins the existing Docker network, and runs a prebuilt image.
 
 **Build on a workstation, not the server.** `npm ci` pulls devDependencies
 including Playwright, and `better-sqlite3` may compile from source; that is a
-poor fit for a 2GB box already running other services. Ship the finished image
+poor fit for a 2GB box shared with n8n and other services. Ship the finished image
 over SSH instead — no registry required:
 
 ```bash
@@ -193,6 +193,29 @@ Then on the server, in a directory holding `docker-compose.vps.yml` and `.env`:
 docker compose -f docker-compose.vps.yml up -d
 docker compose -f docker-compose.vps.yml logs -f
 ```
+
+After every deploy, remove the image the new one replaced - each `docker load`
+leaves the previous `asocli:latest` behind as a dangling image of several
+hundred MB:
+
+```bash
+docker image prune -f
+```
+
+`docker-compose.vps.yml` caps this container's logs (json-file, 3 x 10 MB).
+n8n's compose file is not in this repo and its logs are just as unbounded;
+add the same block to its service there (not done for you):
+
+```yaml
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+Logging options apply when a container is recreated (`up -d` after the edit),
+not to a running one.
 
 Add the site block from `caddy-snippet.txt` to the existing Caddyfile and
 reload: `docker exec <caddy-container> caddy reload --config /etc/caddy/Caddyfile`.

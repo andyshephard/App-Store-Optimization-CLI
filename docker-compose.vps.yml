@@ -4,7 +4,8 @@
 #   - no Caddy service; the existing n8n-docker-caddy stack proxies this
 #   - joins that stack's network so Caddy and n8n can reach it by name
 #   - runs a prebuilt image rather than building, because the box has 2GB RAM
-#     shared with n8n, Ghost and MySQL
+#     shared with n8n and whatever else the host runs (check `docker stats`
+#     there before changing memory limits; this file does not know)
 #
 #   docker compose -f docker-compose.vps.yml up -d
 services:
@@ -63,6 +64,13 @@ services:
     # and so does n8n. Publishing a port would bypass UFW, since Docker writes
     # its own iptables rules.
     expose: ["3456"]
+    # Docker's default json-file driver never rotates: logs grew unbounded.
+    # 3 x 10 MB caps this container's logs at 30 MB on disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [n8n]
     # A crawl must never be able to starve n8n on a 2GB box.
     mem_limit: 512m
