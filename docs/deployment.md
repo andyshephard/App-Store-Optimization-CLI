@@ -222,6 +222,33 @@ environment file, then `docker compose -f docker-compose.vps.yml up -d`). Keep
 popularity at its default - that endpoint is the Apple ID session, not a search
 host.
 
+### Rate experiment result (2026-10-29)
+
+Run back to back as forced crawls on the CPX22 (345 keywords, 12 storefronts),
+not one step per night. Popularity stayed at 4/min throughout.
+
+| Step | Storefronts at once | Caps mzsearch / searchpage / lookup | Crawl | Result |
+|---|---|---|---|---|
+| 1 | 1 | 30 / 15 / 15, prefix off | 26 min | clean |
+| 2 | 1 | 30 / 15 / 15, prefix on | 29 min | clean (21 search-page 500s, see below) |
+| 3 | 2 | 38 / 19 / 19 | 20 min | clean (24 500s) |
+| 4 | 2 | 48 / 24 / 24 | 16 min | clean (24 500s) |
+| 5 | 2 | 60 / 30 / 30 | 13 min | clean (27 500s); searchpage ran 28.3/min |
+| 6 | 2 | 75 / 38 / 38 | 15 min | **one 429 on searchpage**; the limiter halved it to 19 |
+
+Settled at 75% of the highest clean caps (step 5), concurrency 2, prefix on:
+`ASO_RATE_MZSEARCH_PER_MIN=45`, `ASO_RATE_SEARCHPAGE_PER_MIN=22`,
+`ASO_RATE_LOOKUP_PER_MIN=22`, `ASO_STOREFRONT_CONCURRENCY=2`,
+`ASO_RANK_SEARCHPAGE_PREFIX=1`. The search page (apps.apple.com) is the
+binding limit; mzsearch never throttled and is paced by it. Lookups are mostly
+served from cache (~310 of ~370 per crawl).
+
+The search-page 500s are not a rate signal: the same terms fail on every
+attempt at every rate. On 2026-10-29 they were US "trivia", "quiz",
+"trivia quiz", "history quiz", "daily trivia", FR and IT "quiz", and PT
+"conhecimento". Those keywords keep their MZSearch rank. When judging a crawl,
+count 429/403/throttles, and 5xx only above that known baseline.
+
 ## When the Apple session expires
 
 It will, and there is no unattended fix: Apple requires a 2FA code from a
