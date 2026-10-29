@@ -157,11 +157,11 @@ class InsufficientDifficultyDocsError extends Error {
  * the stored row untouched and lets the caller count the keyword as failed.
  */
 export class KeywordOrderUnavailableError extends Error {
-  readonly code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER";
+  readonly code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER" | "SHALLOW_ORDER";
   readonly statusCode = 502;
 
   constructor(params: {
-    code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER";
+    code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER" | "SHALLOW_ORDER";
     keyword: string;
     country: string;
     detail: string;
@@ -545,8 +545,11 @@ async function resolveRatingsOrder(params: {
   keyword: string;
   country: string;
   mzSearchIds: string[];
+  getStoredOrderedAppIds?: StoredOrderLookup;
 }): Promise<{ orderedAppIds: string[]; orderSource: RankOrderSource }> {
-  if (!ASO_ENV.rankSearchPagePrefix) {
+  // An empty MZSearch list has already been through the empty-order guard;
+  // a search-page prefix must not turn it into a short "valid" order.
+  if (!ASO_ENV.rankSearchPagePrefix || params.mzSearchIds.length === 0) {
     return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
   }
   let prefix: string[] = [];
@@ -571,6 +574,19 @@ async function resolveRatingsOrder(params: {
       orderedAppIds: appendUnseenFallbackIds(prefix, params.mzSearchIds),
       orderSource: "searchpage+mzsearch",
     };
+  }
+  // MZSearch came back shorter than the ~11-row prefix, so it looks degraded.
+  // A prefix-only order must never replace a deeper stored one: that would
+  // drop every tracked rank below ~11 overnight.
+  const stored =
+    params.getStoredOrderedAppIds?.(normalizeKeyword(params.keyword)) ?? null;
+  if (stored && stored.length > prefix.length) {
+    throw new KeywordOrderUnavailableError({
+      code: "SHALLOW_ORDER",
+      keyword: params.keyword,
+      country: params.country,
+      detail: `mzsearch=${params.mzSearchIds.length} searchpage=${prefix.length}; keeping the stored order of ${stored.length}`,
+    });
   }
   return { orderedAppIds: prefix, orderSource: "searchpage" };
 }
@@ -1122,18 +1138,20 @@ async function resolveRatingsKeywordOrder(
     keyword: normalizedKeyword,
     country: params.country,
   });
-  const clearlyEmpty = mzSearch.clearlyEmpty;
+  // Guard MZSearch's own list first: the search-page prefix is only ever
+  // laid over a non-empty MZSearch order.
+  assertUsableOrder({
+    keyword: params.keyword,
+    country,
+    orderedAppIds: mzSearch.orderedAppIds,
+    clearlyEmpty: mzSearch.clearlyEmpty,
+    source: "mzsearch",
+    getStoredOrderedAppIds: options?.getStoredOrderedAppIds,
+  });
   const { orderedAppIds, orderSource } = await resolveRatingsOrder({
     keyword: normalizedKeyword,
     country: params.country,
     mzSearchIds: mzSearch.orderedAppIds,
-  });
-  assertUsableOrder({
-    keyword: params.keyword,
-    country,
-    orderedAppIds,
-    clearlyEmpty,
-    source: "mzsearch",
     getStoredOrderedAppIds: options?.getStoredOrderedAppIds,
   });
   return {

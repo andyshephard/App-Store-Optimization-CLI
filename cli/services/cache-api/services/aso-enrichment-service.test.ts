@@ -1307,6 +1307,39 @@ describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
     expect(result.orderedAppIds).toEqual(["3", "2", "1"]);
   });
 
+  it("never lets a prefix stand in for an empty MZSearch order over a stored one", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch([]));
+
+    await expect(
+      refreshKeywordOrder({ keyword: "budget", country: "US", getStoredOrderedAppIds: () => ["1", "2"] })
+    ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
+    // The search page is not even asked once MZSearch is empty.
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the search page for an empty never-enriched keyword", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch([]));
+
+    const result = await refreshKeywordOrder({ keyword: "zzqx", country: "US" });
+
+    expect(result.orderedAppIds).toEqual([]);
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a prefix-only order shallower than the stored order", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1"]))
+      .mockResolvedValueOnce(organicPage(["4", "5", "6"]));
+
+    await expect(
+      refreshKeywordOrder({
+        keyword: "budget",
+        country: "US",
+        getStoredOrderedAppIds: () => Array.from({ length: 200 }, (_, i) => String(i)),
+      })
+    ).rejects.toMatchObject({ code: "SHALLOW_ORDER" });
+  });
+
   it("keeps the prefix alone when MZSearch is shorter than it", async () => {
     mockedAsoAppleGet
       .mockResolvedValueOnce(mzsearch(["1"]))
@@ -1343,9 +1376,7 @@ describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
   });
 
   it("still refuses an empty order over a stored one when both sources are empty", async () => {
-    mockedAsoAppleGet
-      .mockResolvedValueOnce(mzsearch([]))
-      .mockRejectedValueOnce(new Error("Search page serialized data did not return ordered app ids"));
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch([]));
 
     await expect(
       refreshKeywordOrder({
