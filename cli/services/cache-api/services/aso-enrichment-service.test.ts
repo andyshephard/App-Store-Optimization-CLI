@@ -1150,3 +1150,32 @@ describe("aso-enrichment-service (ratings mode)", () => {
     expect(typeof result.difficultyScore).toBe("number");
   });
 });
+
+describe("aso-enrichment-service (untrustworthy MZSearch order)", () => {
+  beforeEach(() => {
+    delete process.env.ASO_ENRICHMENT_MODE;
+    jest.clearAllMocks();
+  });
+
+  it("refuses an empty order instead of returning appCount 0", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce({
+      data: { pageData: { bubbles: [{ name: "software", results: [] }] } },
+    } as never);
+
+    await expect(
+      refreshKeywordOrder({ keyword: "budget", country: "GB" })
+    ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
+    expect(mockedFetchItunesLookupAppDocs).not.toHaveBeenCalled();
+  });
+
+  it("refuses a response whose shape drifted", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce({
+      status: 200,
+      data: { pageData: {} },
+    } as never);
+
+    await expect(
+      refreshKeywordOrder({ keyword: "budget", country: "GB" })
+    ).rejects.toMatchObject({ code: "ORDER_CONTRACT_DRIFT" });
+  });
+});

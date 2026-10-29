@@ -147,6 +147,47 @@ class InsufficientDifficultyDocsError extends Error {
   }
 }
 
+/**
+ * MZSearch answered, but not with an order we can trust: either the response
+ * shape drifted (no `pageData.bubbles[]`, or a software bubble without
+ * `results[]`) or it listed no apps at all. Persisting that would write
+ * appCount 0 and an empty order over the previous day's ranking, and bump
+ * updatedAt so the keyword looked freshly refreshed. Throwing instead leaves
+ * the stored row untouched and lets the caller count the keyword as failed.
+ */
+export class KeywordOrderUnavailableError extends Error {
+  readonly code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER";
+  readonly statusCode = 502;
+
+  constructor(params: {
+    code: "ORDER_CONTRACT_DRIFT" | "EMPTY_ORDER";
+    keyword: string;
+    country: string;
+    detail: string;
+  }) {
+    super(
+      `Keyword order unavailable (${params.code}): keyword="${params.keyword}" country="${params.country.toUpperCase()}" ${params.detail}`
+    );
+    this.name = "KeywordOrderUnavailableError";
+    this.code = params.code;
+  }
+}
+
+function assertNonEmptyOrder(params: {
+  keyword: string;
+  country: string;
+  orderedAppIds: string[];
+  source: string;
+}): void {
+  if (params.orderedAppIds.length > 0) return;
+  throw new KeywordOrderUnavailableError({
+    code: "EMPTY_ORDER",
+    keyword: params.keyword,
+    country: params.country,
+    detail: `source=${params.source} returned no apps`,
+  });
+}
+
 function safeDaysSince(isoDate: string | undefined): number {
   if (!isoDate) return 365;
   const parsed = Date.parse(isoDate);
@@ -336,7 +377,12 @@ async function fetchPopularityOrderedIds(params: {
       isTerminal: false,
       dedupeKey: "mzsearch-keyword-order-bubbles-array",
     });
-    return [];
+    throw new KeywordOrderUnavailableError({
+      code: "ORDER_CONTRACT_DRIFT",
+      keyword: params.keyword,
+      country: params.country,
+      detail: `bubblesType=${typeof bubbles}`,
+    });
   }
 
   for (const bubble of bubbles) {
@@ -356,7 +402,12 @@ async function fetchPopularityOrderedIds(params: {
         isTerminal: false,
         dedupeKey: "mzsearch-keyword-order-software-results-array",
       });
-      return [];
+      throw new KeywordOrderUnavailableError({
+        code: "ORDER_CONTRACT_DRIFT",
+        keyword: params.keyword,
+        country: params.country,
+        detail: `softwareResultsType=${typeof bubble.results}`,
+      });
     }
     return (bubble.results || [])
       .map((result) => `${result.id || ""}`.trim())
@@ -559,6 +610,12 @@ export async function refreshKeywordOrder(params: {
     appCount: orderedAppIds.length,
     orderedAppIdsCount: orderedAppIds.length,
     appDocsCount: appDocs.length,
+  });
+  assertNonEmptyOrder({
+    keyword: params.keyword,
+    country,
+    orderedAppIds,
+    source: sourceMode,
   });
   return {
     keyword: params.keyword,
@@ -918,6 +975,12 @@ export async function enrichKeywordFromRatings(
   const orderedAppIds = await fetchPopularityOrderedIds({
     keyword: normalizedKeyword,
     country: params.country,
+  });
+  assertNonEmptyOrder({
+    keyword: params.keyword,
+    country,
+    orderedAppIds,
+    source: "mzsearch",
   });
   const appCount = orderedAppIds.length;
   const topIds = orderedAppIds.slice(0, RATING_DIFFICULTY_TOP_N);
