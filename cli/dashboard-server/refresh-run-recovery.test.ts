@@ -1,5 +1,6 @@
 import {
   decideInterruptedRunCatchUp,
+  isCatchUpCapReached,
   isRestartLoop,
   recordProcessStart,
   recoverInterruptedScheduledRun,
@@ -85,5 +86,34 @@ describe("refresh-run-recovery", () => {
     expect(isRestartLoop(starts)).toBe(true);
     // Starts older than the window drop out: a deploy a day later is not a loop.
     expect(recordProcessStart(starts, now + 24 * 60 * 60_000)).toHaveLength(1);
+  });
+
+  it("lets a detected restart loop decay as the starts age out of the window", () => {
+    let starts: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      starts = recordProcessStart(starts, now + i * 60_000);
+    }
+    // No further starts: the same log, read later, no longer counts.
+    expect(isRestartLoop(starts, now + 5 * 60_000)).toBe(true);
+    expect(isRestartLoop(starts, now + 3 * 60 * 60_000)).toBe(false);
+  });
+
+  it("clears the catch-up cap once the scheduled run completes or catch-ups age out", () => {
+    const interrupted = { id: 9, status: "interrupted" };
+    expect(
+      isCatchUpCapReached({ lastScheduledRun: interrupted, catchUpsInLastDay: 2, maxCatchUpsPerDay: 2 })
+    ).toBe(true);
+    // Next night's scheduled run completed.
+    expect(
+      isCatchUpCapReached({
+        lastScheduledRun: { id: 10, status: "completed" },
+        catchUpsInLastDay: 2,
+        maxCatchUpsPerDay: 2,
+      })
+    ).toBe(false);
+    // The catch-ups fell out of the 24h window.
+    expect(
+      isCatchUpCapReached({ lastScheduledRun: interrupted, catchUpsInLastDay: 0, maxCatchUpsPerDay: 2 })
+    ).toBe(false);
   });
 });

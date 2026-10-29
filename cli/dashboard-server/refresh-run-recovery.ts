@@ -89,15 +89,41 @@ export function recordProcessStart(
   previous: string[],
   nowMs: number
 ): string[] {
-  const cutoff = nowMs - RESTART_LOOP_WINDOW_MS;
-  const kept = previous.filter((iso) => {
-    const ms = Date.parse(iso);
-    return Number.isFinite(ms) && ms >= cutoff && ms <= nowMs;
-  });
+  const kept = trimProcessStarts(previous, nowMs);
   kept.push(new Date(nowMs).toISOString());
   return kept.slice(-20);
 }
 
-export function isRestartLoop(recentStarts: string[]): boolean {
-  return recentStarts.length >= RESTART_LOOP_THRESHOLD;
+/** Starts still inside the restart-loop window at `nowMs`. Pure, no append. */
+export function trimProcessStarts(starts: string[], nowMs: number): string[] {
+  const cutoff = nowMs - RESTART_LOOP_WINDOW_MS;
+  return starts.filter((iso) => {
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) && ms >= cutoff && ms <= nowMs;
+  });
+}
+
+/**
+ * Evaluated at report time against the current clock, so a burst of restarts
+ * stops counting once it falls out of the window instead of latching for the
+ * life of the process.
+ */
+export function isRestartLoop(recentStarts: string[], nowMs?: number): boolean {
+  const live =
+    nowMs == null ? recentStarts : trimProcessStarts(recentStarts, nowMs);
+  return live.length >= RESTART_LOOP_THRESHOLD;
+}
+
+/**
+ * The catch-up cap is "reached" only while the last scheduled run is still
+ * interrupted and the cap is used up. Derived from the run history rather than
+ * latched in memory, so it clears as soon as a scheduled or catch-up run
+ * completes, or the catch-ups age out of the 24h window.
+ */
+export function isCatchUpCapReached(params: {
+  lastScheduledRun: { id: number; status: string } | null;
+  catchUpsInLastDay: number;
+  maxCatchUpsPerDay: number;
+}): boolean {
+  return decideInterruptedRunCatchUp(params).action === "suppressed";
 }

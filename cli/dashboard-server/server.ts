@@ -30,7 +30,9 @@ import {
   type RefreshRunStatus,
 } from "../db/refresh-runs";
 import {
+  isCatchUpCapReached,
   isRestartLoop,
+  trimProcessStarts,
   recordProcessStart,
   recoverInterruptedScheduledRun,
   SCHEDULED_RUN_TRIGGERS,
@@ -332,9 +334,10 @@ const PROCESS_STARTS_KEY = "dashboard:process-starts";
 const HEALTH_WRITE_CHECK_KEY = "dashboard:health:write-check";
 const HEALTH_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 const HEALTH_ALERT_FIRST_DELAY_MS = 10 * 60 * 1000;
+/** When this start already looks like a restart loop, say so quickly. */
+const HEALTH_ALERT_FIRST_DELAY_RESTART_LOOP_MS = 60 * 1000;
 
 let recentProcessStarts: string[] = [];
-let catchUpCapReached = false;
 
 /** Appends this start to the persisted log the restart-loop check reads. */
 function recordThisProcessStart(): void {
@@ -378,7 +381,31 @@ function safeRead<T>(read: () => T, fallback: T): T {
   }
 }
 
+function currentRestartLoopState(nowMs: number): {
+  detected: boolean;
+  recentStarts: number;
+} {
+  const live = trimProcessStarts(recentProcessStarts, nowMs);
+  const capReached = safeRead(
+    () =>
+      isCatchUpCapReached({
+        lastScheduledRun: getLatestRefreshRun(SCHEDULED_RUN_TRIGGERS),
+        catchUpsInLastDay: countRefreshRunsSince(
+          "catch-up",
+          new Date(nowMs - 24 * 60 * 60 * 1000).toISOString()
+        ),
+        maxCatchUpsPerDay: ASO_ENV.refreshMaxCatchUpsPerDay,
+      }),
+    false
+  );
+  return {
+    detected: isRestartLoop(live) || capReached,
+    recentStarts: live.length,
+  };
+}
+
 function collectHealthReport(): HealthReport {
+  const nowMs = Date.now();
   const db = checkDbWritable();
   const lastRunRow = safeRead(() => getLatestRefreshRun(), null);
   const lastRun = lastRunRow
@@ -396,7 +423,7 @@ function collectHealthReport(): HealthReport {
   const keeper = sessionKeeper.getState();
   const memory = process.memoryUsage();
   return buildHealthReport({
-    nowMs: Date.now(),
+    nowMs,
     uptimeSeconds: process.uptime(),
     memory: {
       rss: memory.rss,
@@ -430,10 +457,7 @@ function collectHealthReport(): HealthReport {
       ok: keeper.ok,
       needsTwoFactor: keeper.needsTwoFactor,
     },
-    restartLoop: {
-      detected: isRestartLoop(recentProcessStarts) || catchUpCapReached,
-      recentStarts: recentProcessStarts.length,
-    },
+    restartLoop: currentRestartLoopState(nowMs),
   });
 }
 
@@ -469,7 +493,10 @@ async function evaluateHealthAlerts(): Promise<void> {
 }
 
 function startHealthAlertTimer(): () => void {
-  const first = setTimeout(() => void evaluateHealthAlerts(), HEALTH_ALERT_FIRST_DELAY_MS);
+  const firstDelayMs = isRestartLoop(recentProcessStarts, Date.now())
+    ? HEALTH_ALERT_FIRST_DELAY_RESTART_LOOP_MS
+    : HEALTH_ALERT_FIRST_DELAY_MS;
+  const first = setTimeout(() => void evaluateHealthAlerts(), firstDelayMs);
   const every = setInterval(() => void evaluateHealthAlerts(), HEALTH_ALERT_INTERVAL_MS);
   first.unref?.();
   every.unref?.();
@@ -514,7 +541,6 @@ function recoverInterruptedRefresh(): void {
       startCatchUp: () =>
         startupRefreshManager.start({ force: true, trigger: "catch-up" }),
       onSuppressed: (suppressed) => {
-        catchUpCapReached = true;
         logger.error(
           `[aso-refresh] not catching up interrupted run: ${JSON.stringify(suppressed)}; ` +
             `ASO_REFRESH_MAX_CATCHUPS_PER_DAY=${ASO_ENV.refreshMaxCatchUpsPerDay} reached, likely a restart loop`
