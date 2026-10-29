@@ -50,8 +50,10 @@ VOLUME ["/home/node/.aso"]
 
 EXPOSE 3456
 
-# node rather than curl: the slim image has no curl.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3456/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+# bash's /dev/tcp rather than node or curl: the slim image has no curl, and
+# spawning a second node every probe cost ~40 MB RSS and ~100 ms CPU each time
+# inside a 512 MB container. HTTP/1.0 so the server closes the connection.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3456 && printf 'GET /livez HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
 
 CMD ["node", "cli/dist/cli.js"]
