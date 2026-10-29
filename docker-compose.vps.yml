@@ -37,9 +37,13 @@ services:
       # These are the defaults, i.e. today's effective rates. Raising a cap is
       # the experiment; a 429/403/503 halves that host's rate for 30 min.
       ASO_RATE_MZSEARCH_PER_MIN: "30"
-      ASO_RATE_SEARCHPAGE_PER_MIN: "30"
+      ASO_RATE_SEARCHPAGE_PER_MIN: "15"
       ASO_RATE_LOOKUP_PER_MIN: "15"
       ASO_RATE_POPULARITY_PER_MIN: "4"
+      # The search-page rank prefix is new apps.apple.com traffic; it stays off
+      # until the rate experiment has a clean baseline (docs/deployment.md,
+      # step 2). The code default is on.
+      ASO_RANK_SEARCHPAGE_PREFIX: "0"
       # Workers. They only fill the per-host schedule faster and can never
       # exceed the caps above, so raising these alone is safe.
       ASO_STOREFRONT_CONCURRENCY: "1"

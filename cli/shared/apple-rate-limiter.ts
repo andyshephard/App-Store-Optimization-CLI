@@ -33,7 +33,9 @@ export const APPLE_HOST_CLASSES: AppleHostClass[] = [
  */
 export const DEFAULT_RATE_PER_MIN: Record<AppleHostClass, number> = {
   mzsearch: 30,
-  searchpage: 30,
+  // New traffic (the ratings-mode rank prefix), and apps.apple.com throttles
+  // per storefront: start at half the MZSearch rate.
+  searchpage: 15,
   lookup: 15,
   popularity: 4,
 };

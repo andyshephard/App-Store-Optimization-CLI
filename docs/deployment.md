@@ -144,7 +144,7 @@ window carries more than the cap - whatever the concurrency settings.
 | Host class | Host | Env (requests/min) | Default |
 |---|---|---|---|
 | `mzsearch` | `search.itunes.apple.com` (MZSearch order and autocomplete hints) | `ASO_RATE_MZSEARCH_PER_MIN` | 30 |
-| `searchpage` | `apps.apple.com` (search page and app pages) | `ASO_RATE_SEARCHPAGE_PER_MIN` | 30 |
+| `searchpage` | `apps.apple.com` (search page and app pages) | `ASO_RATE_SEARCHPAGE_PER_MIN` | 15 |
 | `lookup` | `itunes.apple.com/lookup` | `ASO_RATE_LOOKUP_PER_MIN` | 15 |
 | `popularity` | `app-ads.apple.com` | `ASO_RATE_POPULARITY_PER_MIN` | 4 |
 
@@ -157,8 +157,9 @@ requests then 15 s of pause: about 25 MZSearch and 25 lookups per 30 s, i.e.
 storefront pauses are counted (the 2026-07-28 measurement: ~152 s of request
 work across 12 storefronts, the rest pauses). The defaults sit below that:
 MZSearch 30/min; lookups 15/min (lookups are now merged per batch, ~3-5 per 25
-keywords, so 15/min is not the bottleneck); the search page 30/min, one per
-keyword like MZSearch; popularity 4/min (1-2 requests per batch). The sleeps are
+keywords, so 15/min is not the bottleneck); the search page 15/min, because the rank
+prefix is new traffic to a host that throttles per storefront (and the VPS
+compose starts with the prefix off, `ASO_RANK_SEARCHPAGE_PREFIX=0`); popularity 4/min (1-2 requests per batch). The sleeps are
 now only breathing room: 5 s between batches, 15 s between storefronts. These
 estimates assume ~0.3 s latency; the first run's `requests` line (below) gives
 the measured figures.
@@ -180,31 +181,40 @@ caps and effective rates at the end of the run. `rateLimits` in the health
 report shows the current effective rate per host. The run log has one line:
 `[aso-refresh] requests durationMs=... mzsearch=N(R/min,429=..,403=..,5xx=..) ...`.
 
-**Expected runtime.** Per keyword the crawl needs one MZSearch and one
-search-page request (separate hosts, so they pace side by side), so at the
-defaults it runs at ~30 keywords/min: total minutes ≈ keywords / 30, plus 5 s
-per batch and 15 s per storefront. For example 1,000 tracked keywords across 12
-storefronts: ~33 + ~3.5 + ~2.75 ≈ 40 min, at most 30 requests/min to each search
-host and ~4-10/min to lookup. The old pacing did the same keywords in roughly
-30-35 min (without the search-page request), but in bursts of ~50/min per host
-inside a storefront, and with no limit on retries or on dashboard traffic
-running at the same time.
+**Expected runtime.** With the search-page prefix off (VPS night 1) each
+keyword needs one MZSearch request, so the crawl runs at ~30 keywords/min:
+total minutes ≈ keywords / 30, plus 5 s per batch and 15 s per storefront. For
+example 1,000 tracked keywords across 12 storefronts: ~33 + ~3.5 + ~2.75 ≈ 40
+min, at most 30 requests/min to MZSearch and ~4-10/min to lookup. With the
+prefix on, each keyword also needs a search-page request at 15/min, which then
+sets the pace: ~15 keywords/min, ~70 min for the same 1,000 until that cap is
+raised. The old pacing did the same keywords in roughly 30-35 min, but in
+bursts of ~50/min per host inside a storefront, and with no limit on retries or
+on dashboard traffic running at the same time.
 
 ### Rate experiment plan
 
 Goal: find how fast Apple lets this box crawl without being throttled.
 
-1. **Night 1 - defaults.** Caps as above, `ASO_STOREFRONT_CONCURRENCY=1`.
-   Next morning read `lastRun.requests` in `/api/aso/health`: every host should
-   show 0 for 429/403/5xx and `throttles`. Note the run duration.
-2. **Night 2.** `ASO_STOREFRONT_CONCURRENCY=2`, and raise
+1. **Night 1 - defaults, prefix off.** Caps as above,
+   `ASO_STOREFRONT_CONCURRENCY=1`, `ASO_RANK_SEARCHPAGE_PREFIX=0` (as the VPS
+   compose ships). Next morning read `lastRun.requests` in `/api/aso/health`:
+   every host should show 0 for 429/403/5xx and `throttles`. Note the run
+   duration.
+2. **Night 2 - turn the search-page prefix on, nothing else.**
+   `ASO_RANK_SEARCHPAGE_PREFIX=1` at `ASO_RATE_SEARCHPAGE_PER_MIN=15`. Check the
+   `searchpage` host shows no 403/429 (apps.apple.com throttles per storefront
+   with 403) and that ranks 1-11 look right in the dashboard. If it throttles,
+   turn the prefix back off and leave it there.
+3. **Night 3.** `ASO_STOREFRONT_CONCURRENCY=2`, and raise
    `ASO_RATE_LOOKUP_PER_MIN` and `ASO_RATE_MZSEARCH_PER_MIN` (and
-   `ASO_RATE_SEARCHPAGE_PER_MIN` with it) by ~25%: 30 -> 38, 15 -> 19.
-3. **Each following night**, if the previous run had no 429/403/5xx and no
+   `ASO_RATE_SEARCHPAGE_PER_MIN` if the prefix is on) by ~25%: 30 -> 38,
+   15 -> 19.
+4. **Each following night**, if the previous run had no 429/403/5xx and no
    `[apple-rate]` warnings, raise those caps by another ~25% (38 -> 48 -> 60 ...).
-4. **Stop at the first night with any throttle** on that host. The adaptive
+5. **Stop at the first night with any throttle** on that host. The adaptive
    guard will already have halved the rate for that run.
-5. **Settle at 75% of the highest clean rate**: e.g. clean at 48, throttled at
+6. **Settle at 75% of the highest clean rate**: e.g. clean at 48, throttled at
    60 -> set 36. Record the result here with the date.
 
 Change one thing per night (in the compose `environment` block or the
