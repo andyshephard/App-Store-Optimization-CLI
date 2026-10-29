@@ -1784,7 +1784,7 @@ export function App() {
       if (action === "force-refresh") {
         await forceRefreshKeywords({
           appId: selectedAppId,
-          country: DEFAULT_ASO_COUNTRY,
+          country,
           keywords: selected,
         });
         return;
@@ -1809,6 +1809,7 @@ export function App() {
       });
     },
     [
+      country,
       forceRefreshKeywords,
       keywordActionMenu,
       onContextCopy,

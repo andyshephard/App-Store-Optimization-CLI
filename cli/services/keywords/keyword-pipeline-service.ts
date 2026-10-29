@@ -797,17 +797,15 @@ export class KeywordPipelineService {
       };
     }
 
-    const popularityResult =
+    const popularityResult = await fetchKeywordPopularitiesPreferringAdsApi(
+      country,
+      normalizedKeywords,
       options?.allowInteractiveAuthRecovery === false
-        ? await asoPopularityService.fetchKeywordPopularitiesWithFailures(
-            normalizedKeywords,
-            { allowInteractiveAuthRecovery: false }
-          )
-        : await asoPopularityService.fetchKeywordPopularitiesWithFailures(
-            normalizedKeywords
-          );
+        ? { allowInteractiveAuthRecovery: false }
+        : undefined
+    );
     const popularityFailureKeywords = new Set(
-      popularityResult.failedKeywords.map((failure) =>
+      popularityResult.failedKeywords.map((failure: FailedKeyword) =>
         normalizeKeyword(failure.keyword)
       )
     );

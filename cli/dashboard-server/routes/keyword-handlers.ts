@@ -709,7 +709,10 @@ export function createKeywordHandlers(deps: AsoRouteDeps) {
     }
     const appId = body.appId ?? DEFAULT_RESEARCH_APP_ID;
     const keywords = keywordPipelineService.normalizeKeywords(body.keywords ?? []);
-    const country = normalizeCountry(body.country);
+    const country = resolveRequestCountry(res, body.country);
+    if (!country) {
+      return;
+    }
 
     if (keywords.length === 0) {
       deps.sendApiError(
