@@ -178,10 +178,13 @@ export type StoredOrderLookup = (normalizedKeyword: string) => string[] | null;
 
 /**
  * Refuses an empty order only where it would destroy data: the keyword already
- * has a non-empty stored order and the response is not clearly an empty
- * result. A never-enriched keyword, or one that was already empty, may
- * genuinely have no results in a smaller storefront, and refusing it would
- * leave it failed forever. Without a lookup there is nothing to protect.
+ * has a non-empty stored order. N apps yesterday and none today is far more
+ * likely a degraded response than a real change, even when the response looks
+ * like Apple's "no results" shape, so it is treated as unresolved and the
+ * stored order is kept. A never-enriched keyword, or one that was already
+ * empty, may genuinely have no results in a smaller storefront, and refusing
+ * it would leave it failed forever. Without a lookup there is nothing to
+ * protect.
  */
 function assertUsableOrder(params: {
   keyword: string;
@@ -191,7 +194,7 @@ function assertUsableOrder(params: {
   source: string;
   getStoredOrderedAppIds?: StoredOrderLookup;
 }): void {
-  if (params.orderedAppIds.length > 0 || params.clearlyEmpty) return;
+  if (params.orderedAppIds.length > 0) return;
   const previous =
     params.getStoredOrderedAppIds?.(normalizeKeyword(params.keyword)) ?? null;
   if (!previous || previous.length === 0) return;
@@ -199,7 +202,7 @@ function assertUsableOrder(params: {
     code: "EMPTY_ORDER",
     keyword: params.keyword,
     country: params.country,
-    detail: `source=${params.source} returned no apps; keeping the stored order of ${previous.length}`,
+    detail: `source=${params.source} returned no apps${params.clearlyEmpty ? " (no software bubble)" : ""}; keeping the stored order of ${previous.length}`,
   });
 }
 
@@ -362,10 +365,10 @@ async function fetchPopularityOrderedIds(params: {
 }
 
 /**
- * `clearlyEmpty` is true only when the response is well formed and simply has
- * no software bubble - Apple's shape for "no app results". An empty software
- * bubble is not treated as clearly empty: that is what a degraded response
- * looks like too.
+ * `clearlyEmpty` is true only when the response carries other bubbles but no
+ * software bubble - Apple's shape for "no app results". A bare `bubbles: []`
+ * or an empty software bubble is not: a degraded response looks like that
+ * too. Diagnostic only; an empty order never replaces a stored one.
  */
 async function fetchPopularityOrder(params: {
   keyword: string;
@@ -445,7 +448,9 @@ async function fetchPopularityOrder(params: {
     };
   }
 
-  return { orderedAppIds: [], clearlyEmpty: true };
+  // Only a response that carries other bubbles but no software bubble looks
+  // like a real "no app results"; a bare `bubbles: []` says nothing.
+  return { orderedAppIds: [], clearlyEmpty: bubbles.length > 0 };
 }
 
 function lockupToAppDoc(lockup: AmpSearchLockup, country: string): AsoAppDoc | null {

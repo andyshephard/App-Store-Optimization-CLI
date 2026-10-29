@@ -116,4 +116,14 @@ describe("refresh-run-recovery", () => {
       isCatchUpCapReached({ lastScheduledRun: interrupted, catchUpsInLastDay: 0, maxCatchUpsPerDay: 2 })
     ).toBe(false);
   });
+
+  it("does not call catch-up disabled by configuration a restart loop", () => {
+    expect(
+      isCatchUpCapReached({
+        lastScheduledRun: { id: 9, status: "interrupted" },
+        catchUpsInLastDay: 0,
+        maxCatchUpsPerDay: 0,
+      })
+    ).toBe(false);
+  });
 });

@@ -541,6 +541,12 @@ function recoverInterruptedRefresh(): void {
       startCatchUp: () =>
         startupRefreshManager.start({ force: true, trigger: "catch-up" }),
       onSuppressed: (suppressed) => {
+        if (ASO_ENV.refreshMaxCatchUpsPerDay <= 0) {
+          logger.warn(
+            `[aso-refresh] not catching up interrupted run ${JSON.stringify(suppressed)}: disabled by ASO_REFRESH_MAX_CATCHUPS_PER_DAY=0`
+          );
+          return;
+        }
         logger.error(
           `[aso-refresh] not catching up interrupted run: ${JSON.stringify(suppressed)}; ` +
             `ASO_REFRESH_MAX_CATCHUPS_PER_DAY=${ASO_ENV.refreshMaxCatchUpsPerDay} reached, likely a restart loop`

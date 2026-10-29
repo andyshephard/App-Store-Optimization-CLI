@@ -1187,16 +1187,32 @@ describe("aso-enrichment-service (untrustworthy MZSearch order)", () => {
     expect(result.orderedAppIds).toEqual([]);
   });
 
-  it("accepts a clearly empty result (no software bubble) even over a stored order", async () => {
+  it.each([
+    ["no software bubble", [{ name: "editorial", results: [] }]],
+    ["a bare bubbles: []", []],
+  ])("refuses %s over a stored non-empty order", async (_label, bubbles) => {
     mockedAsoAppleGet.mockResolvedValueOnce({
-      data: { pageData: { bubbles: [{ name: "editorial", results: [] }] } },
+      data: { pageData: { bubbles } },
     } as never);
 
-    const result = await refreshKeywordOrder({
-      keyword: "zzqx",
-      country: "PT",
-      getStoredOrderedAppIds: storedOrder(["1"]),
-    });
+    await expect(
+      refreshKeywordOrder({
+        keyword: "zzqx",
+        country: "PT",
+        getStoredOrderedAppIds: storedOrder(["1"]),
+      })
+    ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
+  });
+
+  it("accepts a bare bubbles: [] for a never-enriched keyword", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce({
+      data: { pageData: { bubbles: [] } },
+    } as never);
+
+    const result = await enrichKeyword(
+      { keyword: "zzqx", country: "VN", popularity: 5 },
+      { getStoredOrderedAppIds: storedOrder([]) }
+    );
     expect(result.orderedAppIds).toEqual([]);
   });
 

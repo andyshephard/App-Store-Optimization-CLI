@@ -125,5 +125,8 @@ export function isCatchUpCapReached(params: {
   catchUpsInLastDay: number;
   maxCatchUpsPerDay: number;
 }): boolean {
+  // A cap of 0 means catch-up is switched off by configuration, not that a
+  // loop used it up.
+  if (params.maxCatchUpsPerDay <= 0) return false;
   return decideInterruptedRunCatchUp(params).action === "suppressed";
 }
