@@ -15,7 +15,7 @@ import type { StoredAsoKeyword } from "../../db/types";
 import {
   enrichAsoKeywordsLocal,
   lookupAsoCacheLocal,
-  refreshAsoKeywordOrderLocal,
+  refreshAsoKeywordOrdersLocal,
 } from "./aso-local-cache-service";
 import { normalizeKeyword } from "../../shared/aso-keyword-utils";
 import { getKeywords } from "../../db/aso-keywords";
@@ -694,28 +694,31 @@ export class KeywordPipelineService {
     const positionCapturedAtByKeyword = new Map<string, string>();
     const orderSourceByKeyword = new Map<string, string>();
 
-    for (const keyword of normalized) {
+    const crawlable = normalized.filter((keyword) =>
+      isCompleteStoredAsoKeyword(existingByNormalized.get(keyword))
+    );
+    // One call per batch: orders are still crawled keyword by keyword, but
+    // the top-10 iTunes lookups are merged into 50-id requests.
+    const outcomes = crawlable.length
+      ? await refreshAsoKeywordOrdersLocal(country, crawlable)
+      : [];
+    const outcomeByKeyword = new Map(
+      outcomes.map((outcome) => [outcome.keyword, outcome] as const)
+    );
+
+    for (const keyword of crawlable) {
       const existing = existingByNormalized.get(keyword);
       if (!isCompleteStoredAsoKeyword(existing)) continue;
-
-      let updatedOrder: {
-        keyword: string;
-        normalizedKeyword: string;
-        appCount: number;
-        orderedAppIds: string[];
-        difficultyScore?: number;
-        orderSource?: string;
-      } | null = null;
-      try {
-        updatedOrder = await refreshAsoKeywordOrderLocal(country, keyword);
-      } catch (error) {
-        const failure = toEnrichmentFailureFromError(keyword, error);
+      const outcome = outcomeByKeyword.get(keyword);
+      if (outcome && !outcome.ok) {
+        const failure = toEnrichmentFailureFromError(keyword, outcome.error);
         failedKeywords.push(failure);
         logger.warn(
           `[keyword-pipeline] order refresh failed country=${country} keyword=${keyword} reason=${failure.reasonCode} message=${failure.message}`
         );
         continue;
       }
+      const updatedOrder = outcome?.ok ? outcome.value : null;
       if (!updatedOrder) {
         failedKeywords.push(
           toEnrichmentFailureFromError(
@@ -725,7 +728,8 @@ export class KeywordPipelineService {
         );
         continue;
       }
-      const positionCapturedAt = new Date().toISOString();
+      const positionCapturedAt =
+        outcome?.ok && outcome.observedAt ? outcome.observedAt : new Date().toISOString();
       const refreshedItem: AsoKeywordItem = {
         keyword: existing.keyword,
         normalizedKeyword: existing.normalizedKeyword,

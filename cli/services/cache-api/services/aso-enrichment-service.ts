@@ -21,6 +21,7 @@ import { ASO_ENV } from "../../../shared/aso-env";
 import type { AsoAppDoc, AsoAppDocIcon } from "./aso-types";
 import { asoAppleGet } from "./aso-apple-client";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
+import { currentRunLookupCache } from "../../keywords/observation-context";
 import { getStorefrontDefaultLanguage } from "../../../shared/aso-storefront-localizations";
 import {
   getAcceptLanguage,
@@ -1095,6 +1096,25 @@ export async function enrichKeywordFromRatings(
   params: EnrichKeywordParams,
   options?: EnrichKeywordOptions
 ): Promise<EnrichKeywordResult> {
+  const order = await resolveRatingsKeywordOrder(params, options);
+  const lookupById = await lookupTopDocs(order.country, order.topIds);
+  return finishRatingsEnrichment(params, options, order, lookupById);
+}
+
+type RatingsKeywordOrder = {
+  country: string;
+  normalizedKeyword: string;
+  orderedAppIds: string[];
+  orderSource: RankOrderSource;
+  appCount: number;
+  topIds: string[];
+};
+
+/** Phase 1: the rank order (MZSearch, search-page prefix, empty-order guard). */
+async function resolveRatingsKeywordOrder(
+  params: EnrichKeywordParams,
+  options?: EnrichKeywordOptions
+): Promise<RatingsKeywordOrder> {
   const country = params.country.toUpperCase();
   const normalizedKeyword = normalizeKeyword(params.keyword);
 
@@ -1116,14 +1136,60 @@ export async function enrichKeywordFromRatings(
     source: "mzsearch",
     getStoredOrderedAppIds: options?.getStoredOrderedAppIds,
   });
-  const appCount = orderedAppIds.length;
-  const topIds = orderedAppIds.slice(0, RATING_DIFFICULTY_TOP_N);
+  return {
+    country,
+    normalizedKeyword,
+    orderedAppIds,
+    orderSource,
+    appCount: orderedAppIds.length,
+    topIds: orderedAppIds.slice(0, RATING_DIFFICULTY_TOP_N),
+  };
+}
 
-  const lookupById =
-    topIds.length > 0
-      ? await fetchItunesLookupAppDocs({ country, appIds: topIds })
-      : new Map<string, AsoAppDoc>();
+/**
+ * iTunes lookup docs for these ids, served from the current run's cache
+ * where possible (see observation-context), the rest fetched in 50-id
+ * requests. Returns only ids Apple answered for.
+ */
+async function lookupTopDocs(
+  country: string,
+  appIds: string[]
+): Promise<Map<string, AsoAppDoc>> {
+  const out = new Map<string, AsoAppDoc>();
+  if (appIds.length === 0) return out;
+  const cache = currentRunLookupCache<AsoAppDoc>(country);
+  const missing: string[] = [];
+  for (const id of new Set(appIds)) {
+    const cached = cache?.get(id);
+    if (cached) out.set(id, cached);
+    else missing.push(id);
+  }
+  if (missing.length > 0) {
+    const fetched = await fetchItunesLookupAppDocs({ country, appIds: missing });
+    for (const [id, doc] of fetched) {
+      out.set(id, doc);
+      cache?.set(id, doc);
+    }
+  }
+  return out;
+}
 
+/** Phase 2: difficulty, docs, match and brand from the order and the lookup. */
+async function finishRatingsEnrichment(
+  params: EnrichKeywordParams,
+  options: EnrichKeywordOptions | undefined,
+  order: RatingsKeywordOrder,
+  allLookups: Map<string, AsoAppDoc>
+): Promise<EnrichKeywordResult> {
+  const { country, normalizedKeyword, orderedAppIds, orderSource, appCount, topIds } =
+    order;
+  // Only this keyword's top ids, so a batched lookup behaves exactly like a
+  // per-keyword one (including the empty-lookup failure below).
+  const lookupById = new Map<string, AsoAppDoc>();
+  for (const id of topIds) {
+    const doc = allLookups.get(id);
+    if (doc) lookupById.set(id, doc);
+  }
   if (topIds.length > 0 && lookupById.size === 0) {
     throw new InsufficientDifficultyDocsError({
       keyword: params.keyword,
@@ -1196,6 +1262,106 @@ export async function enrichKeywordFromRatings(
     appDocs,
     orderSource,
   };
+}
+
+export type KeywordOrderBatchOutcome =
+  | {
+      keyword: string;
+      ok: true;
+      value: Awaited<ReturnType<typeof refreshKeywordOrder>>;
+      /** When this keyword's order was fetched from Apple. */
+      observedAt: string;
+    }
+  | { keyword: string; ok: false; error: unknown };
+
+/**
+ * Order refresh for a batch of keywords with one merged iTunes lookup.
+ *
+ * Ratings mode used to look up each keyword's top 10 separately - 25
+ * keywords, 25 lookup requests, with heavy overlap between related
+ * keywords. Here every keyword's order is resolved first (MZSearch and the
+ * search page, one keyword at a time as before), then the union of their
+ * top-10 ids is looked up in 50-id requests (through the run cache), then
+ * each keyword is scored from its own top 10. Per-keyword results and
+ * failures are identical to calling refreshKeywordOrder one by one; only
+ * the number of lookup requests changes. Legacy mode is unchanged.
+ */
+export async function refreshKeywordOrdersBatch(params: {
+  country: string;
+  keywords: string[];
+  getStoredOrderedAppIds?: StoredOrderLookup;
+}): Promise<KeywordOrderBatchOutcome[]> {
+  const outcomes: KeywordOrderBatchOutcome[] = [];
+  if (ASO_ENV.enrichmentMode === "legacy") {
+    for (const keyword of params.keywords) {
+      try {
+        const value = await refreshKeywordOrder({
+          keyword,
+          country: params.country,
+          getStoredOrderedAppIds: params.getStoredOrderedAppIds,
+        });
+        outcomes.push({ keyword, ok: true, value, observedAt: new Date().toISOString() });
+      } catch (error) {
+        outcomes.push({ keyword, ok: false, error });
+      }
+    }
+    return outcomes;
+  }
+
+  const options: EnrichKeywordOptions | undefined = params.getStoredOrderedAppIds
+    ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
+    : undefined;
+  const ordered: Array<{
+    keyword: string;
+    order: RatingsKeywordOrder;
+    observedAt: string;
+  }> = [];
+  for (const keyword of params.keywords) {
+    try {
+      const order = await resolveRatingsKeywordOrder(
+        { keyword, country: params.country, popularity: 0 },
+        options
+      );
+      ordered.push({ keyword, order, observedAt: new Date().toISOString() });
+    } catch (error) {
+      outcomes.push({ keyword, ok: false, error });
+    }
+  }
+
+  const country = params.country.toUpperCase();
+  const lookups = await lookupTopDocs(
+    country,
+    ordered.flatMap((entry) => entry.order.topIds)
+  );
+  for (const { keyword, order, observedAt } of ordered) {
+    try {
+      const enriched = await finishRatingsEnrichment(
+        { keyword, country: params.country, popularity: 0 },
+        options,
+        order,
+        lookups
+      );
+      outcomes.push({
+        keyword,
+        ok: true,
+        value: {
+          keyword: enriched.keyword,
+          normalizedKeyword: enriched.normalizedKeyword,
+          appCount: enriched.appCount,
+          orderedAppIds: enriched.orderedAppIds,
+          appDocs: enriched.appDocs,
+          difficultyScore: enriched.difficultyScore,
+          orderSource: enriched.orderSource,
+        },
+        observedAt,
+      });
+    } catch (error) {
+      outcomes.push({ keyword, ok: false, error });
+    }
+  }
+  // Callers match by keyword, but keep the input order for predictability.
+  const rank = new Map(params.keywords.map((keyword, index) => [keyword, index]));
+  return outcomes.sort((a, b) => (rank.get(a.keyword) ?? 0) - (rank.get(b.keyword) ?? 0));
 }
 
 async function enrichKeywordLegacy(

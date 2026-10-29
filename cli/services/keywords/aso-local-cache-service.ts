@@ -3,6 +3,8 @@ import {
   enrichAsoKeywords,
   getAsoAppDocs,
   refreshKeywordOrder,
+  refreshKeywordOrdersBatch,
+  type KeywordOrderBatchOutcome,
 } from "../cache-api";
 import type {
   AsoAppDocItem,
@@ -71,6 +73,18 @@ export async function refreshAsoKeywordOrderLocal(
   return refreshKeywordOrder({
     country,
     keyword,
+    getStoredOrderedAppIds: storedOrderLookup(country),
+  });
+}
+
+/** Order refresh for a batch, with one merged iTunes lookup (ratings mode). */
+export async function refreshAsoKeywordOrdersLocal(
+  country: string,
+  keywords: string[]
+): Promise<KeywordOrderBatchOutcome[]> {
+  return refreshKeywordOrdersBatch({
+    country,
+    keywords,
     getStoredOrderedAppIds: storedOrderLookup(country),
   });
 }

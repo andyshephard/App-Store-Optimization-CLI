@@ -24,6 +24,25 @@ jest.mock("./aso-local-cache-service", () => ({
   enrichAsoKeywordsLocal: jest.fn(),
   lookupAsoCacheLocal: jest.fn(),
   refreshAsoKeywordOrderLocal: jest.fn(),
+  // Delegates to the single-keyword mock so existing expectations still hold.
+  refreshAsoKeywordOrdersLocal: jest.fn(async (country: string, keywords: string[]) => {
+    const single = (jest.requireMock("./aso-local-cache-service") as any)
+      .refreshAsoKeywordOrderLocal as (c: string, k: string) => Promise<unknown>;
+    const outcomes: unknown[] = [];
+    for (const keyword of keywords) {
+      try {
+        outcomes.push({
+          keyword,
+          ok: true,
+          value: await single(country, keyword),
+          observedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        outcomes.push({ keyword, ok: false, error });
+      }
+    }
+    return outcomes;
+  }),
 }));
 
 const getKeywordsMock = getKeywords as jest.MockedFunction<typeof getKeywords>;

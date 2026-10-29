@@ -3,6 +3,7 @@ import {
   __resetIncompleteTopDocLookupCooldownForTests,
   enrichKeyword,
   refreshKeywordOrder,
+  refreshKeywordOrdersBatch,
 } from "./aso-enrichment-service";
 import { asoAppleGet } from "./aso-apple-client";
 import {
@@ -1353,5 +1354,103 @@ describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
         getStoredOrderedAppIds: () => ["1"],
       })
     ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
+  });
+});
+
+describe("aso-enrichment-service (batched lookups)", () => {
+  const { withObservationRun, __resetRunLookupCacheForTests } =
+    jest.requireActual("../../keywords/observation-context") as typeof import("../../keywords/observation-context");
+
+  // Fixture: three keywords whose top 10s overlap heavily.
+  const orders: Record<string, string[]> = {
+    budget: Array.from({ length: 40 }, (_, i) => String(i + 1)),
+    "budget planner": ["3", "1", "2", ...Array.from({ length: 30 }, (_, i) => String(100 + i))],
+    money: ["7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"],
+  };
+  const ratingCounts: Record<string, number> = {};
+  for (let i = 1; i < 200; i += 1) ratingCounts[String(i)] = (i * 7919) % 250000;
+
+  function mzsearchFor(term: string) {
+    return {
+      data: { pageData: { bubbles: [{ name: "software", results: (orders[term] ?? []).map((id) => ({ id })) }] } },
+    } as never;
+  }
+  function lookupImpl({ appIds }: { appIds: string[] }) {
+    return Promise.resolve(
+      new Map(
+        appIds.map((appId) => [
+          appId,
+          { appId, country: "US", name: `App ${appId}`, averageUserRating: 4, userRatingCount: ratingCounts[appId] ?? 0 },
+        ])
+      ) as never
+    );
+  }
+
+  beforeEach(() => {
+    delete process.env.ASO_ENRICHMENT_MODE;
+    process.env.ASO_RANK_SEARCHPAGE_PREFIX = "0";
+    jest.clearAllMocks();
+    __resetRunLookupCacheForTests();
+    mockedAsoAppleGet.mockImplementation((async (_url: string, config: { params?: { term?: string } }) =>
+      mzsearchFor(config?.params?.term ?? "")) as never);
+    mockedFetchItunesLookupAppDocs.mockImplementation(lookupImpl as never);
+  });
+
+  afterAll(() => {
+    delete process.env.ASO_RANK_SEARCHPAGE_PREFIX;
+  });
+
+  it("scores exactly as per-keyword refreshes do, with one merged lookup", async () => {
+    const keywords = Object.keys(orders);
+    const single = [];
+    for (const keyword of keywords) {
+      single.push(await refreshKeywordOrder({ keyword, country: "US" }));
+    }
+    expect(mockedFetchItunesLookupAppDocs).toHaveBeenCalledTimes(3);
+    mockedFetchItunesLookupAppDocs.mockClear();
+
+    const batch = await refreshKeywordOrdersBatch({ country: "US", keywords });
+
+    expect(mockedFetchItunesLookupAppDocs).toHaveBeenCalledTimes(1);
+    const requested = mockedFetchItunesLookupAppDocs.mock.calls[0][0].appIds;
+    expect(new Set(requested).size).toBe(requested.length);
+    expect(requested.length).toBeLessThan(30);
+    expect(
+      batch.map((outcome) =>
+        outcome.ok
+          ? [outcome.keyword, outcome.value.difficultyScore, outcome.value.orderedAppIds, outcome.value.appCount]
+          : [outcome.keyword, "failed"]
+      )
+    ).toEqual(single.map((r, i) => [keywords[i], r.difficultyScore, r.orderedAppIds, r.appCount]));
+  });
+
+  it("isolates a keyword whose order fails without affecting the rest", async () => {
+    const batch = await refreshKeywordOrdersBatch({
+      country: "US",
+      keywords: ["budget", "nothing-here", "money"],
+      getStoredOrderedAppIds: (keyword) => (keyword === "nothing-here" ? ["1"] : null),
+    });
+
+    expect(batch.map((outcome) => [outcome.keyword, outcome.ok])).toEqual([
+      ["budget", true],
+      ["nothing-here", false],
+      ["money", true],
+    ]);
+  });
+
+  it("reuses lookups across batches within one run, per storefront", async () => {
+    await withObservationRun(5, async () => {
+      await refreshKeywordOrdersBatch({ country: "US", keywords: ["budget"] });
+      await refreshKeywordOrdersBatch({ country: "US", keywords: ["budget planner"] });
+    });
+    // The second batch only needs the ids the first did not already fetch.
+    const second = mockedFetchItunesLookupAppDocs.mock.calls[1][0].appIds;
+    expect(second).not.toContain("1");
+    expect(second).not.toContain("3");
+
+    mockedFetchItunesLookupAppDocs.mockClear();
+    await refreshKeywordOrdersBatch({ country: "US", keywords: ["budget"] });
+    // Outside a run there is no cache.
+    expect(mockedFetchItunesLookupAppDocs.mock.calls[0][0].appIds).toHaveLength(10);
   });
 });

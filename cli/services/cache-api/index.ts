@@ -6,7 +6,9 @@ export {
 export {
   enrichKeyword,
   refreshKeywordOrder,
+  refreshKeywordOrdersBatch,
 } from "./services/aso-enrichment-service";
+export type { KeywordOrderBatchOutcome } from "./services/aso-enrichment-service";
 export {
   normalizeKeyword,
   computeOrderExpiryIso,
