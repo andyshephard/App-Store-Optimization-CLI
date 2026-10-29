@@ -241,6 +241,63 @@ history imported from Astro (`scripts/astro/`).
 below ~10 come from MZSearch order and are approximate (see
 `docs/aso-difficulty-model.md`).
 
+## `GET /api/aso/v1/observations`
+
+Append-only feed of everything observed from Apple, one row per metric. Pure
+read. Page forward with the cursor; each row is returned exactly once.
+
+| Query | Default | Notes |
+|---|---|---|
+| `since_cursor` | `0` | Return rows with `id` greater than this. Store `nextCursor` and pass it back next time. |
+| `limit` | `1000` | 1–5000 |
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": 18231,
+        "recordedAt": "2026-10-30T03:12:04.120Z",
+        "sourceObservedAt": "2026-10-30T03:12:03.877Z",
+        "country": "GB",
+        "keyword": "microlearning",
+        "metric": "rank",
+        "value": 7,
+        "source": "asocli/mzsearch+searchpage",
+        "runId": 52,
+        "appId": "6692632196",
+        "rank": 7,
+        "ranked": true,
+        "rankDepth": 238,
+        "popularityIsFloor": null,
+        "difficultyModelVersion": null,
+        "appCount": 238,
+        "storefrontLanguage": "en-GB"
+      }
+    ],
+    "nextCursor": 18231,
+    "hasMore": true
+  }
+}
+```
+
+- `metric`: `rank` (one row per tracked app; `ranked: false`, `rank: null`
+  when the app was not in the crawled order of `rankDepth` positions),
+  `app_count`, `difficulty` (with `difficultyModelVersion`, e.g. `ratings-v1`),
+  `popularity` (with `popularityIsFloor`).
+- `source`: `asocli/mzsearch`, `asocli/searchpage`,
+  `asocli/mzsearch+searchpage`, `asocli/legacy` for ranks;
+  `asa-legacy` (account level), `asa-legacy-storefront`, `asa-insights`,
+  `asa-insights-monthly` for popularity.
+- `sourceObservedAt` is when Apple was asked; `recordedAt` when the row was
+  written. `runId` is the background refresh run (`refresh_runs.id`), null for
+  observations made by dashboard or CLI actions.
+- Written only for real observations: a popularity-only update writes no rank
+  rows, and a failed crawl writes nothing. Rows older than two years (by
+  `sourceObservedAt`) are pruned, matching position history.
+- Readable with the read-only token.
+
 ## `POST /api/aso/autocomplete/refresh` · `GET /api/aso/autocomplete`
 
 Autocomplete demand signal. POST starts a background job (single-flight,

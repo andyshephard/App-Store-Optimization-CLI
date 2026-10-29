@@ -10,6 +10,8 @@ import {
   pruneAppKeywordPositionHistoryBefore,
 } from "../../db/app-keyword-position-history";
 import { getMetadataValue, setMetadataValue } from "../../db/metadata";
+import { insertKeywordObservations } from "../../db/keyword-observations";
+import { withObservationRun } from "./observation-context";
 
 jest.mock("../../db/aso-keywords", () => ({
   getKeywords: jest.fn(() => []),
@@ -24,6 +26,11 @@ jest.mock("../../db/app-keywords", () => ({
 jest.mock("../../db/app-keyword-position-history", () => ({
   insertAppKeywordPositionHistoryPoints: jest.fn(),
   pruneAppKeywordPositionHistoryBefore: jest.fn(() => 0),
+}));
+
+jest.mock("../../db/keyword-observations", () => ({
+  insertKeywordObservations: jest.fn(() => 0),
+  pruneKeywordObservationsBefore: jest.fn(() => 0),
 }));
 
 jest.mock("../../db/metadata", () => ({
@@ -248,6 +255,88 @@ describe("upsertPopularityOnly", () => {
       popularity: 7,
       difficultyScore: null,
       orderedAppIds: [],
+    });
+  });
+
+  describe("observations feed", () => {
+    const mockInsertObservations = jest.mocked(insertKeywordObservations);
+    const mockGetAssociationsForKeyword = jest.mocked(getAssociationsForKeyword);
+    const mockUpsertKeywords = jest.mocked(upsertKeywords);
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      jest.mocked(getKeywords).mockReturnValue([]);
+      mockGetAssociationsForKeyword.mockReturnValue([]);
+    });
+
+    it("records rank (including unranked apps), app count and difficulty for a crawl", async () => {
+      mockGetAssociationsForKeyword.mockReturnValue([
+        { appId: "a1", keyword: "budget", country: "GB" },
+        { appId: "a9", keyword: "budget", country: "GB" },
+      ] as never);
+      const repository = new KeywordWriteRepository();
+
+      await withObservationRun(42, async () => {
+        repository.upsertKeywordItems("GB", [
+          {
+            keyword: "budget",
+            popularity: 30,
+            difficultyScore: 61,
+            minDifficultyScore: 61,
+            appCount: 3,
+            keywordMatch: "none",
+            orderedAppIds: ["x", "a1", "y"],
+            positionCapturedAt: "2026-04-12T03:10:00.000Z",
+            orderSource: "searchpage+mzsearch",
+          },
+        ]);
+      });
+
+      const rows = mockInsertObservations.mock.calls[0][0];
+      expect(rows).toEqual([
+        expect.objectContaining({
+          metric: "rank",
+          appId: "a1",
+          rank: 2,
+          ranked: true,
+          rankDepth: 3,
+          runId: 42,
+          source: "asocli/mzsearch+searchpage",
+          sourceObservedAt: "2026-04-12T03:10:00.000Z",
+          country: "GB",
+          storefrontLanguage: expect.any(String),
+        }),
+        expect.objectContaining({ metric: "rank", appId: "a9", rank: null, ranked: false, value: null }),
+        expect.objectContaining({ metric: "app_count", value: 3 }),
+        expect.objectContaining({ metric: "difficulty", value: 61, difficultyModelVersion: "ratings-v1" }),
+      ]);
+    });
+
+    it("records nothing for a popularity-only write, which observed no ranking", () => {
+      new KeywordWriteRepository().upsertPopularityOnly("GB", [
+        { keyword: "budget", popularity: 30 },
+      ]);
+      expect(mockInsertObservations).not.toHaveBeenCalled();
+    });
+
+    it("never fails the write when the feed cannot be written", () => {
+      mockInsertObservations.mockImplementationOnce(() => {
+        throw new Error("SQLITE_FULL");
+      });
+      expect(() =>
+        new KeywordWriteRepository().upsertKeywordItems("GB", [
+          {
+            keyword: "budget",
+            popularity: 30,
+            difficultyScore: 61,
+            minDifficultyScore: 61,
+            appCount: 3,
+            keywordMatch: "none",
+            orderedAppIds: ["x"],
+          },
+        ])
+      ).not.toThrow();
+      expect(mockUpsertKeywords).toHaveBeenCalled();
     });
   });
 });

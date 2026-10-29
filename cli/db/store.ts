@@ -24,7 +24,7 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
  * on goes in a numbered step below so an existing database is upgraded
  * exactly once, in order.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
@@ -61,6 +61,34 @@ const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
       );
       CREATE INDEX IF NOT EXISTS idx_refresh_run_storefronts_country_finished
         ON refresh_run_storefronts(country, finished_at);
+    `,
+  },
+  {
+    // Append-only feed of every successful observation, read by consumers
+    // through GET /api/aso/v1/observations with an id cursor.
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS keyword_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recorded_at TEXT NOT NULL,
+        source_observed_at TEXT NOT NULL,
+        country TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value REAL,
+        source TEXT NOT NULL,
+        run_id INTEGER,
+        app_id TEXT,
+        rank INTEGER,
+        ranked INTEGER,
+        rank_depth INTEGER,
+        popularity_is_floor INTEGER,
+        difficulty_model_version TEXT,
+        app_count INTEGER,
+        storefront_language TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_keyword_observations_observed
+        ON keyword_observations(source_observed_at);
     `,
   },
 ];

@@ -10,3 +10,4 @@ export * from "./app-keywords";
 export * from "./app-keyword-position-history";
 export * from "./metadata";
 export * from "./refresh-runs";
+export * from "./keyword-observations";

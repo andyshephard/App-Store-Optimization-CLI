@@ -692,6 +692,7 @@ export class KeywordPipelineService {
     const refreshed: AsoKeywordItem[] = [];
     const failedKeywords: FailedKeyword[] = [];
     const positionCapturedAtByKeyword = new Map<string, string>();
+    const orderSourceByKeyword = new Map<string, string>();
 
     for (const keyword of normalized) {
       const existing = existingByNormalized.get(keyword);
@@ -703,6 +704,7 @@ export class KeywordPipelineService {
         appCount: number;
         orderedAppIds: string[];
         difficultyScore?: number;
+        orderSource?: string;
       } | null = null;
       try {
         updatedOrder = await refreshAsoKeywordOrderLocal(country, keyword);
@@ -747,6 +749,9 @@ export class KeywordPipelineService {
         existing.normalizedKeyword,
         positionCapturedAt
       );
+      if (updatedOrder.orderSource) {
+        orderSourceByKeyword.set(existing.normalizedKeyword, updatedOrder.orderSource);
+      }
     }
 
     if (refreshed.length > 0) {
@@ -765,6 +770,9 @@ export class KeywordPipelineService {
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
           positionCapturedAt: positionCapturedAtByKeyword.get(
+            item.normalizedKeyword ?? normalizeKeyword(item.keyword)
+          ),
+          orderSource: orderSourceByKeyword.get(
             item.normalizedKeyword ?? normalizeKeyword(item.keyword)
           ),
           popularityExpiresAt: item.popularityExpiresAt,

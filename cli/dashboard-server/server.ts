@@ -53,6 +53,8 @@ import {
   getAppLastKeywordAddedAtMap,
 } from "../db/app-keywords";
 import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
+import { withObservationRun } from "../services/keywords/observation-context";
+import { listKeywordObservations } from "../db/keyword-observations";
 import { asoAuthService } from "../services/auth/aso-auth-service";
 import {
   isAsoAuthReauthRequiredError,
@@ -219,7 +221,10 @@ const startupRefreshManager = createStartupRefreshManager({
   },
   listOrderRelevantAppIds: () => new Set(listOwnedAppIdsByKind("owned")),
   enrichKeywords: (country, items, options) =>
-    keywordPipelineService.refreshStartup(country, items, options),
+    // The run id reaches the observations feed through async context.
+    withObservationRun(startupRefreshManager.getState().runId, () =>
+      keywordPipelineService.refreshStartup(country, items, options)
+    ),
   isForegroundBusy: () => foregroundMutationCount > 0,
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
   interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
@@ -504,6 +509,43 @@ function startHealthAlertTimer(): () => void {
     clearTimeout(first);
     clearInterval(every);
   };
+}
+
+const OBSERVATIONS_DEFAULT_LIMIT = 1000;
+const OBSERVATIONS_MAX_LIMIT = 5000;
+
+/** GET /api/aso/v1/observations?since_cursor=&limit= - see docs/api.md. */
+function handleApiAsoObservationsGet(
+  res: http.ServerResponse,
+  query: Record<string, string>
+): void {
+  const parseNonNegative = (raw: string | undefined, fallback: number) => {
+    if (raw == null || raw.trim() === "") return fallback;
+    return /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  };
+  const sinceCursor = parseNonNegative(query.since_cursor, 0);
+  const limit = parseNonNegative(query.limit, OBSERVATIONS_DEFAULT_LIMIT);
+  if (!Number.isSafeInteger(sinceCursor) || !Number.isSafeInteger(limit) || limit < 1) {
+    sendApiError(
+      res,
+      400,
+      "INVALID_REQUEST",
+      "since_cursor must be a non-negative integer and limit a positive integer."
+    );
+    return;
+  }
+  const page = listKeywordObservations({
+    sinceCursor,
+    limit: Math.min(limit, OBSERVATIONS_MAX_LIMIT),
+  });
+  sendJson(res, 200, {
+    success: true,
+    data: {
+      items: page.items,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+    },
+  });
 }
 
 function handleApiAsoHealthGet(res: http.ServerResponse): void {
@@ -969,6 +1011,11 @@ export function createServerRequestHandler(): http.RequestListener {
 
       if (req.method === "GET" && pathname === "/api/aso/health") {
         handleApiAsoHealthGet(res);
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/aso/v1/observations") {
+        handleApiAsoObservationsGet(res, query);
         return;
       }
 

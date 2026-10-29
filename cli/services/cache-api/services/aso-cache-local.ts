@@ -81,6 +81,7 @@ export class LocalAsoCacheRepository implements AsoCacheRepository {
       appCount: number;
       keywordMatch: KeywordMatchType;
       orderedAppIds: string[];
+      orderSource?: string;
     }>;
     appDocs?: AsoAppDoc[];
   }): Promise<AsoKeywordRecord[]> {
@@ -101,6 +102,7 @@ export class LocalAsoCacheRepository implements AsoCacheRepository {
         appCount: item.appCount,
         keywordMatch: item.keywordMatch,
         orderedAppIds: item.orderedAppIds,
+        orderSource: item.orderSource,
       }))
     );
 

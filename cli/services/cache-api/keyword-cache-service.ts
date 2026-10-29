@@ -187,6 +187,7 @@ export async function enrichAsoKeywords(
             appCount: e.appCount,
             keywordMatch: e.keywordMatch,
             orderedAppIds: e.orderedAppIds,
+            ...(e.orderSource ? { orderSource: e.orderSource } : {}),
           })),
           appDocs: normalizedAppDocs,
         })

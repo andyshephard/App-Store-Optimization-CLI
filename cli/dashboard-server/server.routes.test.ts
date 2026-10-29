@@ -399,6 +399,21 @@ describe("dashboard server routes", () => {
     );
   });
 
+  it("serves the observations feed and validates the cursor", async () => {
+    const ok = await request({
+      method: "GET",
+      path: "/api/aso/v1/observations?since_cursor=0&limit=10",
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json?.data).toEqual({ items: [], nextCursor: 0, hasMore: false });
+
+    const bad = await request({
+      method: "GET",
+      path: "/api/aso/v1/observations?since_cursor=-1",
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it("returns runtime config payload", async () => {
     const response = await request({
       method: "GET",

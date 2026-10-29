@@ -12,6 +12,11 @@ import { ASO_ENV } from "../../shared/aso-env";
 type PopularityFetchResult = {
   popularities: Record<string, number>;
   failedKeywords: FailedKeyword[];
+  /** From the legacy service: which request answered each keyword. */
+  sourceByKeyword?: Record<string, "storefront" | "account">;
+  noDataKeywords?: string[];
+  /** Overrides for the observations feed (insights-sourced scores). */
+  observationSources?: Record<string, string>;
 };
 
 type PopularityFetchOptions = {
@@ -46,6 +51,57 @@ async function fetchLegacy(
  * behaviour must stay byte-identical to upstream in that case.
  */
 export async function fetchKeywordPopularitiesPreferringAdsApi(
+  country: string,
+  keywords: string[],
+  options?: PopularityFetchOptions
+): Promise<{ popularities: Record<string, number>; failedKeywords: FailedKeyword[] }> {
+  const observedAt = new Date().toISOString();
+  const result = await fetchPopularitiesFromSources(country, keywords, options);
+  recordPopularityObservations(country, result, observedAt);
+  // Attribution fields are for the feed only; callers get the plain envelope
+  // (the same object when there is nothing to strip).
+  if (
+    result.sourceByKeyword == null &&
+    result.noDataKeywords == null &&
+    result.observationSources == null
+  ) {
+    return result;
+  }
+  return {
+    popularities: result.popularities,
+    failedKeywords: result.failedKeywords,
+  };
+}
+
+function recordPopularityObservations(
+  country: string,
+  result: PopularityFetchResult,
+  observedAt: string
+): void {
+  try {
+    const noData = new Set(result.noDataKeywords ?? []);
+    const items = Object.entries(result.popularities).map(([keyword, popularity]) => {
+      const source =
+        result.observationSources?.[keyword] ??
+        (result.sourceByKeyword?.[keyword] === "storefront"
+          ? "asa-legacy-storefront"
+          : "asa-legacy");
+      const isLegacy = source.startsWith("asa-legacy");
+      return {
+        keyword,
+        popularity,
+        source,
+        isFloor: noData.has(keyword) || (isLegacy && popularity <= LEGACY_POPULARITY_FLOOR),
+        observedAt,
+      };
+    });
+    keywordWriteRepository.recordPopularityObservations?.(country, items);
+  } catch (error) {
+    logger.debug(`[aso-popularity-source] observation record skipped: ${String(error)}`);
+  }
+}
+
+async function fetchPopularitiesFromSources(
   country: string,
   keywords: string[],
   options?: PopularityFetchOptions
@@ -97,8 +153,11 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
   }
   keywordWriteRepository.persistPopularityHistory(country, historyPoints);
 
+  const insightsSources = Object.fromEntries(
+    Object.keys(popularities).map((keyword) => [keyword, "asa-insights"])
+  );
   if (uncovered.length === 0) {
-    return { popularities, failedKeywords: [] };
+    return { popularities, failedKeywords: [], observationSources: insightsSources };
   }
   logger.debug(
     `[aso-popularity-source] ${uncovered.length}/${keywords.length} keywords not in Ads API dataset for ${country}; using legacy endpoint for the remainder`
@@ -120,6 +179,7 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
     );
     return {
       popularities,
+      observationSources: insightsSources,
       failedKeywords: uncovered.map((keyword) => ({
         keyword,
         stage: "popularity" as const,
@@ -135,6 +195,9 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
   return {
     popularities: { ...legacy.popularities, ...popularities },
     failedKeywords: legacy.failedKeywords,
+    sourceByKeyword: legacy.sourceByKeyword,
+    noDataKeywords: legacy.noDataKeywords,
+    observationSources: insightsSources,
   };
 }
 
@@ -185,10 +248,12 @@ async function fetchLegacyWithAdsApiHistory(
   keywordWriteRepository.persistPopularityHistory(country, historyPoints);
 
   const popularities = { ...legacy.popularities };
+  const observationSources: Record<string, string> = {};
   const failedKeywords = legacy.failedKeywords.filter((failed) => {
     const snapshot = snapshots.get(failed.keyword);
     if (!snapshot) return true;
     popularities[failed.keyword] = snapshot.popularity;
+    observationSources[failed.keyword] = "asa-insights";
     return false;
   });
 
@@ -202,7 +267,10 @@ async function fetchLegacyWithAdsApiHistory(
     try {
       const monthly = await fetchMonthlyPopularity(country, atFloor);
       for (const [keyword, { popularity }] of monthly) {
-        if (popularity > LEGACY_POPULARITY_FLOOR) popularities[keyword] = popularity;
+        if (popularity > LEGACY_POPULARITY_FLOOR) {
+          popularities[keyword] = popularity;
+          observationSources[keyword] = "asa-insights-monthly";
+        }
       }
     } catch (error) {
       logger.debug(
@@ -210,7 +278,13 @@ async function fetchLegacyWithAdsApiHistory(
       );
     }
   }
-  return { popularities, failedKeywords };
+  return {
+    popularities,
+    failedKeywords,
+    sourceByKeyword: legacy.sourceByKeyword,
+    noDataKeywords: legacy.noDataKeywords,
+    observationSources,
+  };
 }
 
 /** Mirrors aso-popularity-service's LEGACY_POPULARITY_FLOOR. */

@@ -322,6 +322,17 @@ Indexes:
 - PK: (`run_id`, `country`)
 - `idx_refresh_run_storefronts_country_finished`: (`country`, `finished_at`)
 
+### `keyword_observations`
+
+Append-only observations feed (schema version 2), served by
+`GET /api/aso/v1/observations`. `id` is the cursor. Columns: `id` (PK,
+autoincrement), `recorded_at`, `source_observed_at` (ISO; indexed, used for the
+two-year prune), `country`, `keyword` (normalized), `metric`
+(`rank` | `popularity` | `difficulty` | `app_count`), `value`, `source`,
+`run_id`, `app_id`, `rank`, `ranked` (0/1), `rank_depth`,
+`popularity_is_floor` (0/1), `difficulty_model_version`, `app_count`,
+`storefront_language`.
+
 ## Notes
 - New tables are added through numbered steps in `store.ts`
   (`VERSIONED_MIGRATIONS`), tracked in `PRAGMA user_version`. The older tables

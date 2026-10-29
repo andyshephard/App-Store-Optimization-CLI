@@ -21,6 +21,46 @@ import {
 } from "../../shared/aso-keyword-utils";
 import type { KeywordMatchType } from "../../shared/aso-keyword-match";
 import type { FailedKeyword } from "../../shared/aso-keyword-types";
+import {
+  insertKeywordObservations,
+  pruneKeywordObservationsBefore,
+  type KeywordObservationInput,
+} from "../../db/keyword-observations";
+import { getStorefrontDefaultLanguage } from "../../shared/aso-storefront-localizations";
+import { ASO_ENV } from "../../shared/aso-env";
+import { logger } from "../../utils/logger";
+import { currentObservationRunId } from "./observation-context";
+
+/** Bumped when the difficulty formula changes, so the feed can tell models apart. */
+export const DIFFICULTY_MODEL_VERSION = {
+  ratings: "ratings-v1",
+  legacy: "legacy-v1",
+} as const;
+
+function observationOrderSource(orderSource: string | undefined): string {
+  if (orderSource === "searchpage+mzsearch") return "asocli/mzsearch+searchpage";
+  if (orderSource === "searchpage") return "asocli/searchpage";
+  if (orderSource === "mzsearch") return "asocli/mzsearch";
+  return ASO_ENV.enrichmentMode === "legacy" ? "asocli/legacy" : "asocli/mzsearch";
+}
+
+function safeStorefrontLanguage(country: string): string | null {
+  try {
+    return getStorefrontDefaultLanguage(country);
+  } catch {
+    return null;
+  }
+}
+
+/** Observations are a side feed: failing to write one must never fail the crawl. */
+function recordObservations(rows: KeywordObservationInput[]): void {
+  if (rows.length === 0) return;
+  try {
+    insertKeywordObservations(rows);
+  } catch (error) {
+    logger.warn(`[observations] could not record ${rows.length} rows: ${String(error)}`);
+  }
+}
 
 // Two years: long enough to keep rank history imported from Astro
 // (scripts/astro/), which starts in 2025.
@@ -44,6 +84,8 @@ type KeywordWriteItem = {
   positionCapturedAt?: string;
   orderExpiresAt?: string;
   popularityExpiresAt?: string;
+  /** Where the order came from (ratings mode), for the observations feed. */
+  orderSource?: string;
 };
 
 type CompetitorAppDoc = {
@@ -80,6 +122,12 @@ function maybePrunePositionHistory(now: Date): void {
     nowMs - POSITION_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
   pruneAppKeywordPositionHistoryBefore(cutoff);
+  // Same two-year retention for the observations feed.
+  try {
+    pruneKeywordObservationsBefore(cutoff);
+  } catch (error) {
+    logger.warn(`[observations] prune failed: ${String(error)}`);
+  }
   setMetadataValue(
     POSITION_HISTORY_LAST_PRUNED_METADATA_KEY,
     now.toISOString()
@@ -125,11 +173,50 @@ export class KeywordWriteRepository {
       ).map((keyword) => [keyword.normalizedKeyword, keyword] as const)
     );
 
+    const observations: KeywordObservationInput[] = [];
+    const runId = currentObservationRunId();
+    const storefrontLanguage = safeStorefrontLanguage(country);
+    const modelVersion =
+      ASO_ENV.enrichmentMode === "legacy"
+        ? DIFFICULTY_MODEL_VERSION.legacy
+        : DIFFICULTY_MODEL_VERSION.ratings;
     for (const item of normalizedItems) {
       if (!recordPositions) continue;
       const existing = existingByNormalized.get(item.normalizedKeyword);
       const orderedIds = existing?.orderedAppIds ?? [];
       const associations = getAssociationsForKeyword(item.keyword, country);
+      const base = {
+        keyword: item.normalizedKeyword,
+        country,
+        source: observationOrderSource(item.orderSource),
+        sourceObservedAt: item.positionCapturedAt,
+        runId,
+        appCount: item.appCount,
+        storefrontLanguage,
+      };
+      for (const assoc of associations) {
+        const idx = item.orderedAppIds.indexOf(assoc.appId);
+        observations.push({
+          ...base,
+          metric: "rank",
+          value: idx >= 0 ? idx + 1 : null,
+          appId: assoc.appId,
+          rank: idx >= 0 ? idx + 1 : null,
+          ranked: idx >= 0,
+          rankDepth: item.orderedAppIds.length,
+        });
+      }
+      if (item.appCount != null) {
+        observations.push({ ...base, metric: "app_count", value: item.appCount });
+      }
+      if (item.difficultyScore != null) {
+        observations.push({
+          ...base,
+          metric: "difficulty",
+          value: item.difficultyScore,
+          difficultyModelVersion: modelVersion,
+        });
+      }
       for (const assoc of associations) {
         if (orderedIds.length > 0) {
           const idx = orderedIds.indexOf(assoc.appId);
@@ -184,6 +271,35 @@ export class KeywordWriteRepository {
       insertAppKeywordPositionHistoryPoints(positionHistoryPoints);
       maybePrunePositionHistory(now);
     }
+    recordObservations(observations);
+  }
+
+  /** Popularity observations, written where the score was fetched. */
+  recordPopularityObservations(
+    country: string,
+    items: Array<{
+      keyword: string;
+      popularity: number;
+      source: string;
+      isFloor: boolean;
+      observedAt: string;
+    }>
+  ): void {
+    const runId = currentObservationRunId();
+    const storefrontLanguage = safeStorefrontLanguage(country);
+    recordObservations(
+      items.map((item) => ({
+        keyword: normalizeKeyword(item.keyword),
+        country,
+        metric: "popularity",
+        value: item.popularity,
+        source: item.source,
+        sourceObservedAt: item.observedAt,
+        runId,
+        popularityIsFloor: item.isFloor,
+        storefrontLanguage,
+      }))
+    );
   }
 
   /**

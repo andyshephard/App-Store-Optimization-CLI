@@ -23,6 +23,7 @@ jest.mock("../apple-ads-api/search-term-popularity-service", () => ({
 jest.mock("./keyword-write-repository", () => ({
   keywordWriteRepository: {
     persistPopularityHistory: jest.fn(),
+    recordPopularityObservations: jest.fn(),
   },
 }));
 
@@ -253,5 +254,32 @@ describe("fetchKeywordPopularitiesPreferringAdsApi (floor values)", () => {
     const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["anatomy"]);
 
     expect(result.popularities).toEqual({ anatomy: 5 });
+  });
+});
+
+describe("popularity observations", () => {
+  const mockRecord = keywordWriteRepository.recordPopularityObservations as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockConfigured.mockReturnValue(false);
+  });
+
+  it("records each score with the request that answered it and a floor flag", async () => {
+    mockLegacy.mockResolvedValue({
+      popularities: { a: 40, b: 5, c: 5 },
+      failedKeywords: [],
+      sourceByKeyword: { a: "storefront", b: "account", c: "account" },
+      noDataKeywords: ["c"],
+    });
+
+    const result = await fetchKeywordPopularitiesPreferringAdsApi("GB", ["a", "b", "c"]);
+
+    expect(result).toEqual({ popularities: { a: 40, b: 5, c: 5 }, failedKeywords: [] });
+    expect(mockRecord).toHaveBeenCalledWith("GB", [
+      expect.objectContaining({ keyword: "a", popularity: 40, source: "asa-legacy-storefront", isFloor: false }),
+      expect.objectContaining({ keyword: "b", source: "asa-legacy", isFloor: true }),
+      expect.objectContaining({ keyword: "c", source: "asa-legacy", isFloor: true }),
+    ]);
   });
 });

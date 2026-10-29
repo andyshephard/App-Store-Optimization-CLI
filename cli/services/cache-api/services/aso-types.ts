@@ -70,6 +70,7 @@ export interface AsoCacheRepository {
       appCount: number;
       keywordMatch: KeywordMatchType;
       orderedAppIds: string[];
+      orderSource?: string;
     }>;
     appDocs?: AsoAppDoc[];
   }): Promise<AsoKeywordRecord[]>;

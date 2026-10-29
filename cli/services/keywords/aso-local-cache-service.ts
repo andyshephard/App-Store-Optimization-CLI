@@ -66,6 +66,7 @@ export async function refreshAsoKeywordOrderLocal(
   orderedAppIds: string[];
   appDocs?: AsoAppDocItem[];
   difficultyScore?: number;
+  orderSource?: string;
 }> {
   return refreshKeywordOrder({
     country,
