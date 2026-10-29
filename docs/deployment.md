@@ -112,6 +112,17 @@ whether or not anything calls the API. Unset the time to disable it.
 is armed. Timezone handling is DST-aware: 04:00 local stays 04:00 across both
 transitions rather than drifting an hour.
 
+Every run is recorded in `refresh_runs` / `refresh_run_storefronts`. A run still
+marked running when the process starts again was interrupted (OOM, deploy,
+reboot); if it was a scheduled or catch-up run, a forced catch-up run starts
+once. `ASO_REFRESH_MAX_CATCHUPS_PER_DAY` (default 2, `0` disables) caps catch-ups
+per 24h so a crawl that kills the process cannot loop; hitting the cap is
+reported as `restart_loop` in `/api/aso/health` and emailed.
+
+`GET /api/aso/health` (authenticated) is the place to check whether the data is
+current: per-storefront last success, last-run counters and failure reasons,
+and `ok | degraded | down`. See `docs/api.md`.
+
 This is separate from `refreshMode`, which only controls the one-shot refresh at
 container startup. Keep that on `manual`, or every restart kicks off an unpaced
 crawl at an arbitrary time.

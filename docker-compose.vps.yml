@@ -33,9 +33,14 @@ services:
       # Pause between 25-keyword batches inside a storefront (default 5s).
       ASO_REFRESH_INTER_BATCH_DELAY_MS: "15000"
       # Without this V8 sizes the heap from the 512m cgroup (~256MB), and a
-      # cold-cache crawl hit that limit on 2026-09-25. Leaves ~128MB headroom
-      # under mem_limit for buffers and native memory.
-      NODE_OPTIONS: "--max-old-space-size=384"
+      # cold-cache crawl hit that limit on 2026-09-25. 384 left only ~128MB
+      # under mem_limit for everything outside the V8 heap - better-sqlite3,
+      # TLS and socket buffers, code space - so RSS could reach the cgroup
+      # limit with the heap still "fine". 320 keeps the heap above the 256MB
+      # the cold crawl needed and gives native memory ~192MB. Each refresh
+      # batch now logs rssMb/heapUsedMb; if heapUsedMb nears 320, raise
+      # mem_limit to 768m (and this to 448) rather than raising this alone.
+      NODE_OPTIONS: "--max-old-space-size=320"
       # 60s between storefronts. Measured 2026-07-28: a full forced crawl of 12
       # storefronts does only ~152s of actual work, so pacing dominates. Kept at
       # 60s rather than tuned to the edge because the runs that set this were on
@@ -48,6 +53,10 @@ services:
       # anything calls the API.
       ASO_REFRESH_DAILY_AT: "04:00"
       ASO_REFRESH_TIMEZONE: "Europe/Prague"
+      # A scheduled run interrupted by a restart is re-run once on startup; at
+      # most this many catch-ups per 24h, so a crawl that kills the process
+      # cannot crash-loop. 0 disables the catch-up.
+      ASO_REFRESH_MAX_CATCHUPS_PER_DAY: "2"
     volumes:
       - aso-data:/home/node/.aso
     # No ports. Caddy reaches this over the shared network as http://asocli:3456,
