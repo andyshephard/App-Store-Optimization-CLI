@@ -132,6 +132,10 @@ export async function asoAppleGet<T = unknown>(
   const requestId = generateRequestId();
   const startedAt = Date.now();
   const host = getRequestHost(url);
+  // Search terms are in params, not the URL; name them on errors so a term
+  // Apple fails on can be told apart from throttling.
+  const term = (requestConfig.params as { term?: unknown } | undefined)?.term;
+  const termLabel = typeof term === "string" ? ` term=${JSON.stringify(term)}` : "";
 
   logger.debug(`[${requestId}] ASO APPLE REQ GET ${operation}`, {
     requestId,
@@ -189,7 +193,7 @@ export async function asoAppleGet<T = unknown>(
         // One line per failure. Response headers go to debug only: at info
         // they made every error ~35 lines, which was 51k lines in 48h.
         logger.error(
-          `[${requestId}] ASO APPLE ERR GET ${operation} status=${status ?? axiosError.code ?? "?"} attempt=${attempt}/${maxAttempts} ${url}`
+          `[${requestId}] ASO APPLE ERR GET ${operation} status=${status ?? axiosError.code ?? "?"} attempt=${attempt}/${maxAttempts} ${url}${termLabel}`
         );
         logger.debug(`[${requestId}] ASO APPLE ERR DETAIL GET ${operation}`, {
           requestId,

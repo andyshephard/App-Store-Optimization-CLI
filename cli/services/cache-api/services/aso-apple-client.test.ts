@@ -4,6 +4,7 @@ import {
   AppleRateLimiter,
   __setAppleRateLimiterForTests,
 } from "../../../shared/apple-rate-limiter";
+import { logger } from "../../../utils/logger";
 
 jest.mock("axios", () => {
   const get = jest.fn();
@@ -113,6 +114,26 @@ describe("aso-apple-client", () => {
     await jest.advanceTimersByTimeAsync(5000);
     await expect(promise).resolves.toBe(ok);
     expect(mockGet).toHaveBeenCalledTimes(3);
+  });
+
+  it("names the search term on the error line, since it is not in the URL", async () => {
+    const errorSpy = jest.spyOn(logger, "error").mockImplementation(() => undefined);
+    const serverError = {
+      response: { status: 500, statusText: "Internal Server Error", headers: {} },
+      message: "Request failed with status code 500",
+    };
+    (mockGet as any).mockRejectedValue(serverError);
+
+    const settled = asoAppleGet("https://apps.apple.com/us/iphone/search", {
+      operation: "appstore.search-page",
+      params: { term: "true crime" },
+    }).catch(() => undefined);
+    await jest.advanceTimersByTimeAsync(5000);
+    await settled;
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('attempt=2/2 https://apps.apple.com/us/iphone/search term="true crime"')
+    );
   });
 });
 
