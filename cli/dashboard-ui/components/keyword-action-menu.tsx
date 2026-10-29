@@ -3,6 +3,11 @@ import { createPortal } from "react-dom";
 type KeywordActionMenuProps = {
   x: number;
   y: number;
+  /**
+   * The dashboard runs one force refresh at a time; starting a second while
+   * the first is in flight dropped its keywords (upstream's known issue).
+   */
+  forceRefreshDisabled?: boolean;
   onForceRefresh: () => void;
   onCopy: () => void;
   onDelete: () => void;
@@ -20,6 +25,7 @@ export function KeywordActionMenu(props: KeywordActionMenuProps) {
         type="button"
         className="keyword-action-item"
         role="menuitem"
+        disabled={props.forceRefreshDisabled}
         onClick={props.onForceRefresh}
       >
         Force Refresh

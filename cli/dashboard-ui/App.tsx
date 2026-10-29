@@ -3785,6 +3785,7 @@ export function App() {
         <KeywordActionMenu
           x={keywordActionMenu.x}
           y={keywordActionMenu.y}
+          forceRefreshDisabled={isForceRefreshingKeywords}
           onForceRefresh={() => {
             void onContextAction("force-refresh");
           }}

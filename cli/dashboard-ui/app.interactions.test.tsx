@@ -102,7 +102,7 @@ function buildFetchMock(params: {
     succeededCount: number;
     failedCount: number;
   };
-  onForceRefresh?: (payload: any) => void;
+  onForceRefresh?: (payload: any) => void | Promise<void>;
 }) {
   let appsCallCount = 0;
   let dashboardSettings =
@@ -339,7 +339,7 @@ function buildFetchMock(params: {
     }
 
     if (method === "POST" && url === "/api/aso/keywords/force-refresh") {
-      params.onForceRefresh?.(body);
+      await params.onForceRefresh?.(body);
       return jsonResponse(200, {
         success: true,
         data: {
@@ -909,6 +909,58 @@ describe("dashboard app interactions", () => {
       })
     );
     expect(await screen.findByText("Force refreshed 2 keywords.")).toBeInTheDocument();
+  });
+
+  it("disables Force Refresh while one is already running", async () => {
+    let releaseForceRefresh: () => void = () => {};
+    let forceRefreshCount = 0;
+    const fetchMock = buildFetchMock({
+      initialApps: [
+        { id: DEFAULT_RESEARCH_APP_ID, name: "Research" },
+        { id: "111", name: "Owned App" },
+      ],
+      keywordsByAppId: {
+        [DEFAULT_RESEARCH_APP_ID]: [],
+        "111": [
+          {
+            keyword: "first term",
+            popularity: 50,
+            difficultyScore: 40,
+            appCount: 100,
+          },
+        ],
+      },
+      onForceRefresh: () => {
+        forceRefreshCount += 1;
+        return new Promise<void>((resolve) => {
+          releaseForceRefresh = resolve;
+        });
+      },
+    });
+    global.fetch = fetchMock as typeof fetch;
+    localStorage.setItem("aso-dashboard:selected-app-id", "111");
+
+    render(<App />);
+
+    const row = (await screen.findByText("first term")).closest(
+      "tr"
+    ) as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 60, clientY: 60 });
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Force Refresh" })
+    );
+    await waitFor(() => expect(forceRefreshCount).toBe(1));
+
+    fireEvent.contextMenu(row, { clientX: 60, clientY: 60 });
+    expect(
+      await screen.findByRole("menuitem", { name: "Force Refresh" })
+    ).toBeDisabled();
+
+    releaseForceRefresh();
+    expect(
+      await screen.findByText("Force refreshed 1 keyword.")
+    ).toBeInTheDocument();
+    expect(forceRefreshCount).toBe(1);
   });
 
   it("opens settings and auto-saves refresh settings", async () => {
