@@ -1034,7 +1034,8 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       // Liveness only: answers while the event loop does. Docker's
-      // HEALTHCHECK uses /health; /livez is the same, named for what it is.
+      // HEALTHCHECK uses /livez; /health is kept identical for existing
+      // probes. Neither touches the database or Apple.
       if (
         req.method === "GET" &&
         (pathname === "/health" || pathname === "/livez")

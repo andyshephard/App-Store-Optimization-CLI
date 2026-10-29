@@ -302,12 +302,6 @@ export function getDb(): Database.Database {
 }
 
 /**
- * Checkpoint and close the database. Safe to call when nothing is open.
- *
- * WAL means an abrupt kill is not corrupting, so this is about leaving a tidy
- * single file behind on shutdown rather than about durability.
- */
-/**
  * Runs `fn` in one transaction (a savepoint when already inside one), so a
  * batch of writes costs one commit instead of one per statement.
  */
@@ -325,6 +319,13 @@ export function optimizeDb(): void {
   }
 }
 
+/**
+ * Optimize, checkpoint and close the database. Safe to call when nothing is
+ * open.
+ *
+ * WAL means an abrupt kill is not corrupting, so this is about leaving a tidy
+ * single file behind on shutdown rather than about durability.
+ */
 export function closeDb(): void {
   if (!db) return;
   optimizeDb();
