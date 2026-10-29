@@ -499,9 +499,85 @@ function isAppLikeSearchResultItem(item: {
   return true;
 }
 
+/**
+ * Organic app rows only (upstream a5ca459): an app result, or an app-event
+ * row, which stands for that app's search slot. Ads, editorial, bundles and
+ * unknown row types are skipped. Used for the ratings-mode rank prefix.
+ */
+function isOrganicAppSearchResultItem(item: {
+  $kind?: string;
+  resultType?: string;
+}): boolean {
+  const kind = (item.$kind ?? "").trim();
+  const resultType = (item.resultType ?? "").trim().toLowerCase();
+  return (
+    (kind === "AppSearchResult" && resultType === "content") ||
+    (kind === "AppEventSearchResult" && resultType === "appevent")
+  );
+}
+
+/** Upstream 995fa56: keep the primary order, add fallback ids it has not seen. */
+export function appendUnseenFallbackIds(
+  primaryIds: string[],
+  fallbackIds: string[]
+): string[] {
+  const seenIds = new Set(primaryIds);
+  const mergedIds = [...primaryIds];
+  for (const id of fallbackIds) {
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    mergedIds.push(id);
+  }
+  return mergedIds;
+}
+
+export type RankOrderSource = "mzsearch" | "searchpage" | "searchpage+mzsearch";
+
+/**
+ * Ranks from the App Store search page (~11 exact positions, what a user
+ * sees) followed by MZSearch's remaining ids as the deep tail. The tail is
+ * appended only when MZSearch is at least as long as the prefix; a shorter
+ * MZSearch list is the less complete one, so the prefix stands alone. Any
+ * search-page failure falls back to MZSearch order alone.
+ */
+async function resolveRatingsOrder(params: {
+  keyword: string;
+  country: string;
+  mzSearchIds: string[];
+}): Promise<{ orderedAppIds: string[]; orderSource: RankOrderSource }> {
+  if (!ASO_ENV.rankSearchPagePrefix) {
+    return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
+  }
+  let prefix: string[] = [];
+  try {
+    prefix = (
+      await fetchSearchPageOrderedData({
+        keyword: params.keyword,
+        country: params.country,
+        itemFilter: isOrganicAppSearchResultItem,
+      })
+    ).orderedAppIds;
+  } catch (error) {
+    logger.debug("[aso-enrichment] search-page prefix unavailable", {
+      keyword: params.keyword,
+      country: params.country.toUpperCase(),
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
+  }
+  if (params.mzSearchIds.length >= prefix.length) {
+    return {
+      orderedAppIds: appendUnseenFallbackIds(prefix, params.mzSearchIds),
+      orderSource: "searchpage+mzsearch",
+    };
+  }
+  return { orderedAppIds: prefix, orderSource: "searchpage" };
+}
+
 async function fetchSearchPageOrderedData(params: {
   keyword: string;
   country: string;
+  itemFilter?: (item: { $kind?: string; resultType?: string }) => boolean;
 }): Promise<{
   orderedAppIds: string[];
   appDocs: AsoAppDoc[];
@@ -533,8 +609,9 @@ async function fetchSearchPageOrderedData(params: {
 
   const appDocs: AsoAppDoc[] = [];
   const leadingOrderedIds: string[] = [];
+  const itemFilter = params.itemFilter ?? isAppLikeSearchResultItem;
   for (const item of searchShelf?.items || []) {
-    if (!isAppLikeSearchResultItem(item)) {
+    if (!itemFilter(item)) {
       continue;
     }
     const lockup = item?.lockup;
@@ -570,6 +647,7 @@ export async function refreshKeywordOrder(params: {
   appDocs: AsoAppDoc[];
   /** Set in ratings mode, where difficulty is cheap enough to recompute with the order. */
   difficultyScore?: number;
+  orderSource?: RankOrderSource;
 }> {
   if (ASO_ENV.enrichmentMode !== "legacy") {
     const enriched = await enrichKeywordFromRatings(
@@ -589,6 +667,7 @@ export async function refreshKeywordOrder(params: {
       orderedAppIds: enriched.orderedAppIds,
       appDocs: enriched.appDocs,
       difficultyScore: enriched.difficultyScore,
+      orderSource: enriched.orderSource,
     };
   }
   const country = params.country.toUpperCase();
@@ -988,6 +1067,8 @@ type EnrichKeywordResult = {
   keywordMatch: KeywordMatchType;
   orderedAppIds: string[];
   appDocs: AsoAppDoc[];
+  /** Where the rank order came from; set in ratings mode. */
+  orderSource?: RankOrderSource;
 };
 
 export async function enrichKeyword(
@@ -1017,9 +1098,15 @@ export async function enrichKeywordFromRatings(
   const country = params.country.toUpperCase();
   const normalizedKeyword = normalizeKeyword(params.keyword);
 
-  const { orderedAppIds, clearlyEmpty } = await fetchPopularityOrder({
+  const mzSearch = await fetchPopularityOrder({
     keyword: normalizedKeyword,
     country: params.country,
+  });
+  const clearlyEmpty = mzSearch.clearlyEmpty;
+  const { orderedAppIds, orderSource } = await resolveRatingsOrder({
+    keyword: normalizedKeyword,
+    country: params.country,
+    mzSearchIds: mzSearch.orderedAppIds,
   });
   assertUsableOrder({
     keyword: params.keyword,
@@ -1090,6 +1177,7 @@ export async function enrichKeywordFromRatings(
     keyword: params.keyword,
     country,
     mode: "ratings",
+    orderSource,
     appCount,
     topLookedUp: lookupById.size,
     difficultyScore,
@@ -1106,6 +1194,7 @@ export async function enrichKeywordFromRatings(
     keywordMatch: detectTopKeywordMatchType(docsForMatch, params.keyword),
     orderedAppIds,
     appDocs,
+    orderSource,
   };
 }
 

@@ -1079,7 +1079,13 @@ describe("aso-enrichment-service (ratings mode)", () => {
 
   beforeEach(() => {
     delete process.env.ASO_ENRICHMENT_MODE;
+    // These cases are about MZSearch + lookup; the search-page prefix has its own.
+    process.env.ASO_RANK_SEARCHPAGE_PREFIX = "0";
     jest.clearAllMocks();
+  });
+
+  afterAll(() => {
+    delete process.env.ASO_RANK_SEARCHPAGE_PREFIX;
   });
 
   it("orders from MZSearch, looks up only the top 10 and scores difficulty from their ratings", async () => {
@@ -1225,5 +1231,127 @@ describe("aso-enrichment-service (untrustworthy MZSearch order)", () => {
     await expect(
       refreshKeywordOrder({ keyword: "budget", country: "GB" })
     ).rejects.toMatchObject({ code: "ORDER_CONTRACT_DRIFT" });
+  });
+});
+
+describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
+  function mzsearch(ids: string[]) {
+    return {
+      data: { pageData: { bubbles: [{ name: "software", results: ids.map((id) => ({ id })) }] } },
+    } as never;
+  }
+  function organicPage(ids: string[], extraRows: unknown[] = []) {
+    const items = [
+      ...extraRows,
+      ...ids.map((id) => ({
+        $kind: "AppSearchResult",
+        resultType: "content",
+        lockup: { adamId: id, title: `App ${id}`, rating: 4.5, ratingCount: "1000" },
+      })),
+    ];
+    return {
+      data: `<html><script id="serialized-server-data">${JSON.stringify({
+        data: [{ data: { shelves: [{ contentType: "searchResult", items }] } }],
+      })}</script></html>`,
+    } as never;
+  }
+  function lookupFor(ids: string[]) {
+    return new Map(
+      ids.map((appId) => [
+        appId,
+        { appId, country: "US", name: `App ${appId}`, averageUserRating: 4.5, userRatingCount: 1000 },
+      ])
+    ) as never;
+  }
+
+  beforeEach(() => {
+    delete process.env.ASO_ENRICHMENT_MODE;
+    delete process.env.ASO_RANK_SEARCHPAGE_PREFIX;
+    jest.clearAllMocks();
+  });
+
+  it("puts the search page's organic order first and appends MZSearch's unseen ids", async () => {
+    const mz = Array.from({ length: 30 }, (_, i) => String(i + 1));
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(mz))
+      .mockResolvedValueOnce(
+        organicPage(["5", "1", "9"], [
+          // Ads and editorial rows are not ranks.
+          { $kind: "AdSearchResult", resultType: "ad", lockup: { adamId: "999" } },
+          { $kind: "EditorialSearchResult", resultType: "editorial", lockup: { adamId: "888" } },
+        ])
+      );
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(lookupFor(["5", "1", "9"]));
+
+    const result = await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(result.orderedAppIds.slice(0, 5)).toEqual(["5", "1", "9", "2", "3"]);
+    expect(result.orderedAppIds).toHaveLength(30);
+    expect(result.orderedAppIds).not.toContain("999");
+    expect(result.orderSource).toBe("searchpage+mzsearch");
+  });
+
+  it("counts an app-event row as that app's slot", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1", "2", "3"]))
+      .mockResolvedValueOnce(
+        organicPage(["2"], [
+          { $kind: "AppEventSearchResult", resultType: "appEvent", lockup: { adamId: "3" } },
+        ])
+      );
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(lookupFor(["1", "2", "3"]));
+
+    const result = await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(result.orderedAppIds).toEqual(["3", "2", "1"]);
+  });
+
+  it("keeps the prefix alone when MZSearch is shorter than it", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1"]))
+      .mockResolvedValueOnce(organicPage(["4", "5", "6"]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(lookupFor(["4", "5", "6"]));
+
+    const result = await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(result.orderedAppIds).toEqual(["4", "5", "6"]);
+    expect(result.orderSource).toBe("searchpage");
+  });
+
+  it("falls back to MZSearch order when the search page fails", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1", "2"]))
+      .mockRejectedValueOnce(new Error("403"));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(lookupFor(["1", "2"]));
+
+    const result = await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(result.orderedAppIds).toEqual(["1", "2"]);
+    expect(result.orderSource).toBe("mzsearch");
+  });
+
+  it("makes no search-page request when switched off", async () => {
+    process.env.ASO_RANK_SEARCHPAGE_PREFIX = "0";
+    mockedAsoAppleGet.mockResolvedValueOnce(mzsearch(["1", "2"]));
+    mockedFetchItunesLookupAppDocs.mockResolvedValueOnce(lookupFor(["1", "2"]));
+
+    await refreshKeywordOrder({ keyword: "budget", country: "US" });
+
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(1);
+    delete process.env.ASO_RANK_SEARCHPAGE_PREFIX;
+  });
+
+  it("still refuses an empty order over a stored one when both sources are empty", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch([]))
+      .mockRejectedValueOnce(new Error("Search page serialized data did not return ordered app ids"));
+
+    await expect(
+      refreshKeywordOrder({
+        keyword: "budget",
+        country: "US",
+        getStoredOrderedAppIds: () => ["1"],
+      })
+    ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
   });
 });

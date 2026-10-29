@@ -90,6 +90,22 @@ Also covers MCP keyword evaluation entrypoint (`aso_evaluate_keywords`) that eva
 - It does not run dashboard startup, keyword lookup, or reauthentication.
 
 ## Enrichment Strategy
+
+Ratings mode (`ASO_ENRICHMENT_MODE` unset, the default) ranks like this:
+- MZSearch (`mzsearch.keyword-order`) gives the deep order (~250 ids).
+- With `ASO_RANK_SEARCHPAGE_PREFIX` on (default), the App Store search page
+  gives the first ~11 positions exactly as a user sees them. Only organic rows
+  count: `AppSearchResult/content` and `AppEventSearchResult/appEvent` (an app
+  event stands for that app's slot); ads, editorial and bundles are skipped.
+  MZSearch's ids not already in that prefix are appended as the tail, but only
+  when MZSearch is at least as long as the prefix (upstream 995fa56/a5ca459).
+  A failed search page falls back to MZSearch order alone. Cost: one extra
+  `apps.apple.com` search-page request per keyword.
+- An MZSearch contract drift is a hard error; an empty order never replaces a
+  stored non-empty one (`EMPTY_ORDER`).
+- The top 10 of the final order get one iTunes lookup for difficulty.
+
+Legacy mode:
 - Primary ordering source: App Store search page `serialized-server-data`.
 - Fallback ordering source: MZSearch.
 - App detail sources:
