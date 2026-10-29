@@ -13,6 +13,7 @@ import {
   pruneRefreshRuns,
   upsertRefreshRunStorefront,
 } from "./refresh-runs";
+import Database from "better-sqlite3";
 import { closeDbForTests, getDb, SCHEMA_VERSION } from "./store";
 
 const TEST_DB_PATH = path.join(
@@ -62,6 +63,54 @@ describe("refresh-runs", () => {
 
   it("stamps the schema version on a new database", () => {
     expect(getDb().pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
+  });
+
+  it("upgrades an existing pre-v1 database without touching its data", () => {
+    // Build a database as the previous release left it: every older table,
+    // real keyword data, user_version 0 and no refresh tables.
+    getDb();
+    closeDbForTests();
+    const legacy = new Database(TEST_DB_PATH);
+    legacy.exec(`
+      DROP TABLE refresh_run_storefronts;
+      DROP TABLE refresh_runs;
+      PRAGMA user_version = 0;
+      INSERT INTO aso_keywords (
+        country, normalized_keyword, keyword, popularity, difficulty_score,
+        min_difficulty_score, is_brand_keyword, app_count, keyword_match,
+        ordered_app_ids, created_at, updated_at, order_expires_at, popularity_expires_at
+      ) VALUES (
+        'GB', 'meditation', 'meditation', 41, 55, 50, 0, 240, 'none',
+        '["1","2","3"]', '2026-01-01T00:00:00.000Z', '2026-10-27T03:10:00.000Z',
+        '2026-10-28T03:10:00.000Z', '2026-11-20T00:00:00.000Z'
+      );
+      INSERT INTO app_keywords (app_id, keyword, country, is_favorite, previous_position, added_at)
+        VALUES ('6692632196', 'meditation', 'GB', 1, 7, '2026-01-01T00:00:00.000Z');
+      INSERT INTO metadata (key, value, updated_at)
+        VALUES ('dashboard:scheduled-refresh:last-run-at', '2026-10-27T03:00:00.000Z', '2026-10-27T03:00:00.000Z');
+    `);
+    const snapshot = (db: Database.Database) => ({
+      keywords: db.prepare("SELECT * FROM aso_keywords ORDER BY normalized_keyword").all(),
+      appKeywords: db.prepare("SELECT * FROM app_keywords").all(),
+      metadata: db.prepare("SELECT * FROM metadata").all(),
+    });
+    const before = snapshot(legacy);
+    expect(legacy.pragma("user_version", { simple: true })).toBe(0);
+    legacy.close();
+
+    const upgraded = getDb();
+
+    expect(upgraded.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
+    expect(snapshot(upgraded)).toEqual(before);
+    expect(before.keywords).toHaveLength(1);
+    // The new tables exist and work.
+    const id = insertRefreshRun({ trigger: "scheduled", startedAt: "2026-10-29T03:00:00.000Z" });
+    expect(getLatestRefreshRun()?.id).toBe(id);
+
+    // Opening again is a no-op.
+    closeDbForTests();
+    expect(snapshot(getDb())).toEqual(before);
+    expect(getLatestRefreshRun()?.id).toBe(id);
   });
 
   it("records a run, its storefronts and its completion", () => {
