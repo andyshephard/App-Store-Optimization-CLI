@@ -173,18 +173,33 @@ export class KeywordOrderUnavailableError extends Error {
   }
 }
 
-function assertNonEmptyOrder(params: {
+/** Looks up the keyword's currently stored order, if any. */
+export type StoredOrderLookup = (normalizedKeyword: string) => string[] | null;
+
+/**
+ * Refuses an empty order only where it would destroy data: the keyword already
+ * has a non-empty stored order and the response is not clearly an empty
+ * result. A never-enriched keyword, or one that was already empty, may
+ * genuinely have no results in a smaller storefront, and refusing it would
+ * leave it failed forever. Without a lookup there is nothing to protect.
+ */
+function assertUsableOrder(params: {
   keyword: string;
   country: string;
   orderedAppIds: string[];
+  clearlyEmpty: boolean;
   source: string;
+  getStoredOrderedAppIds?: StoredOrderLookup;
 }): void {
-  if (params.orderedAppIds.length > 0) return;
+  if (params.orderedAppIds.length > 0 || params.clearlyEmpty) return;
+  const previous =
+    params.getStoredOrderedAppIds?.(normalizeKeyword(params.keyword)) ?? null;
+  if (!previous || previous.length === 0) return;
   throw new KeywordOrderUnavailableError({
     code: "EMPTY_ORDER",
     keyword: params.keyword,
     country: params.country,
-    detail: `source=${params.source} returned no apps`,
+    detail: `source=${params.source} returned no apps; keeping the stored order of ${previous.length}`,
   });
 }
 
@@ -343,6 +358,19 @@ async function fetchPopularityOrderedIds(params: {
   keyword: string;
   country: string;
 }): Promise<string[]> {
+  return (await fetchPopularityOrder(params)).orderedAppIds;
+}
+
+/**
+ * `clearlyEmpty` is true only when the response is well formed and simply has
+ * no software bubble - Apple's shape for "no app results". An empty software
+ * bubble is not treated as clearly empty: that is what a degraded response
+ * looks like too.
+ */
+async function fetchPopularityOrder(params: {
+  keyword: string;
+  country: string;
+}): Promise<{ orderedAppIds: string[]; clearlyEmpty: boolean }> {
   const response = await asoAppleGet<MzSearchResponse>(
     MZSEARCH_ORDER_URL,
     {
@@ -409,12 +437,15 @@ async function fetchPopularityOrderedIds(params: {
         detail: `softwareResultsType=${typeof bubble.results}`,
       });
     }
-    return (bubble.results || [])
-      .map((result) => `${result.id || ""}`.trim())
-      .filter(Boolean);
+    return {
+      orderedAppIds: (bubble.results || [])
+        .map((result) => `${result.id || ""}`.trim())
+        .filter(Boolean),
+      clearlyEmpty: false,
+    };
   }
 
-  return [];
+  return { orderedAppIds: [], clearlyEmpty: true };
 }
 
 function lockupToAppDoc(lockup: AmpSearchLockup, country: string): AsoAppDoc | null {
@@ -525,6 +556,7 @@ async function fetchSearchPageOrderedData(params: {
 export async function refreshKeywordOrder(params: {
   keyword: string;
   country: string;
+  getStoredOrderedAppIds?: StoredOrderLookup;
 }): Promise<{
   keyword: string;
   normalizedKeyword: string;
@@ -535,11 +567,16 @@ export async function refreshKeywordOrder(params: {
   difficultyScore?: number;
 }> {
   if (ASO_ENV.enrichmentMode !== "legacy") {
-    const enriched = await enrichKeywordFromRatings({
-      keyword: params.keyword,
-      country: params.country,
-      popularity: 0,
-    });
+    const enriched = await enrichKeywordFromRatings(
+      {
+        keyword: params.keyword,
+        country: params.country,
+        popularity: 0,
+      },
+      params.getStoredOrderedAppIds
+        ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
+        : undefined
+    );
     return {
       keyword: enriched.keyword,
       normalizedKeyword: enriched.normalizedKeyword,
@@ -611,11 +648,13 @@ export async function refreshKeywordOrder(params: {
     orderedAppIdsCount: orderedAppIds.length,
     appDocsCount: appDocs.length,
   });
-  assertNonEmptyOrder({
+  assertUsableOrder({
     keyword: params.keyword,
     country,
     orderedAppIds,
+    clearlyEmpty: false,
     source: sourceMode,
+    getStoredOrderedAppIds: params.getStoredOrderedAppIds,
   });
   return {
     keyword: params.keyword,
@@ -930,6 +969,7 @@ type EnrichKeywordParams = {
 
 type EnrichKeywordOptions = {
   getAppDocs?: (appIds: string[]) => Promise<AsoAppDoc[]>;
+  getStoredOrderedAppIds?: StoredOrderLookup;
 };
 
 type EnrichKeywordResult = {
@@ -972,15 +1012,17 @@ export async function enrichKeywordFromRatings(
   const country = params.country.toUpperCase();
   const normalizedKeyword = normalizeKeyword(params.keyword);
 
-  const orderedAppIds = await fetchPopularityOrderedIds({
+  const { orderedAppIds, clearlyEmpty } = await fetchPopularityOrder({
     keyword: normalizedKeyword,
     country: params.country,
   });
-  assertNonEmptyOrder({
+  assertUsableOrder({
     keyword: params.keyword,
     country,
     orderedAppIds,
+    clearlyEmpty,
     source: "mzsearch",
+    getStoredOrderedAppIds: options?.getStoredOrderedAppIds,
   });
   const appCount = orderedAppIds.length;
   const topIds = orderedAppIds.slice(0, RATING_DIFFICULTY_TOP_N);

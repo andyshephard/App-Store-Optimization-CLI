@@ -101,6 +101,8 @@ export async function enrichAsoKeywords(
   params: {
     country: string;
     items: Array<{ keyword: string; popularity: number }>;
+    /** Stored order per keyword, so an empty crawl cannot overwrite a real one. */
+    getStoredOrderedAppIds?: (normalizedKeyword: string) => string[] | null;
   },
   dependencies: AsoDependencies = getDefaultDependencies()
 ): Promise<{
@@ -125,7 +127,14 @@ export async function enrichAsoKeywords(
           popularity: item.popularity,
           country,
         },
-        getAppDocs ? { getAppDocs } : undefined
+        getAppDocs || params.getStoredOrderedAppIds
+          ? {
+              ...(getAppDocs ? { getAppDocs } : {}),
+              ...(params.getStoredOrderedAppIds
+                ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
+                : {}),
+            }
+          : undefined
       )
   );
 

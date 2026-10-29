@@ -10,6 +10,15 @@ import type {
   AsoKeywordItem,
   FailedKeyword,
 } from "./aso-types";
+import { getKeywords } from "../../db/aso-keywords";
+
+/** Stored order for one keyword; null when there is no stored row. */
+function storedOrderLookup(
+  country: string
+): (normalizedKeyword: string) => string[] | null {
+  return (normalizedKeyword) =>
+    getKeywords(country, [normalizedKeyword])[0]?.orderedAppIds ?? null;
+}
 
 export async function lookupAsoCacheLocal(
   country: string,
@@ -22,7 +31,11 @@ export async function enrichAsoKeywordsLocal(
   country: string,
   items: Array<{ keyword: string; popularity: number }>
 ): Promise<{ items: AsoKeywordItem[]; failedKeywords: FailedKeyword[] }> {
-  return enrichAsoKeywords({ country, items }) as Promise<{
+  return enrichAsoKeywords({
+    country,
+    items,
+    getStoredOrderedAppIds: storedOrderLookup(country),
+  }) as Promise<{
     items: AsoKeywordItem[];
     failedKeywords: FailedKeyword[];
   }>;
@@ -54,5 +67,9 @@ export async function refreshAsoKeywordOrderLocal(
   appDocs?: AsoAppDocItem[];
   difficultyScore?: number;
 }> {
-  return refreshKeywordOrder({ country, keyword });
+  return refreshKeywordOrder({
+    country,
+    keyword,
+    getStoredOrderedAppIds: storedOrderLookup(country),
+  });
 }

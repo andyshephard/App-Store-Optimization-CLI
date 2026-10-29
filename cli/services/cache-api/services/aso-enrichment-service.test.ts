@@ -1152,23 +1152,55 @@ describe("aso-enrichment-service (ratings mode)", () => {
 });
 
 describe("aso-enrichment-service (untrustworthy MZSearch order)", () => {
+  const storedOrder = (ids: string[] | null) => () => ids;
+
   beforeEach(() => {
     delete process.env.ASO_ENRICHMENT_MODE;
     jest.clearAllMocks();
   });
 
-  it("refuses an empty order instead of returning appCount 0", async () => {
+  it("refuses an empty software bubble when the keyword already has a stored order", async () => {
     mockedAsoAppleGet.mockResolvedValueOnce({
       data: { pageData: { bubbles: [{ name: "software", results: [] }] } },
     } as never);
 
     await expect(
-      refreshKeywordOrder({ keyword: "budget", country: "GB" })
+      refreshKeywordOrder({
+        keyword: "budget",
+        country: "GB",
+        getStoredOrderedAppIds: storedOrder(["1", "2"]),
+      })
     ).rejects.toMatchObject({ code: "EMPTY_ORDER" });
     expect(mockedFetchItunesLookupAppDocs).not.toHaveBeenCalled();
   });
 
-  it("refuses a response whose shape drifted", async () => {
+  it("accepts an empty result for a never-enriched keyword", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce({
+      data: { pageData: { bubbles: [{ name: "software", results: [] }] } },
+    } as never);
+
+    const result = await enrichKeyword(
+      { keyword: "zzqx", country: "VN", popularity: 5 },
+      { getStoredOrderedAppIds: storedOrder(null) }
+    );
+    expect(result.appCount).toBe(0);
+    expect(result.orderedAppIds).toEqual([]);
+  });
+
+  it("accepts a clearly empty result (no software bubble) even over a stored order", async () => {
+    mockedAsoAppleGet.mockResolvedValueOnce({
+      data: { pageData: { bubbles: [{ name: "editorial", results: [] }] } },
+    } as never);
+
+    const result = await refreshKeywordOrder({
+      keyword: "zzqx",
+      country: "PT",
+      getStoredOrderedAppIds: storedOrder(["1"]),
+    });
+    expect(result.orderedAppIds).toEqual([]);
+  });
+
+  it("refuses a response whose shape drifted, whatever is stored", async () => {
     mockedAsoAppleGet.mockResolvedValueOnce({
       status: 200,
       data: { pageData: {} },

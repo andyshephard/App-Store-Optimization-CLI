@@ -54,6 +54,7 @@ describe("aso-local-cache-service", () => {
     expect(mockEnrichAsoKeywords).toHaveBeenCalledWith({
       country: "US",
       items: [{ keyword: "term", popularity: 42 }],
+      getStoredOrderedAppIds: expect.any(Function),
     });
   });
 
@@ -99,6 +100,7 @@ describe("aso-local-cache-service", () => {
     expect(mockRefreshKeywordOrder).toHaveBeenCalledWith({
       country: "US",
       keyword: "term",
+      getStoredOrderedAppIds: expect.any(Function),
     });
   });
 });
