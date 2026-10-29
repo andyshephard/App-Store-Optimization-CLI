@@ -91,7 +91,7 @@ describe("AsoPopularityService", () => {
       );
     });
 
-    it("skips items with null popularity", async () => {
+    it("treats null popularity as resolved with no data, at the floor score", async () => {
       mockRequestPopularitiesWithKwsRetry.mockResolvedValue({
         statusCode: 200,
         attempts: 1,
@@ -111,7 +111,34 @@ describe("AsoPopularityService", () => {
         "c",
       ]);
 
-      expect(result).toEqual({ a: 1, c: 3 });
+      expect(result).toEqual({ a: 1, b: 5, c: 3 });
+    });
+
+    it("matches Apple's echoed names case- and space-insensitively", async () => {
+      mockRequestPopularitiesWithKwsRetry.mockResolvedValue({
+        statusCode: 200,
+        attempts: 1,
+        data: {
+          status: "success",
+          data: [
+            { name: " Meditation ", popularity: 44 },
+            { name: "SLEEP", popularity: null },
+          ],
+        },
+      });
+
+      const result = await asoPopularityService.fetchKeywordPopularitiesWithFailures([
+        "meditation",
+        "sleep",
+        "focus",
+      ]);
+
+      expect(result.popularities).toEqual({ meditation: 44, sleep: 5 });
+      expect(result.noDataKeywords).toEqual(["sleep"]);
+      // A term Apple left out entirely is drift, not "no data".
+      expect(result.failedKeywords).toEqual([
+        expect.objectContaining({ keyword: "focus", reasonCode: "APPLE_CONTRACT_DRIFT" }),
+      ]);
     });
 
     it("throws ContextualError on non-200 response", async () => {

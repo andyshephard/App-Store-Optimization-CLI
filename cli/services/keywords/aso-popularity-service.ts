@@ -101,7 +101,15 @@ type KeywordPopularityResult = {
   failedKeywords: FailedKeyword[];
   /** Which request answered each keyword in `popularities`. */
   sourceByKeyword?: Record<string, PopularitySourceMode>;
+  /**
+   * Apple resolved these terms but returned popularity null (no data). They
+   * carry LEGACY_POPULARITY_FLOOR in `popularities` and are not failures.
+   */
+  noDataKeywords?: string[];
 };
+
+/** The legacy endpoint's lowest score; also used for resolved-without-data terms. */
+export const LEGACY_POPULARITY_FLOOR = 5;
 
 function sourceMap(
   popularities: Record<string, number>,
@@ -414,6 +422,21 @@ export class AsoPopularityService {
       requestId: normalized.requestId,
     });
 
+    const toContractFailure = (
+      keyword: string,
+      response: { statusCode: number; data: PopularityResponse; attempts?: number }
+    ): FailedKeyword => ({
+      keyword,
+      stage: "popularity",
+      reasonCode: "APPLE_CONTRACT_DRIFT",
+      message: "Apple popularity response did not include a usable result",
+      statusCode: response.statusCode,
+      retryable: false,
+      attempts: response.attempts ?? 1,
+      requestId: response.data.requestID,
+    });
+
+    const noDataKeywords = new Set<string>();
     const parseSuccessPopularities = (response: {
       statusCode: number;
       data: PopularityResponse;
@@ -441,15 +464,28 @@ export class AsoPopularityService {
 
       let invalidItemCount = 0;
       for (const item of response.data.data || []) {
-        if (!item || typeof item.name !== "string") {
+        if (
+          !item ||
+          typeof item.name !== "string" ||
+          (item.popularity !== null &&
+            (typeof item.popularity !== "number" ||
+              !Number.isFinite(item.popularity)))
+        ) {
           invalidItemCount += 1;
           continue;
         }
-        if (item.popularity === null) continue;
-        const originalKeyword = sanitizedToOriginal.get(item.name);
-        if (originalKeyword) {
-          result[originalKeyword] = item.popularity;
+        // Apple may echo the term with different casing or spacing; match it
+        // the same way the request terms were sanitised (upstream d85861c).
+        const originalKeyword = sanitizedToOriginal.get(
+          sanitizeKeyword(item.name)
+        );
+        if (!originalKeyword) continue;
+        if (item.popularity === null) {
+          // Resolved, but Apple has no score: not a failure.
+          noDataKeywords.add(originalKeyword);
+          continue;
         }
+        result[originalKeyword] = item.popularity;
       }
       if (invalidItemCount > 0) {
         reportAppleContractChange({
@@ -575,6 +611,7 @@ export class AsoPopularityService {
         return {
           popularities: {},
           failedKeywords: [toFailureFromResponse(keyword, response)],
+          noDataKeywords: [],
         };
       }
 
@@ -592,8 +629,12 @@ export class AsoPopularityService {
             singleResponse.statusCode === 200 &&
             singleResponse.data.status === "success"
           ) {
-            popularities[keyword] =
-              parseSuccessPopularities(singleResponse)[keyword] ?? 1;
+            const value = parseSuccessPopularities(singleResponse)[keyword];
+            if (value != null) {
+              popularities[keyword] = value;
+            } else if (!noDataKeywords.has(keyword)) {
+              failedKeywords.push(toContractFailure(keyword, singleResponse));
+            }
           } else {
             failedKeywords.push(toFailureFromResponse(keyword, singleResponse));
           }
@@ -604,13 +645,49 @@ export class AsoPopularityService {
       return {
         popularities,
         failedKeywords,
+        noDataKeywords: takeNoData(terms),
       };
     }
 
+      const parsed = parseSuccessPopularities(response);
+      // A success that leaves a requested term out entirely is contract drift,
+      // not "no data" - that is what null is for.
+      const unresolved = terms
+        .map((term) => sanitizedToOriginal.get(term) ?? term)
+        .filter((keyword) => parsed[keyword] == null && !noDataKeywords.has(keyword));
       return {
-        popularities: parseSuccessPopularities(response),
-        failedKeywords: [],
+        popularities: parsed,
+        failedKeywords: unresolved.map((keyword) =>
+          toContractFailure(keyword, response)
+        ),
+        noDataKeywords: takeNoData(terms),
       };
+    };
+
+    /** No-data terms of this request, removed from the shared set. */
+    const takeNoData = (terms: string[]): string[] => {
+      const out: string[] = [];
+      for (const term of terms) {
+        const keyword = sanitizedToOriginal.get(term) ?? term;
+        if (noDataKeywords.delete(keyword)) out.push(keyword);
+      }
+      return out;
+    };
+
+    /**
+     * Resolved-without-data terms get the legacy endpoint's floor score, as
+     * Apple's own UI shows them, so they enrich normally instead of failing.
+     * They are reported in noDataKeywords for the observations feed.
+     */
+    const withNoDataFloor = (
+      popularities: Record<string, number>,
+      noData: string[]
+    ): Record<string, number> => {
+      const out = { ...popularities };
+      for (const keyword of noData) {
+        if (out[keyword] == null) out[keyword] = LEGACY_POPULARITY_FLOOR;
+      }
+      return out;
     };
 
     const country = options?.country?.trim().toUpperCase() || null;
@@ -620,10 +697,17 @@ export class AsoPopularityService {
       !isStorefrontPopularityRejected(country);
     if (!perStorefront) {
       const result = await fetchTerms(sanitizedKeywords, "account", true);
+      const noData = result.noDataKeywords ?? [];
+      const popularities = withNoDataFloor(result.popularities, noData);
       logger.info(
-        `[aso-popularity] mode=account country=${country ?? "none"} answered=${Object.keys(result.popularities).length}/${sanitizedKeywords.length} failed=${result.failedKeywords.length}`
+        `[aso-popularity] mode=account country=${country ?? "none"} answered=${Object.keys(result.popularities).length}/${sanitizedKeywords.length} noData=${noData.length} failed=${result.failedKeywords.length}`
       );
-      return { ...result, sourceByKeyword: sourceMap(result.popularities, "account") };
+      return {
+        popularities,
+        failedKeywords: result.failedKeywords,
+        noDataKeywords: noData,
+        sourceByKeyword: sourceMap(popularities, "account"),
+      };
     }
 
     activeStorefronts = [country];
@@ -652,10 +736,14 @@ export class AsoPopularityService {
       (term) => popularities[sanitizedToOriginal.get(term) ?? term] == null
     );
     let failedKeywords: FailedKeyword[] = [];
+    let noData: string[] = [];
     let fallbackAnswered = 0;
     if (remaining.length > 0) {
       const fallback = await fetchTerms(remaining, "account-fallback", true);
-      for (const [keyword, value] of Object.entries(fallback.popularities)) {
+      noData = fallback.noDataKeywords ?? [];
+      for (const [keyword, value] of Object.entries(
+        withNoDataFloor(fallback.popularities, noData)
+      )) {
         popularities[keyword] = value;
         sourceByKeyword[keyword] = "account";
         fallbackAnswered += 1;
@@ -671,7 +759,7 @@ export class AsoPopularityService {
     logger.info(
       `[aso-popularity] mode=storefront country=${country} storefront=${sanitizedKeywords.length - remaining.length} account-fallback=${fallbackAnswered} fallbackReason=${fallbackReason} failed=${failedKeywords.length} of ${sanitizedKeywords.length}`
     );
-    return { popularities, failedKeywords, sourceByKeyword };
+    return { popularities, failedKeywords, noDataKeywords: noData, sourceByKeyword };
   }
 
   async fetchKeywordPopularities(

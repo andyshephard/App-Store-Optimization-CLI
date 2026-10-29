@@ -213,4 +213,5 @@ async function fetchLegacyWithAdsApiHistory(
   return { popularities, failedKeywords };
 }
 
+/** Mirrors aso-popularity-service's LEGACY_POPULARITY_FLOOR. */
 const LEGACY_POPULARITY_FLOOR = 5;
