@@ -351,6 +351,8 @@ function startStartupRefresh(options?: {
 
 const REFRESH_RUN_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const PROCESS_STARTS_KEY = "dashboard:process-starts";
+/** Written on SIGTERM/SIGINT, consumed by the next start. */
+const CLEAN_STOP_KEY = "dashboard:clean-stop";
 const HEALTH_WRITE_CHECK_KEY = "dashboard:health:write-check";
 const HEALTH_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 const HEALTH_ALERT_FIRST_DELAY_MS = 10 * 60 * 1000;
@@ -368,8 +370,12 @@ function recordThisProcessStart(): void {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) previous = parsed.map(String);
     }
-    recentProcessStarts = recordProcessStart(previous, Date.now());
+    // A clean stop means the runtime asked us to exit (deploy, config change,
+    // reboot); that restart is not a crash and must not count towards a loop.
+    const afterCleanStop = Boolean(getMetadataValue(CLEAN_STOP_KEY));
+    recentProcessStarts = recordProcessStart(previous, Date.now(), afterCleanStop);
     setMetadataValue(PROCESS_STARTS_KEY, JSON.stringify(recentProcessStarts));
+    setMetadataValue(CLEAN_STOP_KEY, "");
     if (isRestartLoop(recentProcessStarts)) {
       logger.error(
         `[aso-health] ${recentProcessStarts.length} process starts in the last 2h; likely a restart loop`
@@ -1399,6 +1405,11 @@ function registerShutdownHandlers(
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`Received ${signal}; shutting down ASO dashboard.`);
+    try {
+      setMetadataValue(CLEAN_STOP_KEY, new Date().toISOString());
+    } catch (error) {
+      reportDashboardError(error, { context: "clean-stop-record" });
+    }
 
     // Backstop: never hang past the runtime's grace period.
     const force = setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS);

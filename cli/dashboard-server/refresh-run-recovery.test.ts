@@ -88,6 +88,20 @@ describe("refresh-run-recovery", () => {
     expect(recordProcessStart(starts, now + 24 * 60 * 60_000)).toHaveLength(1);
   });
 
+  it("does not count starts that follow a clean stop (deploys, config changes)", () => {
+    let starts: string[] = [];
+    // Six deploys in an hour: each start follows a SIGTERM.
+    for (let i = 0; i < 6; i += 1) {
+      starts = recordProcessStart(starts, now + i * 10 * 60_000, true);
+    }
+    expect(isRestartLoop(starts)).toBe(false);
+    // Crashes still count, alongside the deploys.
+    for (let i = 0; i < 4; i += 1) {
+      starts = recordProcessStart(starts, now + 61 * 60_000 + i * 60_000);
+    }
+    expect(isRestartLoop(starts)).toBe(true);
+  });
+
   it("lets a detected restart loop decay as the starts age out of the window", () => {
     let starts: string[] = [];
     for (let i = 0; i < 4; i += 1) {

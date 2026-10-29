@@ -83,14 +83,17 @@ export const RESTART_LOOP_THRESHOLD = 4;
 
 /**
  * Appends this start to the recent-start log and returns the trimmed log.
+ * A start that follows a clean stop (SIGTERM from a deploy, a config change
+ * or a reboot) is not appended: only crashes and kills count towards a loop.
  * Pure: storage is the caller's, so the restart-loop rule is testable.
  */
 export function recordProcessStart(
   previous: string[],
-  nowMs: number
+  nowMs: number,
+  afterCleanStop: boolean = false
 ): string[] {
   const kept = trimProcessStarts(previous, nowMs);
-  kept.push(new Date(nowMs).toISOString());
+  if (!afterCleanStop) kept.push(new Date(nowMs).toISOString());
   return kept.slice(-20);
 }
 
