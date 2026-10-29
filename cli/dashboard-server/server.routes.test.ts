@@ -159,6 +159,7 @@ jest.mock("../db/store", () => ({
     prepare: jest.fn(() => ({
       get: jest.fn(() => undefined),
       all: jest.fn(() => []),
+      run: jest.fn(),
     })),
   })),
 }));
@@ -368,6 +369,36 @@ describe("dashboard server routes", () => {
     expect(response.json).toEqual({ success: true });
   });
 
+  it("serves /livez as a static liveness probe", async () => {
+    const response = await request({ method: "GET", path: "/livez" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json).toEqual({ success: true });
+  });
+
+  it("returns the truthful health report", async () => {
+    mockGetDb.mockReturnValue({
+      prepare: jest.fn(() => ({
+        get: jest.fn(() => undefined),
+        all: jest.fn(() => []),
+        run: jest.fn(),
+      })),
+    } as never);
+    const response = await request({ method: "GET", path: "/api/aso/health" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json?.data).toEqual(
+      expect.objectContaining({
+        status: expect.stringMatching(/^(ok|degraded)$/),
+        db: { writable: true, error: null },
+        storefronts: expect.any(Array),
+        scheduler: expect.objectContaining({ enabled: expect.any(Boolean) }),
+        session: expect.objectContaining({ needsTwoFactor: false }),
+        memory: expect.objectContaining({ rssMb: expect.any(Number) }),
+      })
+    );
+  });
+
   it("returns runtime config payload", async () => {
     const response = await request({
       method: "GET",
@@ -558,6 +589,15 @@ describe("dashboard server routes", () => {
       const response = await request({ method: "GET", path: "/health" });
 
       expect(response.statusCode).toBe(200);
+    });
+
+    it("keeps /livez open but /api/aso/health behind the token", async () => {
+      process.env.ASO_API_TOKEN = TOKEN;
+
+      expect((await request({ method: "GET", path: "/livez" })).statusCode).toBe(200);
+      expect(
+        (await request({ method: "GET", path: "/api/aso/health" })).statusCode
+      ).toBe(401);
     });
 
     it("covers the static bundle, not just /api", async () => {

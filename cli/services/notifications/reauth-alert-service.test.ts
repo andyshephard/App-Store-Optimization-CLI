@@ -1,5 +1,7 @@
 import {
+  clearOperationalAlertState,
   clearReauthenticationAlertState,
+  sendOperationalAlert,
   sendReauthenticationAlert,
 } from "./reauth-alert-service";
 
@@ -166,5 +168,38 @@ describe("sendReauthenticationAlert", () => {
       writeLastSentAt: (iso) => written.push(iso),
     });
     expect(written).toEqual([""]);
+  });
+});
+
+describe("sendOperationalAlert", () => {
+  beforeEach(() => {
+    process.env.ASO_RESEND_API_KEY = "re_test";
+    process.env.ASO_ALERT_EMAIL_TO = "ops@example.com";
+  });
+
+  afterEach(() => {
+    delete process.env.ASO_RESEND_API_KEY;
+    delete process.env.ASO_ALERT_EMAIL_TO;
+  });
+
+  it("sends once per day per condition", async () => {
+    let stored: string | null = null;
+    const mailer = jest.fn(async () => {});
+    const deps = {
+      mailer,
+      now: () => Date.parse("2026-10-29T12:00:00Z"),
+      readLastSentAt: () => stored,
+      writeLastSentAt: (iso: string) => {
+        stored = iso;
+      },
+    };
+    const alert = { key: "storefront-stale", subject: "s", text: "t" };
+
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("sent");
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("suppressed");
+    expect(mailer).toHaveBeenCalledTimes(1);
+
+    clearOperationalAlertState("storefront-stale", deps);
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("sent");
   });
 });

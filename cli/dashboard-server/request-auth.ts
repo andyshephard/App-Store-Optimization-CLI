@@ -5,10 +5,11 @@ import { ASO_ENV } from "../shared/aso-env";
 
 /**
  * Paths served without a token so an uptime probe or load balancer can reach
- * them. `/health` is a static JSON response that touches neither the database
- * nor Apple, so exposing it leaks nothing.
+ * them. `/health` and `/livez` are static JSON responses that touch neither
+ * the database nor Apple, so exposing them leaks nothing. The truthful report
+ * at `/api/aso/health` stays behind the token.
  */
-const OPEN_PATHS = new Set(["/health"]);
+const OPEN_PATHS = new Set(["/health", "/livez"]);
 
 function digest(value: string): Buffer {
   return crypto.createHash("sha256").update(value, "utf8").digest();

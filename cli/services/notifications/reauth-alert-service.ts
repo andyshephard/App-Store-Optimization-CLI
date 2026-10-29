@@ -181,3 +181,71 @@ export function clearReauthenticationAlertState(
     // Losing the reset only risks suppressing one alert; never worth throwing.
   }
 }
+
+function operationalAlertKey(key: string): string {
+  return `dashboard:ops-alert:${key}:last-sent-at`;
+}
+
+/**
+ * Health alerts (stale storefront, no completed run, restart loop), sent
+ * through the same Resend path as the reauthentication alert and suppressed
+ * per condition for a day. Fail-quiet for the same reason.
+ */
+export async function sendOperationalAlert(
+  params: { key: string; subject: string; text: string },
+  deps: AlertDeps = {}
+): Promise<"sent" | "suppressed" | "not-configured" | "failed"> {
+  if (!isConfigured()) {
+    logger.warn(
+      `[aso-alert] ${params.key} alert not sent: ASO_RESEND_API_KEY or ASO_ALERT_EMAIL_TO is unset. ${params.subject}`
+    );
+    return "not-configured";
+  }
+  const now = deps.now?.() ?? Date.now();
+  const metadataKey = operationalAlertKey(params.key);
+  const readLastSentAt =
+    deps.readLastSentAt ?? (() => getMetadataValue(metadataKey));
+  const writeLastSentAt =
+    deps.writeLastSentAt ??
+    ((iso: string) => setMetadataValue(metadataKey, iso));
+
+  const lastSentRaw = readLastSentAt();
+  const lastSent = lastSentRaw ? Date.parse(lastSentRaw) : NaN;
+  if (Number.isFinite(lastSent) && now - lastSent < RESEND_SUPPRESSION_MS) {
+    return "suppressed";
+  }
+
+  try {
+    await (deps.mailer ?? sendViaResend)({
+      from: ASO_ENV.alertEmailFrom,
+      to: ASO_ENV.alertEmailTo as string,
+      subject: params.subject,
+      text: params.text,
+    });
+  } catch (error) {
+    logger.warn(`[aso-alert] ${params.key} alert failed to send: ${String(error)}`);
+    return "failed";
+  }
+  try {
+    writeLastSentAt(new Date(now).toISOString());
+  } catch (error) {
+    logger.debug(`[aso-alert] could not record alert timestamp: ${String(error)}`);
+  }
+  logger.warn(`[aso-alert] ${params.key} alert sent: ${params.subject}`);
+  return "sent";
+}
+
+/** Re-arms a condition once it clears, so its next occurrence alerts at once. */
+export function clearOperationalAlertState(
+  key: string,
+  deps: Pick<AlertDeps, "readLastSentAt" | "writeLastSentAt"> = {}
+): void {
+  try {
+    const metadataKey = operationalAlertKey(key);
+    const read = deps.readLastSentAt ?? (() => getMetadataValue(metadataKey));
+    if (!read()) return;
+    (deps.writeLastSentAt ?? ((iso: string) => setMetadataValue(metadataKey, iso)))("");
+  } catch {
+    // Losing the reset only risks suppressing one alert; never worth throwing.
+  }
+}

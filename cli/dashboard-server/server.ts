@@ -17,19 +17,33 @@ import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
   countRefreshRunsSince,
   finishRefreshRun,
+  getLatestFinishedRefreshRun,
   getLatestRefreshRun,
   insertRefreshRun,
+  listCountriesWithRunHistory,
+  listKeywordLastUpdatedAt,
+  listRefreshRunStorefronts,
+  listStorefrontLastSuccessAt,
   markUnfinishedRefreshRunsInterrupted,
   pruneRefreshRuns,
   upsertRefreshRunStorefront,
   type RefreshRunStatus,
 } from "../db/refresh-runs";
 import {
+  isRestartLoop,
+  recordProcessStart,
   recoverInterruptedScheduledRun,
   SCHEDULED_RUN_TRIGGERS,
 } from "./refresh-run-recovery";
 import {
+  buildHealthReport,
+  listHealthAlertConditions,
+  type HealthReport,
+} from "./health-report";
+import {
+  clearOperationalAlertState,
   clearReauthenticationAlertState,
+  sendOperationalAlert,
   sendReauthenticationAlert,
 } from "../services/notifications/reauth-alert-service";
 import {
@@ -222,6 +236,9 @@ const startupRefreshManager = createStartupRefreshManager({
     });
   },
   onRunHealthy: () => clearReauthenticationAlertState(),
+  onRunFinished: () => {
+    void evaluateHealthAlerts();
+  },
   recorder: {
     start: ({ trigger, startedAt }) => insertRefreshRun({ trigger, startedAt }),
     saveStorefront: (runId, counters) => {
@@ -308,6 +325,164 @@ function startStartupRefresh(options?: {
 }
 
 const REFRESH_RUN_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+const PROCESS_STARTS_KEY = "dashboard:process-starts";
+const HEALTH_WRITE_CHECK_KEY = "dashboard:health:write-check";
+const HEALTH_ALERT_INTERVAL_MS = 60 * 60 * 1000;
+const HEALTH_ALERT_FIRST_DELAY_MS = 10 * 60 * 1000;
+
+let recentProcessStarts: string[] = [];
+let catchUpCapReached = false;
+
+/** Appends this start to the persisted log the restart-loop check reads. */
+function recordThisProcessStart(): void {
+  try {
+    let previous: string[] = [];
+    const raw = getMetadataValue(PROCESS_STARTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) previous = parsed.map(String);
+    }
+    recentProcessStarts = recordProcessStart(previous, Date.now());
+    setMetadataValue(PROCESS_STARTS_KEY, JSON.stringify(recentProcessStarts));
+    if (isRestartLoop(recentProcessStarts)) {
+      logger.error(
+        `[aso-health] ${recentProcessStarts.length} process starts in the last 2h; likely a restart loop`
+      );
+    }
+  } catch (error) {
+    reportDashboardError(error, { context: "process-start-record" });
+  }
+}
+
+function checkDbWritable(): { writable: boolean; error: string | null } {
+  try {
+    setMetadataValue(HEALTH_WRITE_CHECK_KEY, new Date().toISOString());
+    return { writable: true, error: null };
+  } catch (error) {
+    return {
+      writable: false,
+      error: String(error instanceof Error ? error.message : error).slice(0, 300),
+    };
+  }
+}
+
+function safeRead<T>(read: () => T, fallback: T): T {
+  try {
+    return read() ?? fallback;
+  } catch (error) {
+    reportDashboardError(error, { context: "health-report" });
+    return fallback;
+  }
+}
+
+function collectHealthReport(): HealthReport {
+  const db = checkDbWritable();
+  const lastRunRow = safeRead(() => getLatestRefreshRun(), null);
+  const lastRun = lastRunRow
+    ? {
+        id: lastRunRow.id,
+        trigger: lastRunRow.trigger,
+        status: lastRunRow.status,
+        startedAt: lastRunRow.startedAt,
+        finishedAt: lastRunRow.finishedAt,
+        lastError: lastRunRow.lastError,
+        storefronts: safeRead(() => listRefreshRunStorefronts(lastRunRow.id), []),
+      }
+    : null;
+  const current = getStartupRefreshState();
+  const keeper = sessionKeeper.getState();
+  const memory = process.memoryUsage();
+  return buildHealthReport({
+    nowMs: Date.now(),
+    uptimeSeconds: process.uptime(),
+    memory: {
+      rss: memory.rss,
+      heapUsed: memory.heapUsed,
+      heapTotal: memory.heapTotal,
+    },
+    db,
+    enabledCountries: listEnabledStorefronts().map((sf) => sf.country),
+    storefrontLastSuccessAt: safeRead(() => listStorefrontLastSuccessAt(), {}),
+    countriesWithRunHistory: safeRead(
+      () => listCountriesWithRunHistory(),
+      new Set<string>()
+    ),
+    keywordLastUpdatedAt: safeRead(() => listKeywordLastUpdatedAt(), {}),
+    lastRun,
+    lastFinishedRunAt: safeRead(
+      () => getLatestFinishedRefreshRun()?.finishedAt ?? null,
+      null
+    ),
+    currentRun: {
+      status: current.status,
+      trigger: current.trigger,
+      startedAt: current.startedAt,
+      requiresReauthentication: current.requiresReauthentication,
+    },
+    scheduler: refreshScheduler.getState(),
+    session: {
+      keeperEnabled: hasEnvAppleCredentials(),
+      lastOkAt: keeper.lastOkAt,
+      lastCheckAt: keeper.lastCheckAt,
+      ok: keeper.ok,
+      needsTwoFactor: keeper.needsTwoFactor,
+    },
+    restartLoop: {
+      detected: isRestartLoop(recentProcessStarts) || catchUpCapReached,
+      recentStarts: recentProcessStarts.length,
+    },
+  });
+}
+
+let healthAlertsInFlight = false;
+
+/** Emails each active condition at most once a day; re-arms cleared ones. */
+async function evaluateHealthAlerts(): Promise<void> {
+  if (healthAlertsInFlight) return;
+  healthAlertsInFlight = true;
+  try {
+    const report = collectHealthReport();
+    if (report.status !== "ok") {
+      logger.warn(
+        `[aso-health] status=${report.status} reasons=${report.reasons.join(",")}`
+      );
+    }
+    for (const condition of listHealthAlertConditions(report)) {
+      if (condition.active) {
+        await sendOperationalAlert({
+          key: condition.key,
+          subject: condition.subject,
+          text: condition.text,
+        });
+      } else {
+        clearOperationalAlertState(condition.key);
+      }
+    }
+  } catch (error) {
+    reportDashboardError(error, { context: "health-alerts" });
+  } finally {
+    healthAlertsInFlight = false;
+  }
+}
+
+function startHealthAlertTimer(): () => void {
+  const first = setTimeout(() => void evaluateHealthAlerts(), HEALTH_ALERT_FIRST_DELAY_MS);
+  const every = setInterval(() => void evaluateHealthAlerts(), HEALTH_ALERT_INTERVAL_MS);
+  first.unref?.();
+  every.unref?.();
+  return () => {
+    clearTimeout(first);
+    clearInterval(every);
+  };
+}
+
+function handleApiAsoHealthGet(res: http.ServerResponse): void {
+  const report = collectHealthReport();
+  sendJson(res, report.status === "down" ? 503 : 200, {
+    success: true,
+    data: report,
+  });
+}
 
 /**
  * Must run before anything can start a refresh: a row still "running" at this
@@ -336,6 +511,7 @@ function recoverInterruptedRefresh(): void {
       startCatchUp: () =>
         startupRefreshManager.start({ force: true, trigger: "catch-up" }),
       onSuppressed: (suppressed) => {
+        catchUpCapReached = true;
         logger.error(
           `[aso-refresh] not catching up interrupted run: ${JSON.stringify(suppressed)}; ` +
             `ASO_REFRESH_MAX_CATCHUPS_PER_DAY=${ASO_ENV.refreshMaxCatchUpsPerDay} reached, likely a restart loop`
@@ -746,8 +922,18 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
-      if (req.method === "GET" && pathname === "/health") {
+      // Liveness only: answers while the event loop does. Docker's
+      // HEALTHCHECK uses /health; /livez is the same, named for what it is.
+      if (
+        req.method === "GET" &&
+        (pathname === "/health" || pathname === "/livez")
+      ) {
         sendJson(res, 200, { success: true });
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/aso/health") {
+        handleApiAsoHealthGet(res);
         return;
       }
 
@@ -1082,7 +1268,10 @@ export function createServer(): http.Server {
  * crawl in flight finishes its current batch instead of being cut off
  * mid-request to Apple.
  */
-function registerShutdownHandlers(server: http.Server): void {
+function registerShutdownHandlers(
+  server: http.Server,
+  stopTimers: () => void = () => {}
+): void {
   let shuttingDown = false;
 
   const shutdown = (signal: string) => {
@@ -1095,6 +1284,7 @@ function registerShutdownHandlers(server: http.Server): void {
     force.unref();
 
     refreshScheduler.stop();
+    stopTimers();
     stopStartupRefresh();
     server.close(() => {
       try {
@@ -1189,10 +1379,12 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       reject(err);
     });
 
-    registerShutdownHandlers(server);
     settleRefreshRunHistory();
+    recordThisProcessStart();
     refreshScheduler.start();
     recoverInterruptedRefresh();
+    const stopHealthAlerts = startHealthAlertTimer();
+    registerShutdownHandlers(server, stopHealthAlerts);
     if (hasEnvAppleCredentials()) sessionKeeper.start();
 
     server.listen(dashboardPort, dashboardHost, () => {

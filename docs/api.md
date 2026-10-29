@@ -18,7 +18,7 @@ separate API service. Deployment is covered in [deployment.md](deployment.md).
 ## Authentication
 
 Every request needs a bearer token — including `/` and the static assets. The
-only exception is `/health`.
+only exceptions are the liveness probes `/health` and `/livez`.
 
 ```bash
 curl -H "Authorization: Bearer $ASO_API_TOKEN" \
@@ -74,7 +74,8 @@ The endpoints do **not** all behave like a database. Three groups:
 
 **Safe to poll.** Pure SQLite reads, no outbound traffic, no writes.
 
-`/health` · `/api/aso/keywords` · `/api/aso/keywords/history` ·
+`/health` · `/livez` · `/api/aso/health` (writes one metadata row as its DB
+check) · `/api/aso/keywords` · `/api/aso/keywords/history` ·
 `/api/aso/storefronts` · `/api/aso/refresh-status` · `/api/aso/auth/status` ·
 `/api/aso/setup/status` · `/api/dashboard/settings`
 
@@ -268,10 +269,85 @@ hardcoding the list.
 
 # Health and scheduling
 
-## `GET /health`
+## `GET /health` · `GET /livez`
 
-Unauthenticated. Static `{"success":true}`, no database access. For uptime
-probes.
+Unauthenticated. Static `{"success":true}`, no database access. Liveness only:
+they answer whenever the event loop does, including while every storefront has
+silently stopped refreshing. Docker's `HEALTHCHECK` uses `/health`; `/livez` is
+the same response under a name that says what it is. For "is the data
+current?" use `/api/aso/health`.
+
+## `GET /api/aso/health`
+
+Authenticated. The truthful health report, built from the persisted run
+history (`refresh_runs` / `refresh_run_storefronts`), so it survives restarts.
+HTTP 200 for `ok` and `degraded`, **503 for `down`**.
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "degraded",
+    "reasons": ["storefront_stale:GB"],
+    "checkedAt": "2026-10-29T12:00:00.000Z",
+    "uptimeSeconds": 360000,
+    "memory": { "rssMb": 301, "heapUsedMb": 98, "heapTotalMb": 150 },
+    "db": { "writable": true, "error": null },
+    "scheduler": {
+      "enabled": true, "dailyAt": "04:00", "timeZone": "Europe/Prague",
+      "nextRunAt": "2026-10-30T03:00:00.000Z", "lastRunAt": "2026-10-29T03:00:00.000Z"
+    },
+    "lastRun": {
+      "id": 41, "trigger": "scheduled", "status": "failed",
+      "startedAt": "2026-10-29T03:00:00.000Z", "finishedAt": "2026-10-29T03:31:12.000Z",
+      "completed": true, "lastError": "All keywords failed (25) in GB batch 1/4",
+      "eligible": 480, "refreshed": 430, "failed": 50, "popularityFailed": 3,
+      "failuresByReason": { "HTTP_403": 50, "popularity:POPULARITY_MISSING": 3 }
+    },
+    "lastCompletedRunAt": "2026-10-29T03:31:12.000Z",
+    "currentRun": { "status": "failed", "trigger": "scheduled", "startedAt": "2026-10-29T03:00:00.000Z", "requiresReauthentication": false },
+    "storefronts": [
+      {
+        "country": "GB", "lastSuccessAt": "2026-10-27T03:20:00.000Z",
+        "lastSuccessSource": "runs", "stale": true,
+        "lastRun": { "eligible": 50, "refreshed": 0, "failed": 50, "skipped": 0, "popularityFailed": 0, "abandoned": true, "failureReasons": { "HTTP_403": 50 } }
+      }
+    ],
+    "session": { "keeperEnabled": true, "lastOkAt": "2026-10-29T09:00:00.000Z", "lastCheckAt": "2026-10-29T09:00:00.000Z", "ok": true, "needsTwoFactor": false },
+    "restartLoop": { "detected": false, "recentStarts": 1 }
+  }
+}
+```
+
+- **`status`**: `down` when the database cannot be written; otherwise
+  `degraded` when any of `reasons` applies, else `ok`.
+- **`reasons`**:
+  - `storefront_stale:<CC>` — an enabled storefront has had no successful pass
+    for over 30h. A pass succeeds when it was not abandoned and refreshed at
+    least one keyword (or had none due). Before any run is recorded for a
+    storefront, its newest keyword `updated_at` stands in
+    (`lastSuccessSource: "keywords"`); with nothing at all on record a fresh
+    process gets 30h of grace.
+  - `no_completed_run_26h` — only when the scheduler is enabled: no run has
+    reached its end (`completed` or `failed`) in 26h.
+  - `two_factor_required` — the session keeper needs a human for 2FA.
+  - `reauthentication_required` — the latest run found the Apple session dead.
+  - `restart_loop` — 4+ process starts in 2h, or interrupted-run catch-ups hit
+    `ASO_REFRESH_MAX_CATCHUPS_PER_DAY`.
+  - `db_not_writable`.
+- **`lastRun.completed`** is false for a run that is `running`, `stopped` or
+  `interrupted` (the process died mid-run).
+- **Failure reasons** are Apple/pipeline reason codes. `EMPTY_ORDER` and
+  `ORDER_CONTRACT_DRIFT` mean MZSearch returned no usable order; the previous
+  ranking was kept. `popularity:`-prefixed reasons are popularity failures,
+  which no longer stop the ranking crawl.
+- `memory` is the process's RSS and V8 heap, in MB.
+
+**Alerts.** The same conditions (stale storefront, no completed run in 26h,
+restart loop) are emailed through the Resend alert path, at most once per day
+per condition, checked hourly and after each run. A condition that clears
+re-arms, so its next occurrence alerts straight away. 2FA keeps its existing
+reauthentication email.
 
 ## `GET /api/aso/refresh-status`
 
@@ -288,11 +364,15 @@ thing a report should check.
     "lastError": null,
     "requiresReauthentication": false,
     "stopRequested": false,
+    "trigger": null,
+    "runId": null,
     "counters": {
       "eligibleKeywordCount": 0,
       "refreshedKeywordCount": 0,
       "failedKeywordCount": 0,
-      "skippedCountries": []
+      "popularityFailedKeywordCount": 0,
+      "skippedCountries": [],
+      "storefronts": []
     },
     "schedule": {
       "enabled": true,
@@ -313,6 +393,17 @@ thing a report should check.
   stale.
 - `schedule.nextRunAt` is UTC. 04:00 Prague is `02:00Z` in summer, `03:00Z` in
   winter.
+- `trigger`: `scheduled` | `catch-up` | `manual` | `startup`. A `catch-up` re-runs
+  a scheduled run that was missed or interrupted by a restart.
+- **`failedKeywordCount`** counts keywords whose ranking was not refreshed (the
+  stored row was kept). Partial failures leave `status` at `completed`; a batch
+  with no successes sets `lastError` and makes it `failed`.
+- `popularityFailedKeywordCount` counts popularity failures separately; those
+  keywords still had their ranking re-crawled.
+- `counters.storefronts[]` is the per-storefront breakdown
+  (`eligible`, `refreshed`, `failed`, `skipped`, `popularityFailed`,
+  `failureReasons`, `abandoned`). This state is in memory and resets on restart;
+  `/api/aso/health` reads the persisted history.
 
 ## `GET /api/aso/auth/status`, `GET /api/aso/setup/status`
 
