@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
 import {
   asoPopularityService,
+  resetUnattendedReauthCooldown,
 } from "./aso-popularity-service";
 import { asoAuthService } from "../auth/aso-auth-service";
 import { requestPopularitiesWithKwsRetry } from "./aso-apple-popularity-client";
@@ -30,6 +31,7 @@ describe("AsoPopularityService", () => {
     jest.clearAllMocks();
     jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("cookie=value");
     jest.mocked(getConfiguredAsoAdamId).mockReturnValue("1234567890");
+    resetUnattendedReauthCooldown();
   });
 
   describe("fetchKeywordPopularities", () => {
@@ -355,6 +357,65 @@ describe("AsoPopularityService", () => {
         expect.any(String),
         { maxAttempts: 1 }
       );
+    });
+  });
+
+  describe("unattended reauthentication", () => {
+    const originalAppleId = process.env.ASO_APPLE_ID;
+    const originalPassword = process.env.ASO_APPLE_PASSWORD;
+
+    beforeEach(() => {
+      process.env.ASO_APPLE_ID = "user@example.com";
+      process.env.ASO_APPLE_PASSWORD = "pw";
+      jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("");
+    });
+
+    afterEach(() => {
+      if (originalAppleId === undefined) delete process.env.ASO_APPLE_ID;
+      else process.env.ASO_APPLE_ID = originalAppleId;
+      if (originalPassword === undefined) delete process.env.ASO_APPLE_PASSWORD;
+      else process.env.ASO_APPLE_PASSWORD = originalPassword;
+    });
+
+    const fetchUnattended = () =>
+      asoPopularityService.fetchKeywordPopularities(["x"], {
+        allowInteractiveAuthRecovery: false,
+      });
+
+    it("stops signing in to Apple after a failure until the cooldown is reset", async () => {
+      jest
+        .mocked(asoAuthService.reAuthenticate)
+        .mockRejectedValue(new Error("Apple login failed with status 503"));
+
+      await expect(fetchUnattended()).rejects.toMatchObject({
+        code: "ASO_AUTH_REAUTH_REQUIRED",
+      });
+      await expect(fetchUnattended()).rejects.toMatchObject({
+        code: "ASO_AUTH_REAUTH_REQUIRED",
+      });
+      expect(asoAuthService.reAuthenticate).toHaveBeenCalledTimes(1);
+
+      resetUnattendedReauthCooldown();
+      await expect(fetchUnattended()).rejects.toMatchObject({
+        code: "ASO_AUTH_REAUTH_REQUIRED",
+      });
+      expect(asoAuthService.reAuthenticate).toHaveBeenCalledTimes(2);
+    });
+
+    it("shares one sign-in between concurrent callers", async () => {
+      jest
+        .mocked(asoAuthService.reAuthenticate)
+        .mockResolvedValue("new-cookie");
+      mockRequestPopularitiesWithKwsRetry.mockResolvedValue({
+        statusCode: 200,
+        attempts: 1,
+        data: { status: "success", data: [{ name: "x", popularity: 7 }] },
+      });
+
+      const results = await Promise.all([fetchUnattended(), fetchUnattended()]);
+
+      expect(results).toEqual([{ x: 7 }, { x: 7 }]);
+      expect(asoAuthService.reAuthenticate).toHaveBeenCalledTimes(1);
     });
   });
 });

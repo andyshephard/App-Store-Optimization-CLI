@@ -24,7 +24,10 @@ import {
 } from "../db/app-keywords";
 import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
 import { asoAuthService } from "../services/auth/aso-auth-service";
-import { isAsoAuthReauthRequiredError } from "../services/keywords/aso-popularity-service";
+import {
+  isAsoAuthReauthRequiredError,
+  resetUnattendedReauthCooldown,
+} from "../services/keywords/aso-popularity-service";
 import {
   getConfiguredAsoAdamId,
   resolveAsoAdamId,
@@ -283,7 +286,10 @@ const dashboardAuthStateManager = createDashboardAuthStateManager({
       path: "/api/aso/auth/start",
     });
   },
-  onSucceeded: () => sessionKeeper.markOk(),
+  onSucceeded: () => {
+    sessionKeeper.markOk();
+    resetUnattendedReauthCooldown();
+  },
 });
 
 const dashboardSetupStateManager = createDashboardSetupStateManager({

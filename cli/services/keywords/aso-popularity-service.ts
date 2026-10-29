@@ -37,18 +37,50 @@ const APPLE_POPULARITY_URL =
  * worth attempting even on paths that must never block on a prompt. With no
  * prompt handler and no TTY the auth service throws rather than waiting, so the
  * worst case is the same error the caller would have seen anyway.
+ *
+ * Each attempt is a full Apple sign-in, and a refresh can hit an expired
+ * session once per batch. Repeated sign-ins get the server's IP throttled by
+ * idmsa (503 on every login, including the dashboard's), so concurrent callers
+ * share one attempt and a failure blocks further unattended attempts for a
+ * cooldown. A dashboard login clears it.
  */
+const UNATTENDED_REAUTH_COOLDOWN_MS = 60 * 60 * 1000;
+let unattendedReauthInFlight: Promise<string | null> | null = null;
+let unattendedReauthFailedAt: number | null = null;
+
+export function resetUnattendedReauthCooldown(): void {
+  unattendedReauthFailedAt = null;
+}
+
 async function tryUnattendedReauth(): Promise<string | null> {
   if (!hasEnvAppleCredentials()) return null;
-  try {
-    logger.debug("[aso-popularity] attempting unattended reauthentication");
-    return await asoAuthService.reAuthenticate();
-  } catch (error) {
+  if (unattendedReauthInFlight) return unattendedReauthInFlight;
+  if (
+    unattendedReauthFailedAt != null &&
+    Date.now() - unattendedReauthFailedAt < UNATTENDED_REAUTH_COOLDOWN_MS
+  ) {
     logger.debug(
-      `[aso-popularity] unattended reauthentication failed: ${String(error)}`
+      "[aso-popularity] skipping unattended reauthentication during cooldown"
     );
     return null;
   }
+  unattendedReauthInFlight = (async () => {
+    try {
+      logger.debug("[aso-popularity] attempting unattended reauthentication");
+      const cookieHeader = await asoAuthService.reAuthenticate();
+      unattendedReauthFailedAt = null;
+      return cookieHeader;
+    } catch (error) {
+      unattendedReauthFailedAt = Date.now();
+      logger.debug(
+        `[aso-popularity] unattended reauthentication failed: ${String(error)}`
+      );
+      return null;
+    } finally {
+      unattendedReauthInFlight = null;
+    }
+  })();
+  return unattendedReauthInFlight;
 }
 
 type FetchKeywordPopularitiesOptions = {

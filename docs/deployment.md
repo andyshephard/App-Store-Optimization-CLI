@@ -152,6 +152,13 @@ Before this fix it fell through to an inquirer prompt on the container's closed
 stdin, which exits the process. The container restarted and the browser never
 got a code field.
 
+Every unattended re-login is a full Apple sign-in, and too many from one IP
+make idmsa answer **503 to every login**, the dashboard's included
+(`Apple login failed with status 503`). The popularity stage therefore shares
+one attempt between concurrent callers and stops trying for an hour after a
+failure. A dashboard login clears that cooldown. If you hit the 503, wait a
+few hours before pressing Reconnect again; every attempt extends the block.
+
 ## Deploying alongside an existing stack
 
 Where a reverse proxy already owns 80/443 — the n8n VPS is the case this was
