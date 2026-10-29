@@ -108,16 +108,50 @@ export type DailyPositionPoint = {
   position: number | null;
 };
 
+/** Position in the export order (date, app, keyword, country) to resume after. */
+export type DailyPositionCursor = {
+  date: string;
+  appId: string;
+  keyword: string;
+  country: string;
+};
+
+export function encodeDailyPositionCursor(point: DailyPositionCursor): string {
+  return Buffer.from(
+    JSON.stringify([point.date, point.appId, point.keyword, point.country]),
+    "utf8"
+  ).toString("base64url");
+}
+
+export function decodeDailyPositionCursor(raw: string): DailyPositionCursor | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 4 &&
+      parsed.every((value) => typeof value === "string")
+    ) {
+      const [date, appId, keyword, country] = parsed as string[];
+      return { date, appId, keyword, country };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
 /**
  * One point per app, keyword, country and UTC day — the day's last capture —
  * for exporting history (the middleware warehouse sync). Ordered for stable
- * offset pagination.
+ * pagination: `after` (keyset, rows strictly after that point) is preferred;
+ * `offset` still works but rescans every skipped row.
  */
 export function listDailyPositionHistory(params: {
   since: string;
   appIds?: string[];
   limit: number;
   offset: number;
+  after?: DailyPositionCursor | null;
 }): DailyPositionPoint[] {
   const db = getDb();
   const appFilter =
@@ -137,14 +171,17 @@ export function listDailyPositionHistory(params: {
          FROM app_keyword_position_history
          WHERE captured_at >= ? ${appFilter}
        )
-       WHERE rn = 1
+       WHERE rn = 1 ${params.after ? "AND (day, app_id, keyword, country) > (?, ?, ?, ?)" : ""}
        ORDER BY date, app_id, keyword, country
        LIMIT ? OFFSET ?`
     )
     .all(
       params.since,
       ...(params.appIds ?? []),
+      ...(params.after
+        ? [params.after.date, params.after.appId, params.after.keyword, params.after.country]
+        : []),
       params.limit,
-      params.offset
+      params.after ? 0 : params.offset
     ) as DailyPositionPoint[];
 }

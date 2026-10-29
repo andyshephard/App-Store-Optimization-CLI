@@ -7,7 +7,11 @@ import {
   upsertOwnedAppSnapshots,
 } from "../db/owned-apps";
 import { listKeywords } from "../db/aso-keywords";
-import { listDailyPositionHistory } from "../db/app-keyword-position-history";
+import {
+  decodeDailyPositionCursor,
+  encodeDailyPositionCursor,
+  listDailyPositionHistory,
+} from "../db/app-keyword-position-history";
 import { listKeywordAutocomplete } from "../db/aso-keyword-autocomplete";
 import {
   isAutocompleteRefreshRunning,
@@ -791,10 +795,29 @@ function handleApiAsoPositionHistoryGet(
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
-  const items = listDailyPositionHistory({ since, appIds, limit, offset });
+  // Keyset pagination: pass the previous page's nextCursor as `after`.
+  // `offset` keeps working for existing callers but is ignored with `after`.
+  let after = null;
+  if (query.after) {
+    after = decodeDailyPositionCursor(query.after);
+    if (!after) {
+      sendApiError(res, 400, "INVALID_REQUEST", "after is not a valid cursor.");
+      return;
+    }
+  }
+  const items = listDailyPositionHistory({ since, appIds, limit, offset, after });
+  const hasNextPage = items.length === limit;
+  const last = items[items.length - 1];
   sendJson(res, 200, {
     success: true,
-    data: { items, since, limit, offset, hasNextPage: items.length === limit },
+    data: {
+      items,
+      since,
+      limit,
+      offset: after ? 0 : offset,
+      hasNextPage,
+      nextCursor: hasNextPage && last ? encodeDailyPositionCursor(last) : null,
+    },
   });
 }
 

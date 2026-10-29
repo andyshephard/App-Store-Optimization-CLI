@@ -240,11 +240,14 @@ history imported from Astro (`scripts/astro/`).
 | `since` | 30 days ago | `YYYY-MM-DD`, inclusive |
 | `appIds` | all | comma-separated |
 | `limit` | 5000 | max 5000 |
-| `offset` | 0 | page with `hasNextPage` |
+| `after` | — | keyset cursor: pass the previous page's `nextCursor`. Preferred; `offset` is ignored when set |
+| `offset` | 0 | page with `hasNextPage` (still supported; rescans skipped rows) |
 
 ```json
-{"success":true,"data":{"items":[{"appId":"6692632196","keyword":"microlearning","country":"US","date":"2026-09-25","position":24}],"since":"2026-09-01","limit":5000,"offset":0,"hasNextPage":false}}
+{"success":true,"data":{"items":[{"appId":"6692632196","keyword":"microlearning","country":"US","date":"2026-09-25","position":24}],"since":"2026-09-01","limit":5000,"offset":0,"hasNextPage":true,"nextCursor":"WyIyMDI2LTA5LTI1IiwiNjY5MjYzMjE5NiIsIm1pY3JvbGVhcm5pbmciLCJVUyJd"}}
 ```
+
+`nextCursor` is null on the last page. A bad cursor is `400 INVALID_REQUEST`.
 
 `position` null means the app was not in the ~250 results that day. Positions
 below ~10 come from MZSearch order and are approximate (see

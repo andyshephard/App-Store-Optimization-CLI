@@ -64,9 +64,15 @@ jest.mock("../db/app-keywords", () => ({
   setAppKeywordFavorite: jest.fn(() => true),
 }));
 
-jest.mock("../db/app-keyword-position-history", () => ({
-  listAppKeywordPositionHistory: jest.fn(() => []),
-}));
+jest.mock("../db/app-keyword-position-history", () => {
+  const actual = jest.requireActual("../db/app-keyword-position-history") as any;
+  return {
+    listAppKeywordPositionHistory: jest.fn(() => []),
+    listDailyPositionHistory: jest.fn(() => []),
+    encodeDailyPositionCursor: actual.encodeDailyPositionCursor,
+    decodeDailyPositionCursor: actual.decodeDailyPositionCursor,
+  };
+});
 
 jest.mock("../db/refresh-runs");
 jest.mock("../db/aso-keywords", () => ({
@@ -399,6 +405,14 @@ describe("dashboard server routes", () => {
         memory: expect.objectContaining({ rssMb: expect.any(Number) }),
       })
     );
+  });
+
+  it("rejects a malformed position-history cursor", async () => {
+    const response = await request({
+      method: "GET",
+      path: "/api/aso/position-history?after=garbage",
+    });
+    expect(response.statusCode).toBe(400);
   });
 
   it("serves the observations feed and validates the cursor", async () => {

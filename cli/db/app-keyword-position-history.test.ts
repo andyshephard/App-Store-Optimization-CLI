@@ -2,6 +2,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  decodeDailyPositionCursor,
+  encodeDailyPositionCursor,
   insertAppKeywordPositionHistoryPoints,
   listAppKeywordPositionHistory,
   listDailyPositionHistory,
@@ -180,5 +182,37 @@ describe("app-keyword-position-history", () => {
     expect(
       listDailyPositionHistory({ since: "2026-09-01", limit: 2, offset: 2 })
     ).toEqual([all[2]]);
+  });
+
+  it("pages by keyset cursor with the same rows and order as offset paging", () => {
+    const points = [];
+    for (const day of ["2026-09-01", "2026-09-02", "2026-09-03"]) {
+      for (const appId of ["a", "b"]) {
+        for (const keyword of ["k1", "k2", "k3"]) {
+          points.push({ appId, keyword, country: "GB", position: 5, capturedAt: `${day}T03:00:00.000Z` });
+        }
+      }
+    }
+    insertAppKeywordPositionHistoryPoints(points);
+
+    const byOffset = [];
+    for (let offset = 0; ; offset += 4) {
+      const page = listDailyPositionHistory({ since: "2026-09-01", limit: 4, offset });
+      byOffset.push(...page);
+      if (page.length < 4) break;
+    }
+
+    const byCursor = [];
+    let after = null;
+    for (;;) {
+      const page = listDailyPositionHistory({ since: "2026-09-01", limit: 4, offset: 0, after });
+      byCursor.push(...page);
+      if (page.length < 4) break;
+      after = decodeDailyPositionCursor(encodeDailyPositionCursor(page[page.length - 1]));
+    }
+
+    expect(byOffset).toHaveLength(18);
+    expect(byCursor).toEqual(byOffset);
+    expect(decodeDailyPositionCursor("not-a-cursor")).toBeNull();
   });
 });
