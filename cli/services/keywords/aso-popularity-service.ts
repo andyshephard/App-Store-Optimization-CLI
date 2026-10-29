@@ -110,6 +110,36 @@ export function isAsoAuthReauthRequiredError(error: unknown): boolean {
   );
 }
 
+/** Any common term works; only the auth outcome of the call matters. */
+const SESSION_PROBE_TERM = "music";
+
+/**
+ * One cheap popularity request with the stored cookies, no reauthentication
+ * and no retries. True when Apple accepted the session.
+ *
+ * The session keeper used to run a full SRP login every six hours just to
+ * learn whether the session was alive. A login is many requests, can trip
+ * Apple's anti-abuse checks, and rotates the cookies under a running crawl;
+ * a single popularity call answers the same question.
+ */
+export async function probeAsoPopularitySession(): Promise<boolean> {
+  const cookieHeader = asoAuthService.getCookieHeader(APPLE_POPULARITY_URL);
+  if (!cookieHeader.trim()) return false;
+  const adamId = getConfiguredAsoAdamId();
+  if (!adamId) return false;
+  const response = await requestPopularitiesWithKwsRetry(
+    [SESSION_PROBE_TERM],
+    cookieHeader,
+    adamId,
+    { maxAttempts: 1 }
+  );
+  return (
+    response.statusCode >= 200 &&
+    response.statusCode < 300 &&
+    !isAuthFailure(response.statusCode, response.data)
+  );
+}
+
 function sanitizeKeyword(keyword: string): string {
   return keyword.trim().toLowerCase();
 }

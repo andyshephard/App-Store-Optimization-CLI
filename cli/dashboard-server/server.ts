@@ -54,6 +54,7 @@ import { keywordPipelineService } from "../services/keywords/keyword-pipeline-se
 import { asoAuthService } from "../services/auth/aso-auth-service";
 import {
   isAsoAuthReauthRequiredError,
+  probeAsoPopularitySession,
   resetUnattendedReauthCooldown,
 } from "../services/keywords/aso-popularity-service";
 import {
@@ -262,6 +263,8 @@ const startupRefreshManager = createStartupRefreshManager({
  * Only runs with ASO_APPLE_ID/ASO_APPLE_PASSWORD in the environment.
  */
 const sessionKeeper = createSessionKeeper({
+  probe: () => probeAsoPopularitySession(),
+  isAuthInProgress: () => getDashboardAuthState().status === "in_progress",
   reAuthenticate: (options) => asoAuthService.reAuthenticate(options as never),
   onNeedsTwoFactor: (detail) => {
     void sendReauthenticationAlert({ detail }).then((outcome) => {
