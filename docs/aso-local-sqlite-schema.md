@@ -229,7 +229,7 @@ Append-only rank snapshots for associated `(app, keyword, country)` rows.
 
 Indexes:
 - PK: (`app_id`, `keyword`, `country`, `captured_at`)
-- `idx_app_keyword_position_history_lookup`: (`country`, `app_id`, `keyword`, `captured_at`)
+- `idx_app_keyword_position_history_captured`: (`captured_at`) — schema version 3, which also dropped the old `idx_app_keyword_position_history_lookup` (it duplicated the primary key)
 
 ### `aso_keyword_popularity_history`
 Weekly per-storefront popularity points from the Apple Ads Platform API

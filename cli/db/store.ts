@@ -24,7 +24,7 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
  * on goes in a numbered step below so an existing database is upgraded
  * exactly once, in order.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
@@ -89,6 +89,20 @@ const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
       );
       CREATE INDEX IF NOT EXISTS idx_keyword_observations_observed
         ON keyword_observations(source_observed_at);
+    `,
+  },
+  {
+    // Position history: the old lookup index (country, app_id, keyword,
+    // captured_at) duplicated the primary key (app_id, keyword, country,
+    // captured_at) - every query either pins app_id+keyword+country or
+    // filters on captured_at, and none leads with country. What was missing
+    // is captured_at on its own, for the daily export (captured_at >= ?)
+    // and the two-year prune (captured_at < ?).
+    version: 3,
+    sql: `
+      DROP INDEX IF EXISTS idx_app_keyword_position_history_lookup;
+      CREATE INDEX IF NOT EXISTS idx_app_keyword_position_history_captured
+        ON app_keyword_position_history(captured_at);
     `,
   },
 ];
@@ -215,8 +229,6 @@ function initializeDatabase(database: Database.Database): void {
       captured_at TEXT NOT NULL,
       PRIMARY KEY (app_id, keyword, country, captured_at)
     );
-    CREATE INDEX IF NOT EXISTS idx_app_keyword_position_history_lookup
-      ON app_keyword_position_history(country, app_id, keyword, captured_at);
 
     CREATE TABLE IF NOT EXISTS aso_keyword_autocomplete (
       country TEXT NOT NULL,

@@ -70,6 +70,38 @@ describe("refresh-runs", () => {
     expect(db.pragma("journal_mode", { simple: true })).toBe("wal");
   });
 
+  it("indexes position history by capture time and drops the duplicate lookup index", () => {
+    // Simulate a v2 database that still has the old index.
+    getDb();
+    closeDbForTests();
+    const legacy = new Database(TEST_DB_PATH);
+    legacy.exec(`
+      DROP INDEX IF EXISTS idx_app_keyword_position_history_captured;
+      CREATE INDEX idx_app_keyword_position_history_lookup
+        ON app_keyword_position_history(country, app_id, keyword, captured_at);
+      PRAGMA user_version = 2;
+    `);
+    legacy.close();
+
+    const indexes = (getDb()
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'app_keyword_position_history'`)
+      .all() as Array<{ name: string }>).map((row) => row.name);
+    expect(indexes).toContain("idx_app_keyword_position_history_captured");
+    expect(indexes).not.toContain("idx_app_keyword_position_history_lookup");
+    // Reopening must not bring the old index back.
+    closeDbForTests();
+    const again = (getDb()
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_app_keyword_position_history_lookup'`)
+      .all() as unknown[]);
+    expect(again).toEqual([]);
+    const plan = getDb()
+      .prepare(`EXPLAIN QUERY PLAN DELETE FROM app_keyword_position_history WHERE captured_at < ?`)
+      .all("2025-01-01") as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join(" ")).toContain(
+      "idx_app_keyword_position_history_captured"
+    );
+  });
+
   it("stamps the schema version on a new database", () => {
     expect(getDb().pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
   });
