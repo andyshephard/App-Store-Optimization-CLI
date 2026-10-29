@@ -123,9 +123,14 @@ function maybePrunePositionHistory(now: Date): void {
     nowMs - POSITION_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
   pruneAppKeywordPositionHistoryBefore(cutoff);
-  // Same two-year retention for the observations feed.
+  // The observations feed is a hand-off to consumers, not the archive:
+  // ASO_OBSERVATIONS_RETENTION_DAYS (default 90), on the same daily prune.
   try {
-    pruneKeywordObservationsBefore(cutoff);
+    pruneKeywordObservationsBefore(
+      new Date(
+        nowMs - ASO_ENV.observationsRetentionDays * 24 * 60 * 60 * 1000
+      ).toISOString()
+    );
   } catch (error) {
     logger.warn(`[observations] prune failed: ${String(error)}`);
   }

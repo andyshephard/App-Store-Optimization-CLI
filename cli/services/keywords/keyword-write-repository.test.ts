@@ -10,7 +10,10 @@ import {
   pruneAppKeywordPositionHistoryBefore,
 } from "../../db/app-keyword-position-history";
 import { getMetadataValue, setMetadataValue } from "../../db/metadata";
-import { insertKeywordObservations } from "../../db/keyword-observations";
+import {
+  insertKeywordObservations,
+  pruneKeywordObservationsBefore,
+} from "../../db/keyword-observations";
 import { withObservationRun } from "./observation-context";
 import { withTransaction } from "../../db/store";
 
@@ -131,6 +134,10 @@ describe("keyword-write-repository", () => {
     ]);
     expect(mockPruneAppKeywordPositionHistoryBefore).toHaveBeenCalledWith(
       "2024-04-13T00:00:00.000Z"
+    );
+    // Observations keep 90 days by default (ASO_OBSERVATIONS_RETENTION_DAYS).
+    expect(jest.mocked(pruneKeywordObservationsBefore)).toHaveBeenCalledWith(
+      "2026-01-13T00:00:00.000Z"
     );
     expect(mockSetMetadataValue).toHaveBeenCalledWith(
       "app-keyword-position-history-pruned-at",

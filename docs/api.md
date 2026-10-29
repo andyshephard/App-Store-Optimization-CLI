@@ -306,8 +306,13 @@ read. Page forward with the cursor; each row is returned exactly once.
   written. `runId` is the background refresh run (`refresh_runs.id`), null for
   observations made by dashboard or CLI actions.
 - Written only for real observations: a popularity-only update writes no rank
-  rows, and a failed crawl writes nothing. Rows older than two years (by
-  `sourceObservedAt`) are pruned, matching position history.
+  rows, and a failed crawl writes nothing. Rows are kept
+  `ASO_OBSERVATIONS_RETENTION_DAYS` (default 90) by `sourceObservedAt`, pruned
+  once a day - poll at least weekly. Position history keeps its two years.
+- Size: about 4 rows per keyword per daily run (one rank row per tracked app,
+  plus app count and difficulty; popularity rows only when the score is
+  re-fetched, ~monthly), ~250 bytes each with the index. 1,000 keywords is
+  ~1 MB a day: ~90 MB at the 90-day default, ~730 MB if kept two years.
 - Readable with the read-only token.
 
 ## `POST /api/aso/autocomplete/refresh` · `GET /api/aso/autocomplete`

@@ -28,6 +28,7 @@ export const ASO_DEFAULTS = {
   refreshInterCountryDelayMs: 60000,
   refreshInterBatchDelayMs: 5000,
   refreshMaxCatchUpsPerDay: 2,
+  observationsRetentionDays: 90,
   popularityPerStorefront: true,
   storefrontConcurrency: 1,
   searchConcurrency: 1,
@@ -81,6 +82,8 @@ export type AsoEnvConfig = {
    * what kills the process, this stops it turning into a crash loop.
    */
   refreshMaxCatchUpsPerDay: number;
+  /** Days of keyword_observations kept; pruned once a day. */
+  observationsRetentionDays: number;
   /**
    * Ask the legacy Search Ads popularity endpoint for the storefront's own
    * score (`storefronts: [country]`), falling back to the account-level score
@@ -266,6 +269,10 @@ function readAsoEnv(
     refreshInterBatchDelayMs: parseNonNegativeInt(
       env.ASO_REFRESH_INTER_BATCH_DELAY_MS,
       ASO_DEFAULTS.refreshInterBatchDelayMs
+    ),
+    observationsRetentionDays: parsePositiveInt(
+      env.ASO_OBSERVATIONS_RETENTION_DAYS,
+      ASO_DEFAULTS.observationsRetentionDays
     ),
     refreshMaxCatchUpsPerDay: parseNonNegativeInt(
       env.ASO_REFRESH_MAX_CATCHUPS_PER_DAY,

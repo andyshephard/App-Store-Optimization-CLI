@@ -331,7 +331,8 @@ two-year prune), `country`, `keyword` (normalized), `metric`
 (`rank` | `popularity` | `difficulty` | `app_count`), `value`, `source`,
 `run_id`, `app_id`, `rank`, `ranked` (0/1), `rank_depth`,
 `popularity_is_floor` (0/1), `difficulty_model_version`, `app_count`,
-`storefront_language`.
+`storefront_language`. Kept `ASO_OBSERVATIONS_RETENTION_DAYS` (default 90),
+pruned daily; ~1 MB a day per 1,000 tracked keywords.
 
 ## Notes
 - New tables are added through numbered steps in `store.ts`
