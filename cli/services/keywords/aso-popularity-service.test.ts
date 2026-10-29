@@ -552,6 +552,22 @@ describe("per-storefront popularity", () => {
     ]);
   });
 
+  it("stops asking a storefront for a day once it answers with no scores at all", async () => {
+    mockRequestPopularitiesWithKwsRetry
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: null }, { name: "b", popularity: null }]))
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: 30 }, { name: "b", popularity: 20 }]))
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: 31 }]));
+
+    await asoPopularityService.fetchKeywordPopularitiesWithFailures(["a", "b"], { country: "DE" });
+    await asoPopularityService.fetchKeywordPopularitiesWithFailures(["a"], { country: "DE" });
+
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls.map((call) => call[3])).toEqual([
+      { storefronts: ["DE"] },
+      { storefronts: [] },
+      { storefronts: [] },
+    ]);
+  });
+
   it("uses account level only when switched off", async () => {
     process.env.ASO_POPULARITY_PER_STOREFRONT = "0";
     mockRequestPopularitiesWithKwsRetry.mockResolvedValueOnce(ok([{ name: "a", popularity: 30 }]));

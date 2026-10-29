@@ -136,10 +136,10 @@ function isStorefrontPopularityRejected(country: string): boolean {
   return true;
 }
 
-function markStorefrontPopularityRejected(country: string, status: number): void {
+function markStorefrontPopularityRejected(country: string, reason: string): void {
   if (!storefrontPopularityRejectedAt.has(country)) {
     logger.warn(
-      `[aso-popularity] Apple rejected the per-storefront popularity request for ${country} (status ${status}); using account-level popularity for ${country} for 24h`
+      `[aso-popularity] per-storefront popularity unusable for ${country} (${reason}); using account-level popularity for ${country} for 24h`
     );
   }
   storefrontPopularityRejectedAt.set(country, Date.now());
@@ -724,7 +724,17 @@ export class AsoPopularityService {
       storefrontResult.rejectedStatus === 404 ||
       storefrontResult.rejectedStatus === 422
     ) {
-      markStorefrontPopularityRejected(country, storefrontResult.rejectedStatus);
+      markStorefrontPopularityRejected(
+        country,
+        `rejected with status ${storefrontResult.rejectedStatus}`
+      );
+    } else if (
+      storefrontResult.rejectedStatus == null &&
+      Object.keys(storefrontResult.popularities).length === 0
+    ) {
+      // Success, but not one score: the storefront request is just an extra
+      // request per batch for nothing. Same 24h memo as a rejection.
+      markStorefrontPopularityRejected(country, "answered with no scores");
     }
     const popularities: Record<string, number> = {
       ...storefrontResult.popularities,
