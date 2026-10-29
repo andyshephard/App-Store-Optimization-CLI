@@ -164,11 +164,14 @@ Runtime flow contracts across CLI commands, local dashboard API, and ASO service
    - popularity TTL is stale
    - difficulty has never been computed
    - order TTL is stale (owned-associated keywords only; research-only keywords do not use order staleness as a refresh trigger)
-3. Run the same keyword pipeline used by CLI fetch in non-interactive mode, in batches while pausing for foreground mutations.
-   - Transient non-auth batch failures get one bounded retry.
-   - Exhausted `All keywords failed (...)` batch failures are not retried at startup-manager level.
-   - Auth-required failures skip retry and stop remaining startup batches for that run.
-4. Publish refresh status via `GET /api/aso/refresh-status`, including whether the failure requires Search Ads reauthentication.
+3. Run `keywordPipelineService.refreshStartup` per storefront in batches, non-interactively, pausing for foreground mutations.
+   - Popularity and ranking are independent. Known keywords with stale popularity get a popularity fetch first (written without moving `updated_at`); every known keyword then gets its ranking crawl with whatever score is stored. A popularity failure, missing score or dead session no longer drops the keyword from the ranking crawl; it is reported separately as a popularity failure. Keywords whose popularity was refreshed get the full enrichment, falling back to the ranking-only crawl if that fails.
+   - A ranking crawl that fails (including an empty or drifted MZSearch order, `EMPTY_ORDER` / `ORDER_CONTRACT_DRIFT`) leaves the stored row untouched and is returned as a failure, counted per storefront by reason. It is not written to `aso_keyword_failures`.
+   - Never-enriched keywords still need the full pipeline; with the session down they are skipped.
+   - A dead session found by the popularity stage is returned (`reauthError`), not thrown: the run flags `requiresReauthentication`, alerts once, and continues without the popularity stage.
+   - A batch with no successes counts towards abandoning the storefront and sets `lastError`. Transient thrown batch errors get one bounded retry; exhausted `All keywords failed (...)` and auth-required errors do not.
+   - Each batch logs refreshed/failed and process RSS/heap; each storefront and run logs its totals, at warn when anything failed.
+4. Publish refresh status via `GET /api/aso/refresh-status` (in memory, per-storefront counters included) and persist every run and storefront to `refresh_runs` / `refresh_run_storefronts`. On startup, runs left `running` are marked `interrupted`, and an interrupted scheduled/catch-up run gets one forced catch-up run (capped by `ASO_REFRESH_MAX_CATCHUPS_PER_DAY`). `GET /api/aso/health` reports from that history.
 5. Allow explicit refresh via `POST /api/aso/refresh/start`; this is the shared trigger for manual refresh and retry/resume.
 6. Allow stop requests via `POST /api/aso/refresh/stop`; the manager stops at the next batch boundary and marks the run stopped unless an in-flight batch fails with auth-required state, which remains failed for reauthentication recovery.
 7. If auth is required, the dashboard auto-starts the same reauthentication flow used by add-keyword once; silent session reuse stays invisible, while browser prompt steps/failure states surface through the shared auth modal.
