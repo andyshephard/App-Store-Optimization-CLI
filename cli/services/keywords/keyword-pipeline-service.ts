@@ -1,5 +1,8 @@
 import { logger } from "../../utils/logger";
-import { summarizeFailedPopularityKeywords } from "./aso-popularity-service";
+import {
+  isAsoAuthReauthRequiredError,
+  summarizeFailedPopularityKeywords,
+} from "./aso-popularity-service";
 import { fetchKeywordPopularitiesPreferringAdsApi } from "./aso-popularity-source";
 import type {
   AsoCacheLookupResponse,
@@ -49,7 +52,32 @@ type KeywordPopularityStageOptions = {
   filters?: KeywordFilterOptions;
 };
 
-export type KeywordFetchOptions = KeywordPopularityStageOptions;
+export type KeywordFetchOptions = KeywordPopularityStageOptions & {
+  /**
+   * Return the envelope even when every keyword failed, instead of throwing
+   * "All keywords failed". The background refresh wants the per-keyword
+   * reasons to count them, not one opaque error for the whole batch.
+   */
+  resolveWhenAllFail?: boolean;
+};
+
+/**
+ * Outcome of one background-refresh batch for one storefront.
+ *
+ * `failedKeywords` are keywords whose ranking was not refreshed this pass;
+ * their stored row is left exactly as it was. `popularityFailures` are
+ * recorded separately because a popularity failure no longer stops the
+ * ranking crawl: a keyword can appear there and in `items` at once.
+ */
+export type StartupRefreshBatchResult = {
+  items: AsoKeywordItem[];
+  failedKeywords: FailedKeyword[];
+  popularityFailures: FailedKeyword[];
+  /** Not attempted: never enriched and the Apple session is unavailable. */
+  skippedKeywords: string[];
+  /** Set when the popularity stage found the Apple session dead. */
+  reauthError: unknown | null;
+};
 
 export type ForceRefreshOptions = {
   allowInteractiveAuthRecovery?: boolean;
@@ -140,6 +168,27 @@ function dedupeFilteredOut(items: FilteredKeyword[]): FilteredKeyword[] {
     });
   }
   return deduped;
+}
+
+function toPopularityFailureFromError(
+  keyword: string,
+  error: unknown
+): FailedKeyword {
+  const normalized = normalizeAppleUpstreamError({
+    error,
+    operation: "keyword-popularity",
+    defaultReasonCode: "POPULARITY_FAILED",
+  });
+  return {
+    keyword,
+    stage: "popularity",
+    reasonCode: normalized.reasonCode,
+    message: normalized.message,
+    statusCode: normalized.statusCode,
+    retryable: normalized.retryable,
+    attempts: normalized.attempts,
+    requestId: normalized.requestId,
+  };
 }
 
 function toEnrichmentFailureFromError(
@@ -603,7 +652,28 @@ export class KeywordPipelineService {
     keywords: string[],
     options: RefreshOrderOptions = {}
   ): Promise<AsoKeywordItem[]> {
-    if (keywords.length === 0) return [];
+    const result = await this.refreshOrderWithFailures(
+      country,
+      keywords,
+      options
+    );
+    return result.items;
+  }
+
+  /**
+   * Re-crawls the ranking for keywords that already have a complete row.
+   *
+   * A keyword whose crawl fails keeps its previous row untouched (updatedAt
+   * does not move) and is returned in `failedKeywords`. Those failures are not
+   * written to aso_keyword_failures: the stored data is still valid, only
+   * stale, and a failure row would flip the keyword to "failed" in the API.
+   */
+  async refreshOrderWithFailures(
+    country: string,
+    keywords: string[],
+    options: RefreshOrderOptions = {}
+  ): Promise<{ items: AsoKeywordItem[]; failedKeywords: FailedKeyword[] }> {
+    if (keywords.length === 0) return { items: [], failedKeywords: [] };
     const normalized = this.normalizeKeywords(keywords);
     const existingByNormalized = new Map(
       getKeywords(country, normalized).map((keyword) => [
@@ -612,6 +682,7 @@ export class KeywordPipelineService {
       ])
     );
     const refreshed: AsoKeywordItem[] = [];
+    const failedKeywords: FailedKeyword[] = [];
     const positionCapturedAtByKeyword = new Map<string, string>();
 
     for (const keyword of normalized) {
@@ -628,12 +699,22 @@ export class KeywordPipelineService {
       try {
         updatedOrder = await refreshAsoKeywordOrderLocal(country, keyword);
       } catch (error) {
-        logger.debug(
-          `[keyword-pipeline] order refresh skipped keyword=${keyword} reason=${String(error)}`
+        const failure = toEnrichmentFailureFromError(keyword, error);
+        failedKeywords.push(failure);
+        logger.warn(
+          `[keyword-pipeline] order refresh failed country=${country} keyword=${keyword} reason=${failure.reasonCode} message=${failure.message}`
         );
         continue;
       }
-      if (!updatedOrder) continue;
+      if (!updatedOrder) {
+        failedKeywords.push(
+          toEnrichmentFailureFromError(
+            keyword,
+            new Error(`Order refresh returned nothing for keyword "${keyword}".`)
+          )
+        );
+        continue;
+      }
       const positionCapturedAt = new Date().toISOString();
       const refreshedItem: AsoKeywordItem = {
         keyword: existing.keyword,
@@ -683,23 +764,38 @@ export class KeywordPipelineService {
       );
     }
 
-    return refreshed;
+    return { items: refreshed, failedKeywords };
   }
 
   /**
+   * One background-refresh batch for one storefront.
+   *
+   * The ranking crawl and the popularity refresh are independent: ranking
+   * comes from the public search page and needs no Apple session, popularity
+   * comes from Search Ads. A keyword whose popularity fetch fails, is missing
+   * or is stale still gets its ranking re-crawled with the stored score, and
+   * the popularity failure is reported separately. Previously a failed
+   * popularity fetch dropped the keyword from the batch entirely, so its rank
+   * never refreshed and updatedAt never moved, silently.
+   *
    * @param options.skipPopularity Do only the work that needs no Apple account
-   * session. Set once a run has established that reauthentication is required:
-   * popularity is account-level so it cannot be fetched for any storefront, but
-   * rank, app count and difficulty come from the public search page and are
-   * still available. Without this the whole run would abandon data it could
-   * have collected.
+   * session. Set once a run has established that reauthentication is required.
+   * @param options.force Re-crawl every known keyword's ranking, even one whose
+   * order is still inside its TTL.
    */
   async refreshStartup(
     country: string,
     items: PendingKeywordPopularityItem[],
     options: { force?: boolean; skipPopularity?: boolean } = {}
-  ): Promise<AsoKeywordItem[]> {
-    if (items.length === 0) return [];
+  ): Promise<StartupRefreshBatchResult> {
+    const result: StartupRefreshBatchResult = {
+      items: [],
+      failedKeywords: [],
+      popularityFailures: [],
+      skippedKeywords: [],
+      reauthError: null,
+    };
+    if (items.length === 0) return result;
     const seen = new Set<string>();
     const keywords: string[] = [];
 
@@ -719,67 +815,162 @@ export class KeywordPipelineService {
     const neverEnriched = keywords.filter(
       (keyword) => !isCompleteStoredAsoKeyword(existing.get(keyword))
     );
-
-    // `run` short-circuits on the cache, which is what the scheduled pass wants.
-    // A forced refresh has to reach Apple, so known keywords go through
-    // refreshOrder, which re-crawls the ranking unconditionally. Popularity is
-    // deliberately left alone there: it is account-level with a 30-day TTL, so
-    // re-fetching it would hammer the Search Ads API for an unchanged value.
-    const collected: AsoKeywordItem[] = [];
-    // A never-enriched keyword cannot proceed without a popularity score, so
-    // there is nothing to attempt for it while the session is down.
-    if (neverEnriched.length > 0 && !options.skipPopularity) {
-      const result = await this.run(country, neverEnriched, {
-        allowInteractiveAuthRecovery: false,
-      });
-      collected.push(...result.items);
-    }
-
     const known = keywords.filter(
       (keyword) => !neverEnriched.includes(keyword)
     );
-    if (known.length === 0) return collected;
+    let skipPopularity = options.skipPopularity === true;
+    const nowMs = Date.now();
 
-    // Every remaining keyword already has a popularity score on disk, so the
-    // ranking crawl can run against the public search page with no session.
-    if (options.skipPopularity) {
-      return [...collected, ...(await this.refreshOrder(country, known))];
+    if (known.length > 0) {
+      // Popularity is account-level with a 30-day TTL; re-fetching a fresh
+      // score would hammer the Search Ads API for an unchanged value.
+      const popularityStale = skipPopularity
+        ? []
+        : known.filter((keyword) => {
+            const row = existing.get(keyword);
+            return !row || !isStoredKeywordPopularityFresh(row, nowMs);
+          });
+      const popularityRefreshed: PendingKeywordPopularityItem[] = [];
+      if (popularityStale.length > 0) {
+        try {
+          const popularityResult =
+            await fetchKeywordPopularitiesPreferringAdsApi(
+              country,
+              popularityStale,
+              { allowInteractiveAuthRecovery: false }
+            );
+          const reported = new Set(
+            popularityResult.failedKeywords.map((failure) =>
+              normalizeKeyword(failure.keyword)
+            )
+          );
+          for (const keyword of popularityStale) {
+            const popularity = popularityResult.popularities[keyword];
+            if (popularity != null) {
+              popularityRefreshed.push({ keyword, popularity });
+            } else if (!reported.has(keyword)) {
+              result.popularityFailures.push({
+                keyword,
+                stage: "popularity",
+                reasonCode: "POPULARITY_MISSING",
+                message:
+                  "Apple Search Ads did not return popularity for this keyword.",
+                retryable: true,
+                attempts: 1,
+              });
+            }
+          }
+          result.popularityFailures.push(...popularityResult.failedKeywords);
+        } catch (error) {
+          if (isAsoAuthReauthRequiredError(error)) {
+            result.reauthError = error;
+            skipPopularity = true;
+          }
+          result.popularityFailures.push(
+            ...popularityStale.map((keyword) =>
+              toPopularityFailureFromError(keyword, error)
+            )
+          );
+        }
+        if (popularityRefreshed.length > 0) {
+          // The ranking has not been crawled yet, so this must not move
+          // updatedAt or record a position point from yesterday's order.
+          keywordWriteRepository.upsertPopularityOnly(
+            country,
+            popularityRefreshed,
+            { preserveUpdatedAt: true }
+          );
+        }
+      }
+
+      // A fresh popularity score gets the full enrichment, as before, which
+      // also refreshes keyword match and brand detection. If that fails the
+      // keyword still gets the cheaper ranking-only crawl below.
+      const fullyEnriched = new Set<string>();
+      if (popularityRefreshed.length > 0) {
+        const enriched = await this.enrichAndPersist(
+          country,
+          popularityRefreshed
+        );
+        for (const item of enriched.items) {
+          fullyEnriched.add(normalizeKeyword(item.keyword));
+          result.items.push(item);
+        }
+      }
+
+      const orderTargets = known.filter((keyword) => {
+        if (fullyEnriched.has(keyword)) return false;
+        if (options.force) return true;
+        const row = existing.get(keyword);
+        // Not forced: a keyword whose order is still fresh is a cache hit,
+        // unless its popularity was due (the old path re-crawled those too).
+        return (
+          !row ||
+          !isStoredKeywordOrderFresh(row, nowMs) ||
+          popularityStale.includes(keyword)
+        );
+      });
+      const cacheHits = known.filter(
+        (keyword) => !fullyEnriched.has(keyword) && !orderTargets.includes(keyword)
+      );
+      for (const keyword of cacheHits) {
+        const row = existing.get(keyword);
+        if (isCompleteStoredAsoKeyword(row)) {
+          result.items.push(toAsoKeywordItem(row));
+        }
+      }
+      if (orderTargets.length > 0) {
+        const ordered = await this.refreshOrderWithFailures(
+          country,
+          orderTargets
+        );
+        result.items.push(...ordered.items);
+        result.failedKeywords.push(...ordered.failedKeywords);
+      }
     }
 
-    if (options.force) {
-      // refreshOrder copies the stored popularity verbatim, so routing every
-      // known keyword through it would leave the 30-day popularity TTL with no
-      // path to fire - the score would freeze for as long as the daily forced
-      // pass keeps running. Expired ones go through `run`, which fetches the
-      // popularity and re-crawls the ranking in the same pass because an
-      // expired popularity makes the keyword a cache miss.
-      const nowMs = Date.now();
-      const popularityStale = new Set(
-        known.filter((keyword) => {
-          const row = existing.get(keyword);
-          return !row || !isStoredKeywordPopularityFresh(row, nowMs);
-        })
-      );
-      if (popularityStale.size > 0) {
-        const result = await this.run(country, [...popularityStale], {
-          allowInteractiveAuthRecovery: false,
-        });
-        collected.push(...result.items);
+    // A never-enriched keyword cannot proceed without a popularity score, so
+    // there is nothing to attempt for it while the session is down.
+    if (neverEnriched.length > 0) {
+      if (skipPopularity) {
+        result.skippedKeywords.push(...neverEnriched);
+      } else {
+        try {
+          const fetched = await this.run(country, neverEnriched, {
+            allowInteractiveAuthRecovery: false,
+            resolveWhenAllFail: true,
+          });
+          result.items.push(...fetched.items);
+          result.failedKeywords.push(...fetched.failedKeywords);
+        } catch (error) {
+          if (isAsoAuthReauthRequiredError(error)) {
+            result.reauthError = result.reauthError ?? error;
+            result.skippedKeywords.push(...neverEnriched);
+          } else {
+            result.failedKeywords.push(
+              ...neverEnriched.map((keyword) =>
+                toEnrichmentFailureFromError(keyword, error)
+              )
+            );
+          }
+        }
       }
-      const orderOnly = known.filter(
-        (keyword) => !popularityStale.has(keyword)
-      );
-      if (orderOnly.length > 0) {
-        collected.push(...(await this.refreshOrder(country, orderOnly)));
-      }
-      return collected;
     }
 
-    const result = await this.run(country, known, {
-      allowInteractiveAuthRecovery: false,
-    });
-    collected.push(...result.items);
-    return collected;
+    if (result.items.length > 0) {
+      keywordWriteRepository.clearFailures(
+        country,
+        result.items.map((item) => item.keyword)
+      );
+    }
+    if (result.failedKeywords.length > 0 || result.popularityFailures.length > 0) {
+      logger.warn(
+        `[keyword-pipeline] background refresh country=${country} refreshed=${result.items.length} failed=${result.failedKeywords.length} popularityFailed=${result.popularityFailures.length} skipped=${result.skippedKeywords.length} details=${summarizeFailedKeywords(
+          [...result.failedKeywords, ...result.popularityFailures]
+        )}`
+      );
+    }
+    return result;
   }
 
   async forceRefresh(
@@ -909,6 +1100,7 @@ export class KeywordPipelineService {
       );
     }
     if (
+      options?.resolveWhenAllFail !== true &&
       items.length === 0 &&
       failedKeywords.length > 0 &&
       filteredOut.length === 0

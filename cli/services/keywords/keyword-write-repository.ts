@@ -201,7 +201,13 @@ export class KeywordWriteRepository {
    */
   upsertPopularityOnly(
     country: string,
-    items: Array<{ keyword: string; popularity: number }>
+    items: Array<{ keyword: string; popularity: number }>,
+    /**
+     * Keep the stored updatedAt. The background refresh writes popularity
+     * before it crawls the ranking; if that crawl then fails, a bumped
+     * updatedAt would make a stale ranking look freshly refreshed.
+     */
+    options: { preserveUpdatedAt?: boolean } = {}
   ): void {
     if (items.length === 0) return;
     const normalizedKeywords = items.map((item) =>
@@ -229,6 +235,9 @@ export class KeywordWriteRepository {
           orderedAppIds: existing?.orderedAppIds ?? [],
           orderExpiresAt: existing?.orderExpiresAt ?? computeOrderExpiryIso(),
           popularityExpiresAt: computePopularityExpiryIso(),
+          ...(options.preserveUpdatedAt && existing?.updatedAt
+            ? { updatedAt: existing.updatedAt }
+            : {}),
         };
       }),
       // Nothing was crawled here, so the stored ranking must not be recorded as

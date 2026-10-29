@@ -883,4 +883,173 @@ describe("startup-refresh-manager", () => {
     expect(state.counters.failedKeywordCount).toBe(3);
     expect(enrichCalls).toBe(3);
   });
+
+  describe("per-keyword outcomes", () => {
+    const now = Date.parse("2026-03-10T00:00:00.000Z");
+    const byCountry: Record<string, string[]> = {
+      US: ["u1", "u2", "u3"],
+      GB: ["g1", "g2"],
+    };
+    const baseDeps = {
+      country: "US",
+      listRefreshCountries: () => ["US", "GB"],
+      listKeywords: (country: string) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildKeyword({
+            keyword,
+            normalizedKeyword: keyword,
+            country,
+            orderExpiresAt: "2026-03-06T00:00:00.000Z",
+          })
+        ),
+      listAppKeywords: (country: string) =>
+        (byCountry[country] ?? []).map((keyword) =>
+          buildAssociation({ keyword, country, appId: "app-1" })
+        ),
+      listAssociatedAppIds: () => new Set(["app-1"]),
+      listOrderRelevantAppIds: () => new Set(["app-1"]),
+      isForegroundBusy: () => false,
+      nowMs: () => now,
+      sleep: async () => {},
+      readMemoryUsage: () => ({ rss: 0, heapUsed: 0 }),
+    };
+
+    it("counts ranking and popularity failures per storefront instead of calling them refreshed", async () => {
+      const manager = createStartupRefreshManager({
+        ...baseDeps,
+        enrichKeywords: async (country, items) => {
+          if (country === "US") {
+            return {
+              items: [{ keyword: items[0].keyword }],
+              failedKeywords: items
+                .slice(1)
+                .map((item) => ({ keyword: item.keyword, reasonCode: "EMPTY_ORDER" })),
+              popularityFailures: [{ keyword: "u1", reasonCode: "HTTP_500" }],
+            };
+          }
+          return { items, failedKeywords: [] };
+        },
+      });
+
+      manager.start({ force: true, trigger: "scheduled" });
+      await waitForManagerToFinish(manager);
+
+      const state = manager.getState();
+      // Partial failures are counted, but the run still completed.
+      expect(state.status).toBe("completed");
+      expect(state.trigger).toBe("scheduled");
+      expect(state.counters).toMatchObject({
+        eligibleKeywordCount: 5,
+        refreshedKeywordCount: 3,
+        failedKeywordCount: 2,
+        popularityFailedKeywordCount: 1,
+      });
+      expect(state.counters.storefronts).toEqual([
+        expect.objectContaining({
+          country: "US",
+          eligible: 3,
+          refreshed: 1,
+          failed: 2,
+          skipped: 0,
+          popularityFailed: 1,
+          failureReasons: { EMPTY_ORDER: 2, "popularity:HTTP_500": 1 },
+        }),
+        expect.objectContaining({ country: "GB", refreshed: 2, failed: 0 }),
+      ]);
+    });
+
+    it("feeds a batch whose keywords all failed into the abandon logic", async () => {
+      const attempted: string[] = [];
+      const manager = createStartupRefreshManager({
+        ...baseDeps,
+        keywordBatchSize: 1,
+        abandonCountryAfterFailedKeywords: 2,
+        enrichKeywords: async (country, items) => {
+          attempted.push(`${country}:${items[0].keyword}`);
+          if (country === "US") {
+            return {
+              items: [],
+              failedKeywords: [{ keyword: items[0].keyword, reasonCode: "HTTP_403" }],
+            };
+          }
+          return { items, failedKeywords: [] };
+        },
+      });
+
+      manager.start({ force: true });
+      await waitForManagerToFinish(manager);
+
+      const state = manager.getState();
+      expect(attempted.filter((entry) => entry.startsWith("US:"))).toHaveLength(2);
+      expect(state.counters.skippedCountries).toEqual(["US"]);
+      expect(state.counters.storefronts[0]).toMatchObject({
+        country: "US",
+        failed: 2,
+        skipped: 1,
+        abandoned: true,
+      });
+      // A storefront that failed wholesale must not read as "completed".
+      expect(state.status).toBe("failed");
+      expect(state.lastError).toMatch(/All keywords failed/);
+    });
+
+    it("treats a popularity session failure as reauth but keeps the ranking work", async () => {
+      const reauth = Object.assign(new Error("session expired"), {
+        code: "ASO_AUTH_REAUTH_REQUIRED",
+      });
+      const onReauthenticationRequired = jest.fn();
+      const skipFlags: boolean[] = [];
+      const manager = createStartupRefreshManager({
+        ...baseDeps,
+        isAuthReauthRequiredError: (error) =>
+          (error as { code?: string })?.code === "ASO_AUTH_REAUTH_REQUIRED",
+        onReauthenticationRequired,
+        enrichKeywords: async (_country, items, options) => {
+          skipFlags.push(options.skipPopularity);
+          return {
+            items,
+            failedKeywords: [],
+            reauthError: options.skipPopularity ? null : reauth,
+          };
+        },
+      });
+
+      manager.start({ force: true });
+      await waitForManagerToFinish(manager);
+
+      const state = manager.getState();
+      expect(state.requiresReauthentication).toBe(true);
+      expect(state.counters.refreshedKeywordCount).toBe(5);
+      expect(onReauthenticationRequired).toHaveBeenCalledTimes(1);
+      expect(skipFlags).toEqual([false, true]);
+    });
+
+    it("records the run and each storefront through the recorder", async () => {
+      const calls: string[] = [];
+      const manager = createStartupRefreshManager({
+        ...baseDeps,
+        enrichKeywords: async (_country, items) => ({ items, failedKeywords: [] }),
+        recorder: {
+          start: ({ trigger }) => {
+            calls.push(`start:${trigger}`);
+            return 7;
+          },
+          saveStorefront: (runId, sf) => calls.push(`sf:${runId}:${sf.country}:${sf.refreshed}`),
+          finish: (runId, finished) => calls.push(`finish:${runId}:${finished.status}`),
+        },
+      });
+
+      manager.start({ trigger: "catch-up", force: true });
+      await waitForManagerToFinish(manager);
+      await Promise.resolve();
+
+      expect(manager.getState().runId).toBe(7);
+      expect(calls).toEqual([
+        "start:catch-up",
+        "sf:7:US:3",
+        "sf:7:GB:2",
+        "finish:7:completed",
+      ]);
+    });
+  });
 });

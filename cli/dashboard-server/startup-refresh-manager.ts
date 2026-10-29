@@ -1,4 +1,5 @@
 import type { StoredAppKeyword, StoredAsoKeyword } from "../db/types";
+import { logger } from "../utils/logger";
 import { normalizeKeyword } from "../shared/aso-keyword-utils";
 import {
   isKnownTransientStatusCode,
@@ -17,16 +18,59 @@ export type StartupRefreshStatus =
   | "failed"
   | "stopped";
 
+export type StartupRefreshTrigger =
+  | "scheduled"
+  | "catch-up"
+  | "manual"
+  | "startup";
+
+/** One storefront's share of a run. Persisted per run in refresh_run_storefronts. */
+export type StorefrontRefreshCounters = {
+  country: string;
+  eligible: number;
+  /** Ranking re-crawled (or, for a new keyword, fully enriched). */
+  refreshed: number;
+  /** Ranking not refreshed this pass; the stored row was left untouched. */
+  failed: number;
+  /** Not attempted: stop requested, storefront abandoned, or no session for a new keyword. */
+  skipped: number;
+  /** Popularity not refreshed. Counted separately: the ranking may still have been. */
+  popularityFailed: number;
+  /** reasonCode -> count, popularity reasons prefixed "popularity:". */
+  failureReasons: Record<string, number>;
+  abandoned: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 export type StartupRefreshCounters = {
   eligibleKeywordCount: number;
   refreshedKeywordCount: number;
   failedKeywordCount: number;
+  /** Keywords whose popularity could not be refreshed (ranking may still be). */
+  popularityFailedKeywordCount: number;
   /** Storefronts abandoned early because they looked throttled. */
   skippedCountries: string[];
+  /** Per-storefront breakdown, in run order. */
+  storefronts: StorefrontRefreshCounters[];
+};
+
+/**
+ * Optional persistence for runs, so "did last night's refresh finish?" is
+ * answerable after a restart. Every call is best effort: a failing store must
+ * never stop the crawl it is recording.
+ */
+export type RefreshRunRecorder = {
+  start: (params: { trigger: StartupRefreshTrigger; startedAt: string }) => number | null;
+  saveStorefront: (runId: number, counters: StorefrontRefreshCounters) => void;
+  finish: (runId: number, state: StartupRefreshState) => void;
 };
 
 export type StartupRefreshState = {
   status: StartupRefreshStatus;
+  trigger: StartupRefreshTrigger | null;
+  /** refresh_runs.id when a recorder is wired, else null. */
+  runId: number | null;
   startedAt: string | null;
   finishedAt: string | null;
   lastError: string | null;
@@ -58,11 +102,21 @@ type StartupRefreshDeps = {
   listAppKeywords: (country: string) => StoredAppKeyword[];
   listAssociatedAppIds: () => Set<string>;
   listOrderRelevantAppIds: () => Set<string>;
+  /**
+   * Resolves with either an array of refreshed items (legacy shape: anything
+   * not returned is counted as failed) or a StartupRefreshBatchOutcome with the
+   * per-keyword failures, which the manager counts per storefront.
+   */
   enrichKeywords: (
     country: string,
     items: KeywordRefreshItem[],
     options: { force: boolean; skipPopularity: boolean }
   ) => Promise<unknown>;
+  recorder?: RefreshRunRecorder;
+  /** Called after every run, whatever the outcome. */
+  onRunFinished?: (state: StartupRefreshState) => void;
+  /** Resident memory, logged per batch. Defaults to process.memoryUsage(). */
+  readMemoryUsage?: () => { rss: number; heapUsed: number };
   isForegroundBusy: () => boolean;
   /**
    * Pause between storefronts. Apple throttles the app-detail endpoint per
@@ -97,8 +151,29 @@ type StartupRefreshDeps = {
   keywordBatchSize?: number;
 };
 
+export type StartupRefreshBatchOutcome = {
+  items: unknown[];
+  failedKeywords: Array<{ keyword: string; reasonCode: string }>;
+  popularityFailures?: Array<{ keyword: string; reasonCode: string }>;
+  skippedKeywords?: string[];
+  reauthError?: unknown;
+};
+
+function isBatchOutcome(value: unknown): value is StartupRefreshBatchOutcome {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    Array.isArray((value as StartupRefreshBatchOutcome).items) &&
+    Array.isArray((value as StartupRefreshBatchOutcome).failedKeywords)
+  );
+}
+
 export type StartupRefreshManager = {
-  start: (options?: { force?: boolean }) => void;
+  /** Returns false when a run is already in progress and nothing was started. */
+  start: (options?: {
+    force?: boolean;
+    trigger?: StartupRefreshTrigger;
+  }) => boolean;
   stop: () => void;
   getState: () => StartupRefreshState;
 };
@@ -193,13 +268,53 @@ function initialCounters(): StartupRefreshCounters {
     eligibleKeywordCount: 0,
     refreshedKeywordCount: 0,
     failedKeywordCount: 0,
+    popularityFailedKeywordCount: 0,
     skippedCountries: [],
+    storefronts: [],
   };
 }
+
+function initialStorefrontCounters(
+  country: string,
+  startedAt: string
+): StorefrontRefreshCounters {
+  return {
+    country,
+    eligible: 0,
+    refreshed: 0,
+    failed: 0,
+    skipped: 0,
+    popularityFailed: 0,
+    failureReasons: {},
+    abandoned: false,
+    startedAt,
+    finishedAt: null,
+  };
+}
+
+function addReason(
+  reasons: Record<string, number>,
+  reason: string,
+  count: number = 1
+): void {
+  if (count <= 0) return;
+  reasons[reason] = (reasons[reason] ?? 0) + count;
+}
+
+function reasonFromError(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code.trim()) return code.trim();
+  if (isExhaustedBatchFailure(error)) return "ALL_KEYWORDS_FAILED";
+  return "BATCH_ERROR";
+}
+
+const BYTES_PER_MB = 1024 * 1024;
 
 function initialState(): StartupRefreshState {
   return {
     status: "idle",
+    trigger: null,
+    runId: null,
     startedAt: null,
     finishedAt: null,
     lastError: null,
@@ -309,9 +424,52 @@ export function createStartupRefreshManager(
     return unique.length > 0 ? unique : [deps.country];
   };
 
+  const readMemoryUsage =
+    deps.readMemoryUsage ??
+    (() => {
+      const usage = process.memoryUsage();
+      return { rss: usage.rss, heapUsed: usage.heapUsed };
+    });
+
+  const recordStorefront = (counters: StorefrontRefreshCounters): void => {
+    if (!deps.recorder || state.runId == null) return;
+    try {
+      deps.recorder.saveStorefront(state.runId, counters);
+    } catch (error) {
+      deps.reportError?.(error, { phase: "refresh-run-record-storefront" });
+    }
+  };
+
   const refreshCountryInBatches = async (
     country: string,
     force: boolean
+  ): Promise<void> => {
+    const sf = initialStorefrontCounters(
+      country,
+      new Date(nowMs()).toISOString()
+    );
+    state.counters.storefronts.push(sf);
+    try {
+      await refreshCountryBatches(country, force, sf);
+    } finally {
+      sf.finishedAt = new Date(nowMs()).toISOString();
+      // Anything neither refreshed nor failed was never attempted.
+      sf.skipped = Math.max(0, sf.eligible - sf.refreshed - sf.failed);
+      recordStorefront(sf);
+      const level =
+        sf.failed > 0 || sf.abandoned || sf.popularityFailed > 0
+          ? "warn"
+          : "info";
+      logger[level](
+        `[aso-refresh] storefront done country=${country} eligible=${sf.eligible} refreshed=${sf.refreshed} failed=${sf.failed} skipped=${sf.skipped} popularityFailed=${sf.popularityFailed} abandoned=${sf.abandoned} reasons=${JSON.stringify(sf.failureReasons)}`
+      );
+    }
+  };
+
+  const refreshCountryBatches = async (
+    country: string,
+    force: boolean,
+    sf: StorefrontRefreshCounters
   ): Promise<void> => {
     const items = selectKeywordRefreshCandidates({
       force,
@@ -322,10 +480,32 @@ export function createStartupRefreshManager(
       nowMs: nowMs(),
     });
     state.counters.eligibleKeywordCount += items.length;
+    sf.eligible = items.length;
     if (items.length === 0) return;
 
     const batches = chunkItems(items, keywordBatchSize);
     let consecutiveFailedKeywords = 0;
+    const countFailed = (count: number, reason: string) => {
+      if (count <= 0) return;
+      state.counters.failedKeywordCount += count;
+      sf.failed += count;
+      addReason(sf.failureReasons, reason, count);
+    };
+    const handleReauthRequired = (error: unknown) => {
+      state.requiresReauthentication = true;
+      if (!popularityUnavailable) {
+        popularityUnavailable = true;
+        try {
+          deps.onReauthenticationRequired?.(errorToMessage(error));
+        } catch (notifyError) {
+          // Failing to raise the alarm must not stop the rest of the crawl.
+          deps.reportError?.(notifyError, {
+            phase: "startup-refresh-reauth-notify",
+            country,
+          });
+        }
+      }
+    };
     for (const [batchIndex, batch] of batches.entries()) {
       if (stopRequested) break;
       if (batchIndex > 0 && interBatchDelayMs > 0) {
@@ -337,20 +517,14 @@ export function createStartupRefreshManager(
         await sleep(FOREGROUND_PAUSE_MS);
       }
       if (stopRequested) break;
-      // Partial success is normal - the pipeline resolves with the keywords it
-      // managed to refresh and reports the rest in its envelope. Counting the
-      // whole batch as refreshed made a run that half worked look complete.
-      let refreshedInBatch = batch.length;
+      let result: unknown;
       try {
         await withOneRetry(
           async () => {
-            const result = await deps.enrichKeywords(country, batch, {
+            result = await deps.enrichKeywords(country, batch, {
               force,
               skipPopularity: popularityUnavailable,
             });
-            refreshedInBatch = Array.isArray(result)
-              ? result.length
-              : batch.length;
           },
           sleep,
           (error) => {
@@ -363,12 +537,10 @@ export function createStartupRefreshManager(
             return isTransientStartupFailure(error);
           }
         );
-        state.counters.refreshedKeywordCount += refreshedInBatch;
-        consecutiveFailedKeywords = 0;
       } catch (error) {
         const isAuthReauthRequired =
           deps.isAuthReauthRequiredError?.(error) === true;
-        state.counters.failedKeywordCount += batch.length;
+        countFailed(batch.length, reasonFromError(error));
         setFailure(error, {
           phase: "startup-keyword-refresh",
           country,
@@ -376,22 +548,14 @@ export function createStartupRefreshManager(
           keywordPreview: batch.slice(0, 5).map((item) => item.keyword),
           isAuthReauthRequired,
         });
+        logger.warn(
+          `[aso-refresh] batch failed country=${country} batch=${batchIndex + 1}/${batches.length} size=${batch.length} error=${errorToMessage(error)}`
+        );
         if (isAuthReauthRequired) {
           // Retrying the popularity stage would just fail the same way and burn
           // another login attempt per batch. Drop to the auth-free work and
           // keep going; the state already records that a login is needed.
-          if (!popularityUnavailable) {
-            popularityUnavailable = true;
-            try {
-              deps.onReauthenticationRequired?.(errorToMessage(error));
-            } catch (notifyError) {
-              // Failing to raise the alarm must not stop the rest of the crawl.
-              deps.reportError?.(notifyError, {
-                phase: "startup-refresh-reauth-notify",
-                country,
-              });
-            }
-          }
+          handleReauthRequired(error);
           continue;
         }
         // Every keyword in a batch failing usually means the storefront itself
@@ -404,9 +568,87 @@ export function createStartupRefreshManager(
           abandonCountryAfterFailedKeywords > 0 &&
           consecutiveFailedKeywords >= abandonCountryAfterFailedKeywords
         ) {
+          sf.abandoned = true;
           state.counters.skippedCountries.push(country);
           break;
         }
+        continue;
+      }
+
+      // Partial success is normal - the pipeline resolves with the keywords it
+      // managed to refresh and reports the rest. Counting the whole batch as
+      // refreshed made a run that half worked look complete.
+      let refreshedInBatch: number;
+      let failedInBatch: number;
+      if (isBatchOutcome(result)) {
+        refreshedInBatch = Math.min(batch.length, result.items.length);
+        failedInBatch = Math.min(
+          batch.length - refreshedInBatch,
+          result.failedKeywords.length
+        );
+        for (const failure of result.failedKeywords) {
+          addReason(sf.failureReasons, failure.reasonCode || "UNKNOWN");
+        }
+        const popularityFailures = result.popularityFailures ?? [];
+        sf.popularityFailed += popularityFailures.length;
+        state.counters.popularityFailedKeywordCount += popularityFailures.length;
+        for (const failure of popularityFailures) {
+          addReason(
+            sf.failureReasons,
+            `popularity:${failure.reasonCode || "UNKNOWN"}`
+          );
+        }
+        if (result.reauthError != null) {
+          setFailure(result.reauthError, {
+            phase: "startup-keyword-refresh-popularity",
+            country,
+            batchSize: batch.length,
+            isAuthReauthRequired: true,
+          });
+          handleReauthRequired(result.reauthError);
+        }
+      } else {
+        refreshedInBatch = Array.isArray(result)
+          ? Math.min(batch.length, result.length)
+          : batch.length;
+        failedInBatch = batch.length - refreshedInBatch;
+        addReason(sf.failureReasons, "NOT_RETURNED", failedInBatch);
+      }
+      state.counters.refreshedKeywordCount += refreshedInBatch;
+      sf.refreshed += refreshedInBatch;
+      state.counters.failedKeywordCount += failedInBatch;
+      sf.failed += failedInBatch;
+
+      const memory = readMemoryUsage();
+      logger.info(
+        `[aso-refresh] batch country=${country} batch=${batchIndex + 1}/${batches.length} refreshed=${refreshedInBatch} failed=${failedInBatch} rssMb=${Math.round(memory.rss / BYTES_PER_MB)} heapUsedMb=${Math.round(memory.heapUsed / BYTES_PER_MB)}`
+      );
+
+      if (refreshedInBatch === 0 && failedInBatch > 0) {
+        // Same signal as a thrown "All keywords failed": the storefront is
+        // most likely throttled. Recorded as the run's error too, so the
+        // status does not read "completed" over a wall of failures.
+        const error = new Error(
+          `All keywords failed (${failedInBatch}) in ${country} batch ${batchIndex + 1}/${batches.length}`
+        );
+        setFailure(error, {
+          phase: "startup-keyword-refresh",
+          country,
+          batchSize: batch.length,
+          keywordPreview: batch.slice(0, 5).map((item) => item.keyword),
+          isAuthReauthRequired: false,
+        });
+        consecutiveFailedKeywords += failedInBatch;
+        if (
+          abandonCountryAfterFailedKeywords > 0 &&
+          consecutiveFailedKeywords >= abandonCountryAfterFailedKeywords
+        ) {
+          sf.abandoned = true;
+          state.counters.skippedCountries.push(country);
+          break;
+        }
+      } else {
+        consecutiveFailedKeywords = 0;
       }
     }
   };
@@ -423,10 +665,27 @@ export function createStartupRefreshManager(
     }
   };
 
-  const run = async (force: boolean): Promise<void> => {
+  const run = async (
+    force: boolean,
+    trigger: StartupRefreshTrigger
+  ): Promise<void> => {
+    const startedAt = new Date(nowMs()).toISOString();
+    let runId: number | null = null;
+    if (deps.recorder) {
+      try {
+        runId = deps.recorder.start({ trigger, startedAt });
+      } catch (error) {
+        deps.reportError?.(error, { phase: "refresh-run-record-start" });
+      }
+    }
+    logger.info(
+      `[aso-refresh] run started trigger=${trigger} force=${force} runId=${runId ?? "none"}`
+    );
     state = {
       status: "running",
-      startedAt: new Date(nowMs()).toISOString(),
+      trigger,
+      runId,
+      startedAt,
       finishedAt: null,
       lastError: null,
       requiresReauthentication: false,
@@ -451,6 +710,7 @@ export function createStartupRefreshManager(
       finishedAt: new Date(nowMs()).toISOString(),
       stopRequested: false,
     };
+    finishRun();
 
     // A run that got through with the session intact clears the alert
     // suppression, so the next outage is reported straight away rather than
@@ -464,10 +724,46 @@ export function createStartupRefreshManager(
     }
   };
 
+  let finishedRunId: number | null = null;
+  const finishRun = (): void => {
+    // Once per run, even if the unhandled-error path below runs after it.
+    if (state.runId != null && finishedRunId === state.runId) return;
+    finishedRunId = state.runId;
+    const c = state.counters;
+    const level = state.status === "completed" ? "info" : "warn";
+    logger[level](
+      `[aso-refresh] run finished status=${state.status} trigger=${state.trigger} eligible=${c.eligibleKeywordCount} refreshed=${c.refreshedKeywordCount} failed=${c.failedKeywordCount} popularityFailed=${c.popularityFailedKeywordCount} skippedCountries=${c.skippedCountries.join(",") || "none"}${state.lastError ? ` lastError=${state.lastError}` : ""}`
+    );
+    if (deps.recorder && state.runId != null) {
+      try {
+        deps.recorder.finish(state.runId, getState());
+      } catch (error) {
+        deps.reportError?.(error, { phase: "refresh-run-record-finish" });
+      }
+    }
+    try {
+      deps.onRunFinished?.(getState());
+    } catch (error) {
+      deps.reportError?.(error, { phase: "refresh-run-finished-hook" });
+    }
+  };
+
+  const getState = (): StartupRefreshState => ({
+    ...state,
+    counters: {
+      ...state.counters,
+      skippedCountries: [...state.counters.skippedCountries],
+      storefronts: state.counters.storefronts.map((sf) => ({
+        ...sf,
+        failureReasons: { ...sf.failureReasons },
+      })),
+    },
+  });
+
   return {
-    start: (options?: { force?: boolean }) => {
-      if (runPromise) return;
-      runPromise = run(options?.force === true)
+    start: (options?: { force?: boolean; trigger?: StartupRefreshTrigger }) => {
+      if (runPromise) return false;
+      runPromise = run(options?.force === true, options?.trigger ?? "manual")
         .catch((error) => {
           setFailure(error, { phase: "startup-refresh-unhandled" });
           state = {
@@ -476,11 +772,13 @@ export function createStartupRefreshManager(
             finishedAt: new Date(nowMs()).toISOString(),
             stopRequested: false,
           };
+          finishRun();
         })
         .finally(() => {
           stopRequested = false;
           runPromise = null;
         });
+      return true;
     },
     stop: () => {
       if (!runPromise) return;
@@ -490,12 +788,6 @@ export function createStartupRefreshManager(
         stopRequested: true,
       };
     },
-    getState: () => ({
-      ...state,
-      counters: {
-        ...state.counters,
-        skippedCountries: [...state.counters.skippedCountries],
-      },
-    }),
+    getState,
   };
 }
