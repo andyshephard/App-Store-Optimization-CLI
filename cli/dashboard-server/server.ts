@@ -58,7 +58,10 @@ import {
   getAppLastKeywordAddedAtMap,
 } from "../db/app-keywords";
 import { keywordPipelineService } from "../services/keywords/keyword-pipeline-service";
-import { withObservationRun } from "../services/keywords/observation-context";
+import {
+  lookupCacheHitCount,
+  withObservationRun,
+} from "../services/keywords/observation-context";
 import { appleRateLimiter } from "../shared/apple-rate-limiter";
 import { listKeywordObservations } from "../db/keyword-observations";
 import { asoAuthService } from "../services/auth/aso-auth-service";
@@ -235,6 +238,7 @@ const startupRefreshManager = createStartupRefreshManager({
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
   storefrontConcurrency: ASO_ENV.storefrontConcurrency,
   readRequestCounters: () => appleRateLimiter().counters(),
+  readLookupCacheHits: lookupCacheHitCount,
   readRateSnapshot: () => appleRateLimiter().snapshot(),
   interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
   // Two full batches of nothing but failures means the storefront is throttled,

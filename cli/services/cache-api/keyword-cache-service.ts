@@ -3,7 +3,11 @@ import { getAsoResilienceConfig } from "../../shared/aso-resilience";
 import { normalizeAppleUpstreamError } from "../../shared/apple-upstream-error";
 import type { FailedKeyword } from "../../shared/aso-keyword-types";
 import { localAsoCacheRepository } from "./services/aso-cache-local";
-import { enrichKeyword } from "./services/aso-enrichment-service";
+import {
+  enrichKeyword,
+  enrichKeywordsFromRatingsBatch,
+} from "./services/aso-enrichment-service";
+import { ASO_ENV } from "../../shared/aso-env";
 import { normalizeKeyword, sanitizeKeywords } from "./services/aso-keyword-utils";
 import { getAsoAppDocs as getAsoAppDocsFromService } from "./services/aso-app-doc-service";
 import { ASO_MAX_KEYWORDS } from "../../shared/aso-keyword-limits";
@@ -117,26 +121,36 @@ export async function enrichAsoKeywords(
     ? (appIds: string[]) =>
         dependencies.repository.getAppDocs!({ country, appIds })
     : undefined;
-  const settled = await mapSettledWithConcurrency(
-    validated.items,
-    getAsoResilienceConfig().keywordEnrichmentConcurrency,
-    (item) =>
-      enrichKeyword(
-        {
-          keyword: item.keyword,
-          popularity: item.popularity,
-          country,
-        },
-        getAppDocs || params.getStoredOrderedAppIds
-          ? {
-              ...(getAppDocs ? { getAppDocs } : {}),
-              ...(params.getStoredOrderedAppIds
-                ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
-                : {}),
-            }
-          : undefined
-      )
-  );
+  const enrichOptions =
+    getAppDocs || params.getStoredOrderedAppIds
+      ? {
+          ...(getAppDocs ? { getAppDocs } : {}),
+          ...(params.getStoredOrderedAppIds
+            ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
+            : {}),
+        }
+      : undefined;
+  const concurrency = getAsoResilienceConfig().keywordEnrichmentConcurrency;
+  // Ratings mode merges the items' top-10 iTunes lookups into 50-id
+  // requests; results and failures per keyword are the same as enriching
+  // each keyword on its own.
+  const settled =
+    ASO_ENV.enrichmentMode === "legacy"
+      ? await mapSettledWithConcurrency(validated.items, concurrency, (item) =>
+          enrichKeyword(
+            { keyword: item.keyword, popularity: item.popularity, country },
+            enrichOptions
+          )
+        )
+      : await enrichKeywordsFromRatingsBatch(
+          validated.items.map((item) => ({
+            keyword: item.keyword,
+            popularity: item.popularity,
+            country,
+          })),
+          enrichOptions,
+          concurrency
+        );
 
   const enriched = settled.flatMap((entry) =>
     entry.status === "fulfilled" ? [entry.value] : []

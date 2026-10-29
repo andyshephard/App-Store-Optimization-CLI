@@ -1105,5 +1105,32 @@ describe("startup-refresh-manager", () => {
         rates: { mzsearch: { capPerMin: 30 } },
       });
     });
+
+    it("records the run's iTunes lookup cache hits with the request metrics", async () => {
+      let hits = 100;
+      const manager = createStartupRefreshManager({
+        country: "US",
+        listKeywords: () => [
+          buildKeyword({ keyword: "k", normalizedKeyword: "k", orderExpiresAt: "2026-03-06T00:00:00.000Z" }),
+        ],
+        listAppKeywords: () => [buildAssociation({ keyword: "k" })],
+        listAssociatedAppIds: () => new Set(["app-1"]),
+        listOrderRelevantAppIds: () => new Set(["app-1"]),
+        isForegroundBusy: () => false,
+        sleep: async () => {},
+        readMemoryUsage: () => ({ rss: 0, heapUsed: 0 }),
+        readRequestCounters: () => ({}),
+        readLookupCacheHits: () => hits,
+        enrichKeywords: async (_country, items) => {
+          hits += 42;
+          return { items, failedKeywords: [] };
+        },
+      });
+
+      manager.start({ force: true });
+      await waitForManagerToFinish(manager);
+
+      expect(manager.getState().counters.requests?.lookupCacheHits).toBe(42);
+    });
   });
 });

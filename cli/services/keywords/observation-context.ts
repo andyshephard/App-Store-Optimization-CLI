@@ -70,6 +70,22 @@ export function currentRunLookupCache<T>(country: string): Map<string, T> | null
   return storage.getStore()?.lookupCache?.forCountry<T>(country) ?? null;
 }
 
+let lookupCacheHitTotal = 0;
+
+/** Counts app ids served from the run's lookup cache instead of Apple. */
+export function recordLookupCacheHits(count: number): void {
+  if (count > 0) lookupCacheHitTotal += count;
+}
+
+/**
+ * Lookup cache hits since the process started; a run diffs it like the
+ * per-host request counters.
+ */
+export function lookupCacheHitCount(): number {
+  return lookupCacheHitTotal;
+}
+
 export function __resetRunLookupCacheForTests(): void {
   runCache = null;
+  lookupCacheHitTotal = 0;
 }

@@ -21,7 +21,10 @@ import { ASO_ENV } from "../../../shared/aso-env";
 import type { AsoAppDoc, AsoAppDocIcon } from "./aso-types";
 import { asoAppleGet } from "./aso-apple-client";
 import { reportAppleContractChange } from "../../keywords/apple-http-trace";
-import { currentRunLookupCache } from "../../keywords/observation-context";
+import {
+  currentRunLookupCache,
+  recordLookupCacheHits,
+} from "../../keywords/observation-context";
 import { getStorefrontDefaultLanguage } from "../../../shared/aso-storefront-localizations";
 import {
   getAcceptLanguage,
@@ -1189,6 +1192,7 @@ async function lookupTopDocs(
     if (cached) out.set(id, cached);
     else missing.push(id);
   }
+  recordLookupCacheHits(out.size);
   if (missing.length > 0) {
     const fetched = await fetchItunesLookupAppDocs({
       country,
@@ -1358,73 +1362,123 @@ export async function refreshKeywordOrdersBatch(params: {
   const options: EnrichKeywordOptions | undefined = params.getStoredOrderedAppIds
     ? { getStoredOrderedAppIds: params.getStoredOrderedAppIds }
     : undefined;
-  const ordered: Array<{
-    keyword: string;
-    order: RatingsKeywordOrder;
-    observedAt: string;
-  }> = [];
-  // ASO_SEARCH_CONCURRENCY workers (default 1). More workers only fill the
-  // per-host request schedule faster; the limiter caps the rate.
+  const settled = await enrichRatingsBatch(
+    params.keywords.map((keyword) => ({ keyword, country: params.country, popularity: 0 })),
+    options,
+    ASO_ENV.searchConcurrency
+  );
+  return settled.map((entry, index): KeywordOrderBatchOutcome => {
+    const keyword = params.keywords[index];
+    if (!entry.ok) return { keyword, ok: false, error: entry.error };
+    const enriched = entry.value;
+    return {
+      keyword,
+      ok: true,
+      value: {
+        keyword: enriched.keyword,
+        normalizedKeyword: enriched.normalizedKeyword,
+        appCount: enriched.appCount,
+        orderedAppIds: enriched.orderedAppIds,
+        appDocs: enriched.appDocs,
+        difficultyScore: enriched.difficultyScore,
+        orderSource: enriched.orderSource,
+      },
+      observedAt: entry.observedAt,
+    };
+  });
+}
+
+type RatingsBatchEntry =
+  | { ok: true; value: EnrichKeywordResult; observedAt: string }
+  | { ok: false; error: unknown };
+
+/**
+ * Ratings-mode enrichment of several keywords with one merged iTunes lookup.
+ * Every keyword's order is resolved first (`concurrency` workers), then the
+ * union of their top-10 ids is looked up in 50-id requests through the run
+ * cache, then each keyword is scored from its own top 10. Results come back
+ * in input order, one per item (duplicates included), and each is exactly
+ * what enrichKeywordFromRatings would have returned or thrown for it.
+ */
+async function enrichRatingsBatch(
+  items: EnrichKeywordParams[],
+  options: EnrichKeywordOptions | undefined,
+  concurrency: number
+): Promise<RatingsBatchEntry[]> {
+  const entries: RatingsBatchEntry[] = new Array(items.length);
+  const orders: Array<{ order: RatingsKeywordOrder; observedAt: string } | undefined> =
+    new Array(items.length);
+  // More workers only fill the per-host request schedule faster; the
+  // limiter caps the rate.
   let cursor = 0;
   const resolveNext = async (): Promise<void> => {
-    while (cursor < params.keywords.length) {
-      const keyword = params.keywords[cursor];
+    while (cursor < items.length) {
+      const index = cursor;
       cursor += 1;
       try {
-        const order = await resolveRatingsKeywordOrder(
-          { keyword, country: params.country, popularity: 0 },
-          options
-        );
-        ordered.push({ keyword, order, observedAt: new Date().toISOString() });
+        const order = await resolveRatingsKeywordOrder(items[index], options);
+        orders[index] = { order, observedAt: new Date().toISOString() };
       } catch (error) {
-        outcomes.push({ keyword, ok: false, error });
+        entries[index] = { ok: false, error };
       }
     }
   };
   await Promise.all(
     Array.from(
-      { length: Math.max(1, Math.min(ASO_ENV.searchConcurrency, params.keywords.length)) },
+      { length: Math.max(1, Math.min(Math.floor(concurrency) || 1, items.length)) },
       () => resolveNext()
     )
   );
-  // Score in input order whatever order the workers finished in.
-  const inputRank = new Map(params.keywords.map((keyword, index) => [keyword, index]));
-  ordered.sort((a, b) => (inputRank.get(a.keyword) ?? 0) - (inputRank.get(b.keyword) ?? 0));
 
-  const country = params.country.toUpperCase();
-  const lookups = await lookupTopDocs(
-    country,
-    ordered.flatMap((entry) => entry.order.topIds)
-  );
-  for (const { keyword, order, observedAt } of ordered) {
+  // Orders of one batch are always for one storefront, but group by country
+  // so a mixed batch still looks each storefront up separately.
+  const topIdsByCountry = new Map<string, string[]>();
+  for (const resolved of orders) {
+    if (!resolved) continue;
+    const ids = topIdsByCountry.get(resolved.order.country) ?? [];
+    ids.push(...resolved.order.topIds);
+    topIdsByCountry.set(resolved.order.country, ids);
+  }
+  const lookupsByCountry = new Map<string, TopDocLookups>();
+  for (const [country, ids] of topIdsByCountry) {
+    lookupsByCountry.set(country, await lookupTopDocs(country, ids));
+  }
+
+  // Score in input order whatever order the workers finished in.
+  for (const [index, resolved] of orders.entries()) {
+    if (!resolved) continue;
     try {
-      const enriched = await finishRatingsEnrichment(
-        { keyword, country: params.country, popularity: 0 },
+      const value = await finishRatingsEnrichment(
+        items[index],
         options,
-        order,
-        lookups
+        resolved.order,
+        lookupsByCountry.get(resolved.order.country)!
       );
-      outcomes.push({
-        keyword,
-        ok: true,
-        value: {
-          keyword: enriched.keyword,
-          normalizedKeyword: enriched.normalizedKeyword,
-          appCount: enriched.appCount,
-          orderedAppIds: enriched.orderedAppIds,
-          appDocs: enriched.appDocs,
-          difficultyScore: enriched.difficultyScore,
-          orderSource: enriched.orderSource,
-        },
-        observedAt,
-      });
+      entries[index] = { ok: true, value, observedAt: resolved.observedAt };
     } catch (error) {
-      outcomes.push({ keyword, ok: false, error });
+      entries[index] = { ok: false, error };
     }
   }
-  // Callers match by keyword, but keep the input order for predictability.
-  const rank = new Map(params.keywords.map((keyword, index) => [keyword, index]));
-  return outcomes.sort((a, b) => (rank.get(a.keyword) ?? 0) - (rank.get(b.keyword) ?? 0));
+  return entries;
+}
+
+/**
+ * enrichKeywordFromRatings for several keywords of one storefront, with
+ * their top-10 iTunes lookups merged (see enrichRatingsBatch). Settled
+ * results in input order. Ratings mode only; legacy callers enrich each
+ * keyword with enrichKeyword.
+ */
+export async function enrichKeywordsFromRatingsBatch(
+  items: EnrichKeywordParams[],
+  options: EnrichKeywordOptions | undefined,
+  concurrency: number
+): Promise<PromiseSettledResult<EnrichKeywordResult>[]> {
+  const entries = await enrichRatingsBatch(items, options, concurrency);
+  return entries.map((entry) =>
+    entry.ok
+      ? { status: "fulfilled" as const, value: entry.value }
+      : { status: "rejected" as const, reason: entry.error }
+  );
 }
 
 async function enrichKeywordLegacy(

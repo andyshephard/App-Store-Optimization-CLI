@@ -33,6 +33,7 @@ import {
 import { normalizeAppleUpstreamError } from "../../shared/apple-upstream-error";
 import { getAsoResilienceConfig } from "../../shared/aso-resilience";
 import { keywordWriteRepository } from "./keyword-write-repository";
+import { ASO_ENV } from "../../shared/aso-env";
 
 export type PendingKeywordPopularityItem = {
   keyword: string;
@@ -608,8 +609,68 @@ export class KeywordPipelineService {
     }
     logger.debug("Sending popularity data to backend for enrichment...");
     const outcomes: EnrichmentOutcome[] = new Array(items.length);
-    await this.populateEnrichmentOutcomes(country, items, outcomes);
+    if (ASO_ENV.enrichmentMode === "legacy") {
+      await this.populateEnrichmentOutcomes(country, items, outcomes);
+    } else {
+      await this.populateEnrichmentOutcomesBatched(country, items, outcomes);
+    }
     return this.buildEnrichmentResult(outcomes);
+  }
+
+  /**
+   * Ratings mode: the whole batch goes to the enrichment in one call, so the
+   * top-10 iTunes lookups of every keyword are merged into 50-id requests
+   * (and served from the run cache in a background run). Enriching keyword
+   * by keyword made one lookup request per keyword - the path every
+   * popularity-refreshed and newly added keyword takes. Per-keyword results
+   * and failures are the same as before.
+   */
+  private async populateEnrichmentOutcomesBatched(
+    country: string,
+    items: PendingKeywordPopularityItem[],
+    outcomes: EnrichmentOutcome[]
+  ): Promise<void> {
+    for (let start = 0; start < items.length; start += ASO_MAX_KEYWORDS) {
+      const chunk = items.slice(start, start + ASO_MAX_KEYWORDS);
+      let result: { items: AsoKeywordItem[]; failedKeywords: FailedKeyword[] } | null =
+        null;
+      let chunkError: unknown = null;
+      try {
+        result = await enrichAsoKeywordsLocal(country, chunk);
+      } catch (error) {
+        chunkError = error;
+      }
+      const itemsByKeyword = new Map(
+        (result?.items ?? []).map(
+          (item) => [normalizeKeyword(item.keyword), item] as const
+        )
+      );
+      const failuresByKeyword = new Map(
+        (result?.failedKeywords ?? []).map(
+          (failure) => [normalizeKeyword(failure.keyword), failure] as const
+        )
+      );
+      for (const [offset, pendingItem] of chunk.entries()) {
+        const normalizedKeyword = normalizeKeyword(pendingItem.keyword);
+        const item = itemsByKeyword.get(normalizedKeyword);
+        const failure = failuresByKeyword.get(normalizedKeyword);
+        const outcome: EnrichmentOutcome = chunkError
+          ? {
+              item: null,
+              failedKeyword: toEnrichmentFailureFromError(
+                pendingItem.keyword,
+                chunkError
+              ),
+            }
+          : item
+            ? { item, failedKeyword: null }
+            : failure
+              ? { item: null, failedKeyword: failure }
+              : this.createMissingEnrichmentOutcome(pendingItem.keyword);
+        this.persistEnrichmentOutcome(country, outcome);
+        outcomes[start + offset] = outcome;
+      }
+    }
   }
 
   persistBackgroundEnrichmentCrashFailures(

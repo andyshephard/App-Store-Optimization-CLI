@@ -4,6 +4,33 @@ import { enrichKeyword } from "../services/aso-enrichment-service";
 
 jest.mock("../services/aso-enrichment-service", () => ({
   enrichKeyword: jest.fn(),
+  // Ratings mode enriches the items as one batch; this stand-in delegates to
+  // the per-keyword mock with the same worker limit, so the expectations
+  // below still describe per-keyword behaviour.
+  enrichKeywordsFromRatingsBatch: jest.fn(
+    async (items: any[], options: unknown, concurrency: number) => {
+      const { enrichKeyword: single } = jest.requireMock(
+        "../services/aso-enrichment-service"
+      ) as { enrichKeyword: (item: unknown, options: unknown) => Promise<unknown> };
+      const settled: PromiseSettledResult<unknown>[] = new Array(items.length);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < items.length) {
+          const index = cursor;
+          cursor += 1;
+          try {
+            settled[index] = { status: "fulfilled", value: await single(items[index], options) };
+          } catch (reason) {
+            settled[index] = { status: "rejected", reason };
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker)
+      );
+      return settled;
+    }
+  ),
 }));
 
 const mockEnrichKeyword = jest.mocked(enrichKeyword);

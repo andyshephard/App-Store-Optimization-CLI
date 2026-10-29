@@ -84,6 +84,30 @@ function cleanDbFiles(): void {
   }
 }
 
+type EnrichLocalResult = Awaited<ReturnType<typeof enrichAsoKeywordsLocal>>;
+
+/**
+ * Ratings mode hands the enrichment a whole batch in one call; run a
+ * per-keyword stand-in over each item and combine the results.
+ */
+function forEachItem(
+  single: (
+    country: string,
+    items: Array<{ keyword: string; popularity: number }>
+  ) => Promise<EnrichLocalResult>
+) {
+  return async (
+    country: string,
+    items: Array<{ keyword: string; popularity: number }>
+  ): Promise<EnrichLocalResult> => {
+    const results = await Promise.all(items.map((item) => single(country, [item])));
+    return {
+      items: results.flatMap((result) => result.items),
+      failedKeywords: results.flatMap((result) => result.failedKeywords),
+    };
+  };
+}
+
 describe("keyword-pipeline-service", () => {
   const mockRefreshAsoKeywordOrderLocal = jest.mocked(
     refreshAsoKeywordOrderLocal
@@ -115,6 +139,7 @@ describe("keyword-pipeline-service", () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    delete process.env.ASO_ENRICHMENT_MODE;
   });
 
   afterAll(() => {
@@ -469,7 +494,7 @@ describe("keyword-pipeline-service", () => {
       },
       failedKeywords: [],
     });
-    mockEnrichAsoKeywordsLocal.mockImplementation(async (_country, items) => {
+    mockEnrichAsoKeywordsLocal.mockImplementation(forEachItem(async (_country, items) => {
       const keyword = items[0]?.keyword;
       if (keyword === "easy") {
         return {
@@ -513,7 +538,7 @@ describe("keyword-pipeline-service", () => {
         };
       }
       throw new Error(`Unexpected enrich keyword: ${keyword}`);
-    });
+    }));
 
     const result = await keywordPipelineService.run("US", ["easy", "hard"], {
       filters: { maxDifficulty: 30 },
@@ -619,7 +644,7 @@ describe("keyword-pipeline-service", () => {
         failedKeywords: [],
       })
     );
-    mockEnrichAsoKeywordsLocal.mockImplementation(async (country, items) => {
+    mockEnrichAsoKeywordsLocal.mockImplementation(forEachItem(async (country, items) => {
       const item = items[0];
       return {
         items: [
@@ -640,7 +665,7 @@ describe("keyword-pipeline-service", () => {
         ],
         failedKeywords: [],
       };
-    });
+    }));
 
     const retryResult = await keywordPipelineService.retryFailed(
       "research",
@@ -733,6 +758,9 @@ describe("keyword-pipeline-service", () => {
   });
 
   it("persists each enriched keyword as soon as that keyword finishes", async () => {
+    // Keyword-by-keyword persistence is the legacy path; ratings mode
+    // enriches the batch in one call to merge its iTunes lookups.
+    process.env.ASO_ENRICHMENT_MODE = "legacy";
     const firstDone = createDeferred<void>();
     const secondDone = createDeferred<void>();
     let runSettled = false;
@@ -829,6 +857,9 @@ describe("keyword-pipeline-service", () => {
   });
 
   it("persists failed enrichment keywords before other pending keywords finish", async () => {
+    // Keyword-by-keyword persistence is the legacy path; ratings mode
+    // enriches the batch in one call to merge its iTunes lookups.
+    process.env.ASO_ENRICHMENT_MODE = "legacy";
     const failureDone = createDeferred<void>();
     const successDone = createDeferred<void>();
     let runSettled = false;

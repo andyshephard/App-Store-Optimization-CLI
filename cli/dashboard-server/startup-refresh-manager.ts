@@ -55,6 +55,8 @@ export type StartupRefreshRequestMetrics = {
   durationMs: number;
   byHost: Record<string, RequestHostCounters & { perMin: number }>;
   rates: Record<string, unknown> | null;
+  /** App ids served from the run's iTunes lookup cache instead of a request. */
+  lookupCacheHits?: number;
 };
 
 export type StartupRefreshCounters = {
@@ -135,6 +137,8 @@ type StartupRefreshDeps = {
   storefrontConcurrency?: number;
   /** Per-host Apple request counters, diffed per run into counters.requests. */
   readRequestCounters?: () => Record<string, RequestHostCounters>;
+  /** Process-wide iTunes lookup cache hit count, diffed per run. */
+  readLookupCacheHits?: () => number;
   /** Current per-host caps and effective rates, stored with the run. */
   readRateSnapshot?: () => Record<string, unknown>;
   /** Resident memory, logged per batch. Defaults to process.memoryUsage(). */
@@ -702,6 +706,14 @@ export function createStartupRefreshManager(
   };
 
   let requestCountersAtStart: Record<string, RequestHostCounters> | null = null;
+  let lookupCacheHitsAtStart: number | null = null;
+  const readLookupCacheHitsSafely = (): number | null => {
+    try {
+      return deps.readLookupCacheHits?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
   const readCountersSafely = (): Record<string, RequestHostCounters> | null => {
     try {
       return deps.readRequestCounters?.() ?? null;
@@ -734,7 +746,15 @@ export function createStartupRefreshManager(
     } catch {
       rates = null;
     }
-    return { durationMs, byHost, rates };
+    const lookupCacheHitsNow = readLookupCacheHitsSafely();
+    return {
+      durationMs,
+      byHost,
+      rates,
+      ...(lookupCacheHitsNow != null
+        ? { lookupCacheHits: Math.max(0, lookupCacheHitsNow - (lookupCacheHitsAtStart ?? 0)) }
+        : {}),
+    };
   };
 
   const run = async (
@@ -751,6 +771,7 @@ export function createStartupRefreshManager(
       }
     }
     requestCountersAtStart = readCountersSafely();
+    lookupCacheHitsAtStart = readLookupCacheHitsSafely();
     logger.info(
       `[aso-refresh] run started trigger=${trigger} force=${force} runId=${runId ?? "none"}`
     );
@@ -813,7 +834,11 @@ export function createStartupRefreshManager(
               ([host, m]) =>
                 `${host}=${m.requests}(${m.perMin}/min,429=${m.status429},403=${m.status403},5xx=${m.status5xx})`
             )
-            .join(" ")}`
+            .join(" ")}${
+            metrics.lookupCacheHits != null
+              ? ` lookupCacheHits=${metrics.lookupCacheHits}`
+              : ""
+          }`
         );
       }
     }
