@@ -1402,6 +1402,16 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
       );
       return;
     }
+    const apiReadToken = ASO_ENV.apiReadToken;
+    if (apiReadToken && (apiReadToken.length < MIN_API_TOKEN_LENGTH || apiReadToken === apiToken)) {
+      reject(
+        new Error(
+          `ASO_API_READ_TOKEN must be at least ${MIN_API_TOKEN_LENGTH} characters and differ from ASO_API_TOKEN. ` +
+            "Generate one with: openssl rand -hex 32"
+        )
+      );
+      return;
+    }
     if (apiToken && apiToken.length < MIN_API_TOKEN_LENGTH) {
       reject(
         new Error(

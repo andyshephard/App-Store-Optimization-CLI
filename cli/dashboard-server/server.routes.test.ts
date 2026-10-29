@@ -541,6 +541,57 @@ describe("dashboard server routes", () => {
       delete process.env.ASO_ALLOWED_ORIGIN;
     });
 
+    describe("read-only token", () => {
+      const READ = "r".repeat(32);
+      const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+
+      beforeEach(() => {
+        process.env.ASO_API_TOKEN = TOKEN;
+        process.env.ASO_API_READ_TOKEN = READ;
+      });
+      afterEach(() => {
+        delete process.env.ASO_API_READ_TOKEN;
+      });
+
+      it("can GET the pure-read endpoints", async () => {
+        for (const path of [
+          "/api/aso/refresh-status",
+          "/api/aso/storefronts",
+          "/api/aso/v1/observations",
+          "/api/aso/autocomplete",
+        ]) {
+          const response = await request({ method: "GET", path, headers: auth(READ) });
+          expect([path, response.statusCode]).toEqual([path, 200]);
+        }
+      });
+
+      it("cannot write, open the dashboard or call Apple-backed reads", async () => {
+        const write = await request({
+          method: "POST",
+          path: "/api/aso/refresh/start",
+          headers: auth(READ),
+        });
+        const dashboard = await request({ method: "GET", path: "/", headers: auth(READ) });
+        const apple = await request({ method: "GET", path: "/api/apps", headers: auth(READ) });
+        expect([write.statusCode, dashboard.statusCode, apple.statusCode]).toEqual([403, 403, 403]);
+      });
+
+      it("leaves the full token working everywhere", async () => {
+        const response = await request({
+          method: "GET",
+          path: "/api/aso/storefronts",
+          headers: auth(TOKEN),
+        });
+        expect(response.statusCode).toBe(200);
+        const wrong = await request({
+          method: "GET",
+          path: "/api/aso/storefronts",
+          headers: auth("z".repeat(32)),
+        });
+        expect(wrong.statusCode).toBe(401);
+      });
+    });
+
     it("leaves every route open when no token is configured", async () => {
       delete process.env.ASO_API_TOKEN;
 

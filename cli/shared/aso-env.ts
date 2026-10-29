@@ -99,6 +99,11 @@ export type AsoEnvConfig = {
   dashboardPort: number;
   /** Shared secret required on every request when set. See dashboard-server/request-auth.ts. */
   apiToken: string | null;
+  /**
+   * Optional second token that may only GET the pure-read endpoints in
+   * request-auth.ts READ_TOKEN_PATHS. Ignored unless apiToken is also set.
+   */
+  apiReadToken: string | null;
   /** Origin allowed to make state-changing requests from a browser. */
   allowedOrigin: string | null;
   /** Resend API key. Unset disables alert email entirely. */
@@ -278,6 +283,7 @@ function readAsoEnv(
       ASO_DEFAULTS.dashboardPort
     ),
     apiToken: parseTrimmed(env.ASO_API_TOKEN),
+    apiReadToken: parseTrimmed(env.ASO_API_READ_TOKEN),
     allowedOrigin: parseTrimmed(env.ASO_ALLOWED_ORIGIN),
     resendApiKey: parseTrimmed(env.ASO_RESEND_API_KEY),
     alertEmailTo: parseTrimmed(env.ASO_ALERT_EMAIL_TO),

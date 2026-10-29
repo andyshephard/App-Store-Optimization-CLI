@@ -27,6 +27,15 @@ curl -H "Authorization: Bearer $ASO_API_TOKEN" \
 
 In n8n use a **Header Auth** credential (`Authorization` / `Bearer <token>`).
 
+**Read-only token.** Set `ASO_API_READ_TOKEN` (32+ characters, different from
+`ASO_API_TOKEN`) to give a consumer that only reads a token that can do
+nothing else. It may only `GET` these pure database reads:
+`/api/aso/keywords`, `/api/aso/position-history`, `/api/aso/autocomplete`,
+`/api/aso/refresh-status`, `/api/aso/health`, `/api/aso/v1/observations` and
+`/api/aso/storefronts`. Anything else with it - a write, the dashboard, an
+endpoint that calls Apple - is `403 AUTHORIZATION_FAILED`. The full token keeps
+working everywhere.
+
 Browsers never hold the token: Caddy authenticates the human with basic auth and
 injects the bearer upstream. A request that already carries a bearer skips the
 basic-auth challenge and is validated by the app, so that path is not a way in.

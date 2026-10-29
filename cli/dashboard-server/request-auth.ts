@@ -11,6 +11,21 @@ import { ASO_ENV } from "../shared/aso-env";
  */
 const OPEN_PATHS = new Set(["/health", "/livez"]);
 
+/**
+ * The only requests `ASO_API_READ_TOKEN` may make: GETs of pure database
+ * reads. Anything else - writes, the dashboard bundle, endpoints that reach
+ * out to Apple as a side effect - needs the full token.
+ */
+export const READ_TOKEN_PATHS = new Set([
+  "/api/aso/keywords",
+  "/api/aso/position-history",
+  "/api/aso/autocomplete",
+  "/api/aso/refresh-status",
+  "/api/aso/health",
+  "/api/aso/v1/observations",
+  "/api/aso/storefronts",
+]);
+
 function digest(value: string): Buffer {
   return crypto.createHash("sha256").update(value, "utf8").digest();
 }
@@ -72,6 +87,25 @@ export function enforceRequestAuth(
   if (OPEN_PATHS.has(pathname)) return true;
 
   const presented = extractBearerToken(req);
+  const readToken = ASO_ENV.apiReadToken;
+  if (
+    presented != null &&
+    readToken != null &&
+    !safeEquals(presented, expected) &&
+    safeEquals(presented, readToken)
+  ) {
+    const method = (req.method ?? "GET").toUpperCase();
+    if ((method === "GET" || method === "HEAD") && READ_TOKEN_PATHS.has(pathname)) {
+      return true;
+    }
+    sendApiError(
+      res,
+      403,
+      "AUTHORIZATION_FAILED",
+      "This token is read-only and cannot call this endpoint."
+    );
+    return false;
+  }
   if (presented == null || !safeEquals(presented, expected)) {
     res.setHeader("WWW-Authenticate", 'Bearer realm="aso"');
     sendApiError(res, 401, "AUTH_REQUIRED", "Missing or invalid API token.");
