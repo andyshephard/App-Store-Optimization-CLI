@@ -3,9 +3,10 @@
 # Differences from docker-compose.yml (which is self-contained for local use):
 #   - no Caddy service; the existing n8n-docker-caddy stack proxies this
 #   - joins that stack's network so Caddy and n8n can reach it by name
-#   - runs a prebuilt image rather than building, because the box has 2GB RAM
-#     shared with n8n and whatever else the host runs (check `docker stats`
-#     there before changing memory limits; this file does not know)
+#   - runs a prebuilt image rather than building: the box (Hetzner CPX22,
+#     4 GB RAM) is shared with n8n, and still with an old Ghost + MySQL until
+#     those are removed. Measured 2026-10-29: asocli ~61 MB, n8n ~376 MB,
+#     ~2 GB available. Check `docker stats` before changing memory limits.
 #
 #   docker compose -f docker-compose.vps.yml up -d
 services:
@@ -82,7 +83,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks: [n8n]
-    # A crawl must never be able to starve n8n on a 2GB box.
+    # A crawl must never be able to starve n8n on the shared box.
     mem_limit: 512m
     memswap_limit: 768m
 

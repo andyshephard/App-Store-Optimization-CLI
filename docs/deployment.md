@@ -256,7 +256,8 @@ joins the existing Docker network, and runs a prebuilt image.
 
 **Build on a workstation, not the server.** `npm ci` pulls devDependencies
 including Playwright, and `better-sqlite3` may compile from source; that is a
-poor fit for a 2GB box shared with n8n and other services. Ship the finished image
+poor fit for the VPS (Hetzner CPX22, 4 GB RAM shared with n8n, and for now
+an old Ghost + MySQL due to be removed; ~2 GB was free on 2026-10-29). Ship the finished image
 over SSH instead — no registry required:
 
 ```bash

@@ -31,8 +31,8 @@ cd ~/Documents/projects/asocli
 docker buildx build --platform linux/amd64 -t asocli:latest --load .
 ```
 
-Takes a few minutes. Building on the VPS instead would likely exhaust its 2GB
-of RAM.
+Takes a few minutes. Building on the VPS instead would compete with n8n for its
+4 GB of RAM (about 2 GB free on 2026-10-29).
 
 ---
 
