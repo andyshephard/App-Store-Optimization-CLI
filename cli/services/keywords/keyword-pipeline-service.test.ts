@@ -348,4 +348,40 @@ describe("KeywordPipelineService.refreshStartup", () => {
     expect(refreshOrder).not.toHaveBeenCalled();
     expect(result.items).toHaveLength(1);
   });
+
+  it("does not run the fallback crawl when the full enrichment was throttled", async () => {
+    getKeywordsMock.mockReturnValue([
+      storedKeyword("stale", expiredPopularity()),
+    ]);
+    fetchPopularityMock.mockResolvedValue({
+      popularities: { stale: 50 },
+      failedKeywords: [],
+    });
+    enrichAndPersist.mockResolvedValue({
+      items: [],
+      failedKeywords: [
+        {
+          keyword: "stale",
+          stage: "enrichment",
+          reasonCode: "RATE_LIMITED",
+          message: "429",
+          statusCode: 429,
+          retryable: true,
+          attempts: 3,
+        },
+      ],
+    });
+
+    const result = await service.refreshStartup(
+      "US",
+      [{ keyword: "stale", popularity: 40 }],
+      { force: true }
+    );
+
+    expect(refreshOrder).not.toHaveBeenCalled();
+    expect(result.items).toEqual([]);
+    expect(result.failedKeywords).toEqual([
+      expect.objectContaining({ keyword: "stale", statusCode: 429 }),
+    ]);
+  });
 });

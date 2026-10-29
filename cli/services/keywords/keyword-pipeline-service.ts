@@ -212,6 +212,14 @@ function toEnrichmentFailureFromError(
   };
 }
 
+const THROTTLE_REASON_PATTERN = /RATE_?LIMIT|THROTTL|TOO_MANY_REQUESTS/i;
+
+function isThrottleFailure(failure: FailedKeyword): boolean {
+  return (
+    failure.statusCode === 429 || THROTTLE_REASON_PATTERN.test(failure.reasonCode)
+  );
+}
+
 type MissClassification = {
   pendingItems: PendingKeywordPopularityItem[];
   popularityFetchKeywords: string[];
@@ -887,6 +895,7 @@ export class KeywordPipelineService {
       // also refreshes keyword match and brand detection. If that fails the
       // keyword still gets the cheaper ranking-only crawl below.
       const fullyEnriched = new Set<string>();
+      const throttled = new Set<string>();
       if (popularityRefreshed.length > 0) {
         const enriched = await this.enrichAndPersist(
           country,
@@ -896,10 +905,17 @@ export class KeywordPipelineService {
           fullyEnriched.add(normalizeKeyword(item.keyword));
           result.items.push(item);
         }
+        // A throttled storefront would throttle the fallback crawl too; it
+        // only adds requests against the wall. Report it as failed instead.
+        for (const failure of enriched.failedKeywords) {
+          if (!isThrottleFailure(failure)) continue;
+          throttled.add(normalizeKeyword(failure.keyword));
+          result.failedKeywords.push(failure);
+        }
       }
 
       const orderTargets = known.filter((keyword) => {
-        if (fullyEnriched.has(keyword)) return false;
+        if (fullyEnriched.has(keyword) || throttled.has(keyword)) return false;
         if (options.force) return true;
         const row = existing.get(keyword);
         // Not forced: a keyword whose order is still fresh is a cache hit,
@@ -911,7 +927,10 @@ export class KeywordPipelineService {
         );
       });
       const cacheHits = known.filter(
-        (keyword) => !fullyEnriched.has(keyword) && !orderTargets.includes(keyword)
+        (keyword) =>
+          !fullyEnriched.has(keyword) &&
+          !throttled.has(keyword) &&
+          !orderTargets.includes(keyword)
       );
       for (const keyword of cacheHits) {
         const row = existing.get(keyword);
@@ -926,6 +945,16 @@ export class KeywordPipelineService {
         );
         result.items.push(...ordered.items);
         result.failedKeywords.push(...ordered.failedKeywords);
+        // A full enrichment that failed above wrote a failure row; the
+        // fallback crawl succeeding means the stored data is current again,
+        // so it must not be shown as failed. (Also covered by the clear
+        // below; done here so the fallback owns its own cleanup.)
+        if (ordered.items.length > 0) {
+          keywordWriteRepository.clearFailures(
+            country,
+            ordered.items.map((item) => item.keyword)
+          );
+        }
       }
     }
 
