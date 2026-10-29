@@ -218,4 +218,114 @@ describe("ASO routes", () => {
       }),
     ]);
   });
+
+  describe("batched enrichment edge cases", () => {
+    const enrichedFor = (keyword: string, popularity: number, extra = {}) => ({
+      keyword,
+      normalizedKeyword: keyword,
+      popularity,
+      difficultyScore: 10,
+      minDifficultyScore: 5,
+      isBrandKeyword: false,
+      appCount: 20,
+      keywordMatch: "titleAllWords",
+      orderedAppIds: [],
+      appDocs: [],
+      ...extra,
+    });
+    const echoRepository = (shouldThrow: (items: any[]) => boolean = () => false) => ({
+      upsertMany: jest.fn(async ({ country, items }: any) => {
+        if (shouldThrow(items)) throw new Error("SQLITE_CONSTRAINT");
+        return items.map((item: any) => ({
+          ...item,
+          normalizedKeyword: item.keyword,
+          country,
+          createdAt: "2025-01-01T00:00:00.000Z",
+          updatedAt: item.updatedAt ?? "2025-01-01T00:00:00.000Z",
+          orderExpiresAt: "2025-01-02T00:00:00.000Z",
+        }));
+      }),
+    });
+
+    it("fails only an item with an invalid popularity", async () => {
+      mockEnrichKeyword.mockImplementation(async ({ keyword, popularity }) =>
+        enrichedFor(keyword, popularity) as never
+      );
+      const result = await enrichAsoKeywords(
+        {
+          country: "US",
+          items: [
+            { keyword: "good", popularity: 50 },
+            { keyword: "broken", popularity: Number.NaN },
+            { keyword: "also-good", popularity: 20 },
+          ],
+        },
+        { repository: echoRepository() as any }
+      );
+      expect(result.items.map((item) => item.keyword)).toEqual(["good", "also-good"]);
+      expect(result.failedKeywords).toEqual([
+        expect.objectContaining({ keyword: "broken", reasonCode: "INVALID_REQUEST", retryable: false }),
+      ]);
+      expect(mockEnrichKeyword).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns per-item failures when every item is invalid", async () => {
+      const result = await enrichAsoKeywords(
+        { country: "US", items: [{ keyword: "broken", popularity: 101 }] },
+        { repository: echoRepository() as any }
+      );
+      expect(result.items).toEqual([]);
+      expect(result.failedKeywords.map((failure) => failure.keyword)).toEqual(["broken"]);
+      expect(mockEnrichKeyword).not.toHaveBeenCalled();
+    });
+
+    it("falls back to per-keyword writes when the batch write throws", async () => {
+      mockEnrichKeyword.mockImplementation(async ({ keyword, popularity }) =>
+        enrichedFor(keyword, popularity) as never
+      );
+      const repository = echoRepository(
+        (items) => items.length > 1 || items[0]?.keyword === "poison"
+      );
+      const result = await enrichAsoKeywords(
+        {
+          country: "US",
+          items: [
+            { keyword: "one", popularity: 10 },
+            { keyword: "poison", popularity: 10 },
+            { keyword: "two", popularity: 10 },
+          ],
+        },
+        { repository: repository as any }
+      );
+      expect(result.items.map((item) => item.keyword)).toEqual(["one", "two"]);
+      expect(result.failedKeywords).toEqual([
+        expect.objectContaining({ keyword: "poison", stage: "enrichment" }),
+      ]);
+      expect(repository.upsertMany).toHaveBeenCalledTimes(4);
+    });
+
+    it("stamps each keyword with its own observedAt", async () => {
+      mockEnrichKeyword.mockImplementation(async ({ keyword, popularity }) =>
+        enrichedFor(keyword, popularity, {
+          observedAt: keyword === "early" ? "2026-10-29T01:00:00.000Z" : "2026-10-29T01:05:00.000Z",
+        }) as never
+      );
+      const repository = echoRepository();
+      await enrichAsoKeywords(
+        {
+          country: "US",
+          items: [
+            { keyword: "early", popularity: 10 },
+            { keyword: "late", popularity: 10 },
+          ],
+        },
+        { repository: repository as any }
+      );
+      const written = (repository.upsertMany.mock.calls[0][0] as any).items;
+      expect(written.map((item: any) => [item.keyword, item.updatedAt, item.positionCapturedAt])).toEqual([
+        ["early", "2026-10-29T01:00:00.000Z", "2026-10-29T01:00:00.000Z"],
+        ["late", "2026-10-29T01:05:00.000Z", "2026-10-29T01:05:00.000Z"],
+      ]);
+    });
+  });
 });

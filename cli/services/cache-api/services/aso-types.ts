@@ -71,6 +71,9 @@ export interface AsoCacheRepository {
       keywordMatch: KeywordMatchType;
       orderedAppIds: string[];
       orderSource?: string;
+      /** When the order was observed; defaults to now. */
+      updatedAt?: string;
+      positionCapturedAt?: string;
     }>;
     appDocs?: AsoAppDoc[];
   }): Promise<AsoKeywordRecord[]>;

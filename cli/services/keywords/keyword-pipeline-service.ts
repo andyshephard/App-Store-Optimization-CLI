@@ -35,6 +35,9 @@ import { getAsoResilienceConfig } from "../../shared/aso-resilience";
 import { keywordWriteRepository } from "./keyword-write-repository";
 import { ASO_ENV } from "../../shared/aso-env";
 
+/** Keywords per merged enrichment call (one background batch). */
+const ENRICHMENT_CHUNK_SIZE = 25;
+
 export type PendingKeywordPopularityItem = {
   keyword: string;
   popularity: number;
@@ -624,14 +627,18 @@ export class KeywordPipelineService {
    * by keyword made one lookup request per keyword - the path every
    * popularity-refreshed and newly added keyword takes. Per-keyword results
    * and failures are the same as before.
+   *
+   * Chunks of ENRICHMENT_CHUNK_SIZE, each persisted as it finishes, so a
+   * large dashboard or API add shows results progressively. In a background
+   * run the run cache absorbs the overlap between chunks.
    */
   private async populateEnrichmentOutcomesBatched(
     country: string,
     items: PendingKeywordPopularityItem[],
     outcomes: EnrichmentOutcome[]
   ): Promise<void> {
-    for (let start = 0; start < items.length; start += ASO_MAX_KEYWORDS) {
-      const chunk = items.slice(start, start + ASO_MAX_KEYWORDS);
+    for (let start = 0; start < items.length; start += ENRICHMENT_CHUNK_SIZE) {
+      const chunk = items.slice(start, start + ENRICHMENT_CHUNK_SIZE);
       let result: { items: AsoKeywordItem[]; failedKeywords: FailedKeyword[] } | null =
         null;
       let chunkError: unknown = null;

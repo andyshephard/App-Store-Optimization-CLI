@@ -1089,6 +1089,11 @@ type EnrichKeywordResult = {
   appDocs: AsoAppDoc[];
   /** Where the rank order came from; set in ratings mode. */
   orderSource?: RankOrderSource;
+  /**
+   * When this keyword's order was fetched from Apple; set by the batched
+   * path, where scoring (and so persisting) can come well after the crawl.
+   */
+  observedAt?: string;
 };
 
 export async function enrichKeyword(
@@ -1476,7 +1481,7 @@ export async function enrichKeywordsFromRatingsBatch(
   const entries = await enrichRatingsBatch(items, options, concurrency);
   return entries.map((entry) =>
     entry.ok
-      ? { status: "fulfilled" as const, value: entry.value }
+      ? { status: "fulfilled" as const, value: { ...entry.value, observedAt: entry.observedAt } }
       : { status: "rejected" as const, reason: entry.error }
   );
 }

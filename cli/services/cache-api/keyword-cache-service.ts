@@ -27,18 +27,32 @@ const CacheLookupRequestSchema = z.object({
   keywords: z.array(z.string()).min(1).max(ASO_MAX_KEYWORDS),
 });
 
+const EnrichItemSchema = z.object({
+  keyword: z.string().min(1),
+  popularity: z.number().min(0).max(100),
+});
 const EnrichRequestSchema = z.object({
   country: z.string().default(DEFAULT_ASO_COUNTRY),
-  items: z
-    .array(
-      z.object({
-        keyword: z.string().min(1),
-        popularity: z.number().min(0).max(100),
-      })
-    )
-    .min(1)
-    .max(ASO_MAX_KEYWORDS),
+  items: z.array(EnrichItemSchema).min(1).max(ASO_MAX_KEYWORDS),
 });
+
+function toEnrichmentFailure(keyword: string, error: unknown): FailedKeyword {
+  const normalized = normalizeAppleUpstreamError({
+    error,
+    operation: "keyword-enrichment",
+    defaultReasonCode: "ENRICHMENT_FAILED",
+  });
+  return {
+    keyword: normalizeKeyword(keyword),
+    stage: "enrichment",
+    reasonCode: normalized.reasonCode,
+    message: normalized.message,
+    statusCode: normalized.statusCode,
+    retryable: normalized.retryable,
+    attempts: normalized.attempts,
+    requestId: normalized.requestId,
+  };
+}
 const AppDocsRequestSchema = z.object({
   country: z.string().default(DEFAULT_ASO_COUNTRY),
   appIds: z.array(z.string()).min(1).max(50),
@@ -113,7 +127,29 @@ export async function enrichAsoKeywords(
   items: Array<AsoKeywordRecord & { appDocs?: AsoAppDoc[] }>;
   failedKeywords: FailedKeyword[];
 }> {
-  const validated = EnrichRequestSchema.parse(params);
+  // A batch carries many keywords, so one malformed item (a missing or
+  // out-of-range popularity) fails only itself, as it did when keywords were
+  // enriched one per call. The request as a whole is still validated.
+  const invalidFailures: FailedKeyword[] = [];
+  const validItems = Array.isArray(params.items)
+    ? params.items.filter((item) => {
+        if (EnrichItemSchema.safeParse(item).success) return true;
+        invalidFailures.push({
+          keyword: normalizeKeyword(String(item?.keyword ?? "")),
+          stage: "enrichment",
+          reasonCode: "INVALID_REQUEST",
+          message: `Invalid enrichment item: popularity must be a number from 0 to 100 (got ${String(item?.popularity)}).`,
+          retryable: false,
+          attempts: 1,
+        });
+        return false;
+      })
+    : params.items;
+  if (invalidFailures.length > 0 && validItems.length === 0) {
+    assertSupportedCountry(normalizeCountry(params.country || DEFAULT_ASO_COUNTRY));
+    return { items: [], failedKeywords: invalidFailures };
+  }
+  const validated = EnrichRequestSchema.parse({ ...params, items: validItems });
   const country = normalizeCountry(validated.country);
   assertSupportedCountry(country);
 
@@ -155,27 +191,14 @@ export async function enrichAsoKeywords(
   const enriched = settled.flatMap((entry) =>
     entry.status === "fulfilled" ? [entry.value] : []
   );
-  const failedKeywords = settled.flatMap((entry, index) => {
-    if (entry.status !== "rejected") return [];
-    const keyword = validated.items[index]?.keyword ?? "";
-    const normalized = normalizeAppleUpstreamError({
-      error: entry.reason,
-      operation: "keyword-enrichment",
-      defaultReasonCode: "ENRICHMENT_FAILED",
-    });
-    return [
-      {
-        keyword: normalizeKeyword(keyword),
-        stage: "enrichment" as const,
-        reasonCode: normalized.reasonCode,
-        message: normalized.message,
-        statusCode: normalized.statusCode,
-        retryable: normalized.retryable,
-        attempts: normalized.attempts,
-        requestId: normalized.requestId,
-      },
-    ];
-  });
+  const failedKeywords: FailedKeyword[] = [
+    ...invalidFailures,
+    ...settled.flatMap((entry, index) =>
+      entry.status === "rejected"
+        ? [toEnrichmentFailure(validated.items[index]?.keyword ?? "", entry.reason)]
+        : []
+    ),
+  ];
 
   const allAppDocs = enriched.flatMap((e) => e.appDocs);
   const normalizedAppDocs = allAppDocs.map((doc) => ({
@@ -188,24 +211,49 @@ export async function enrichAsoKeywords(
       (item.appDocs ?? []).map((doc) => ({ ...doc, country })),
     ])
   );
-  const persisted =
-    enriched.length > 0
-      ? await dependencies.repository.upsertMany({
-          country,
-          items: enriched.map((e) => ({
-            keyword: e.keyword,
-            popularity: e.popularity,
-            difficultyScore: e.difficultyScore,
-            minDifficultyScore: e.minDifficultyScore,
-            isBrandKeyword: e.isBrandKeyword ?? null,
-            appCount: e.appCount,
-            keywordMatch: e.keywordMatch,
-            orderedAppIds: e.orderedAppIds,
-            ...(e.orderSource ? { orderSource: e.orderSource } : {}),
-          })),
-          appDocs: normalizedAppDocs,
-        })
-      : [];
+  type UpsertItem = Parameters<AsoCacheRepository["upsertMany"]>[0]["items"][number];
+  const toUpsertItem = (e: (typeof enriched)[number]): UpsertItem => ({
+    keyword: e.keyword,
+    popularity: e.popularity,
+    difficultyScore: e.difficultyScore,
+    minDifficultyScore: e.minDifficultyScore,
+    isBrandKeyword: e.isBrandKeyword ?? null,
+    appCount: e.appCount,
+    keywordMatch: e.keywordMatch,
+    orderedAppIds: e.orderedAppIds,
+    ...(e.orderSource ? { orderSource: e.orderSource } : {}),
+    // A batch scores keywords after every order is in, so stamp each with
+    // when its own order was fetched, as the rank-only refresh does.
+    ...(e.observedAt
+      ? { updatedAt: e.observedAt, positionCapturedAt: e.observedAt }
+      : {}),
+  });
+  let persisted: AsoKeywordRecord[] = [];
+  if (enriched.length > 0) {
+    try {
+      persisted = await dependencies.repository.upsertMany({
+        country,
+        items: enriched.map(toUpsertItem),
+        appDocs: normalizedAppDocs,
+      });
+    } catch {
+      // One bad row must not lose the whole batch: write keyword by keyword
+      // and fail only the ones that still throw.
+      for (const e of enriched) {
+        try {
+          persisted.push(
+            ...(await dependencies.repository.upsertMany({
+              country,
+              items: [toUpsertItem(e)],
+              appDocs: appDocsByKeyword.get(normalizeKeyword(e.keyword)) ?? [],
+            }))
+          );
+        } catch (itemError) {
+          failedKeywords.push(toEnrichmentFailure(e.keyword, itemError));
+        }
+      }
+    }
+  }
   return {
     items: persisted.map((item) => ({
       ...item,

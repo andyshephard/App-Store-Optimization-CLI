@@ -942,4 +942,97 @@ describe("keyword-pipeline-service", () => {
       "fail-first",
     ]);
   });
+
+  describe("ratings mode: progressive persistence per 25-keyword chunk", () => {
+    const keywords = Array.from({ length: 30 }, (_, index) => `chunk-kw-${index}`);
+    const pending = keywords.map((keyword) => ({ keyword, popularity: 40 }));
+
+    function storedItem(keyword: string) {
+      return {
+        keyword,
+        popularity: 40,
+        difficultyScore: 25,
+        minDifficultyScore: 20,
+        appCount: 100,
+        keywordMatch: "titleAllWords" as const,
+        orderedAppIds: ["app-1"],
+        orderExpiresAt: "2099-01-01T00:00:00.000Z",
+        popularityExpiresAt: "2099-01-01T00:00:00.000Z",
+      };
+    }
+
+    it("persists the first chunk before the next chunk finishes", async () => {
+      const firstDone = createDeferred<void>();
+      const secondDone = createDeferred<void>();
+      let runSettled = false;
+      mockEnrichAsoKeywordsLocal.mockImplementation(async (_country, items) => {
+        await (items[0]?.keyword === keywords[0] ? firstDone : secondDone).promise;
+        upsertKeywords("US", items.map((item) => storedItem(item.keyword)));
+        return {
+          items: items.map((item) => ({ ...storedItem(item.keyword), normalizedKeyword: item.keyword, country: "US" }) as any),
+          failedKeywords: [],
+        };
+      });
+
+      const runPromise = keywordPipelineService.enrichAndPersist("US", pending).then((result) => {
+        runSettled = true;
+        return result;
+      });
+
+      firstDone.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockEnrichAsoKeywordsLocal.mock.calls.map(([, items]) => items.length)).toEqual([25, 5]);
+      expect(getKeyword("US", keywords[24])?.difficultyScore).toBe(25);
+      expect(getKeyword("US", keywords[25])).toBeNull();
+      expect(runSettled).toBe(false);
+
+      secondDone.resolve();
+      const result = await runPromise;
+      expect(result.items.map((item) => item.keyword)).toEqual(keywords);
+      expect(result.failedKeywords).toHaveLength(0);
+    });
+
+    it("persists a failure from the first chunk before the next chunk finishes", async () => {
+      const firstDone = createDeferred<void>();
+      const secondDone = createDeferred<void>();
+      let runSettled = false;
+      mockEnrichAsoKeywordsLocal.mockImplementation(async (_country, items) => {
+        const first = items[0]?.keyword === keywords[0];
+        await (first ? firstDone : secondDone).promise;
+        const ok = items.filter((item) => item.keyword !== keywords[3]);
+        upsertKeywords("US", ok.map((item) => storedItem(item.keyword)));
+        return {
+          items: ok.map((item) => ({ ...storedItem(item.keyword), normalizedKeyword: item.keyword, country: "US" }) as any),
+          failedKeywords: first
+            ? [
+                {
+                  keyword: keywords[3],
+                  stage: "enrichment",
+                  reasonCode: "RATE_LIMITED",
+                  message: "429",
+                  statusCode: 429,
+                  retryable: true,
+                  attempts: 1,
+                } as any,
+              ]
+            : [],
+        };
+      });
+
+      const runPromise = keywordPipelineService.enrichAndPersist("US", pending).then((result) => {
+        runSettled = true;
+        return result;
+      });
+
+      firstDone.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(listKeywordFailures("US").map((entry) => entry.keyword)).toEqual([keywords[3]]);
+      expect(runSettled).toBe(false);
+
+      secondDone.resolve();
+      const result = await runPromise;
+      expect(result.items).toHaveLength(29);
+      expect(result.failedKeywords.map((entry) => entry.keyword)).toEqual([keywords[3]]);
+    });
+  });
 });

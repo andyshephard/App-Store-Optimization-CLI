@@ -4,6 +4,10 @@ import * as path from "path";
 import { jest } from "@jest/globals";
 import { getKeyword, upsertKeywords } from "../../db/aso-keywords";
 import { closeDbForTests } from "../../db/store";
+import {
+  listKeywordFailures,
+  upsertKeywordFailures,
+} from "../../db/aso-keyword-failures";
 import { asoAppleGet } from "../cache-api/services/aso-apple-client";
 import { enrichKeyword } from "../cache-api/services/aso-enrichment-service";
 import { fetchKeywordPopularitiesPreferringAdsApi } from "./aso-popularity-source";
@@ -58,6 +62,8 @@ function lookupRequests(): string[][] {
     .map(([, config]) => String((config as { params: { id: string } }).params.id).split(","));
 }
 
+let firstLookupAtMs: number | null = null;
+
 const PAST = "2000-01-01T00:00:00.000Z";
 const FUTURE = "2099-01-01T00:00:00.000Z";
 
@@ -99,10 +105,12 @@ describe("background refresh: merged iTunes lookups on every crawl path", () => 
     cleanDbFiles();
     jest.clearAllMocks();
     __resetRunLookupCacheForTests();
+    firstLookupAtMs = null;
     delete process.env.ASO_ENRICHMENT_MODE;
     process.env.ASO_RANK_SEARCHPAGE_PREFIX = "0";
     mockedAsoAppleGet.mockImplementation((async (_url: string, config: any) => {
       if (config?.operation === "itunes.lookup") {
+        firstLookupAtMs ??= Date.now();
         const ids = String(config.params.id).split(",");
         return {
           status: 200,
@@ -173,6 +181,12 @@ describe("background refresh: merged iTunes lookups on every crawl path", () => 
     expect(new Set(requests.flat()).size).toBe(requests.flat().length);
 
     const stored = KEYWORDS.map((keyword) => getKeyword("US", keyword)?.difficultyScore);
+    // Each keyword is stamped with when its own order was crawled, which is
+    // before the merged lookup, not when the batch was written.
+    for (const keyword of KEYWORDS) {
+      const updatedAt = Date.parse(getKeyword("US", keyword)?.updatedAt ?? "");
+      expect(updatedAt).toBeLessThanOrEqual(firstLookupAtMs!);
+    }
     expect(stored).toEqual(await perKeywordDifficulties());
   });
 
@@ -207,5 +221,54 @@ describe("background refresh: merged iTunes lookups on every crawl path", () => 
 
     expect(lookupRequests().length).toBe(afterFirst);
     expect(lookupCacheHitCount() - hitsBefore).toBe(UNIQUE_TOP_IDS.size);
+  });
+
+  it("a batched enrichAndPersist puts one keyword's failure on that keyword only", async () => {
+    const broken = KEYWORDS[7];
+    const invalid = KEYWORDS[12];
+    // Every keyword starts with a stale failure row from an earlier attempt.
+    upsertKeywordFailures(
+      "US",
+      KEYWORDS.map((keyword) => ({
+        keyword,
+        stage: "enrichment" as const,
+        reasonCode: "TOO_MANY_REQUESTS",
+        message: "429",
+        statusCode: 429,
+        retryable: true,
+        attempts: 1,
+      }))
+    );
+    const ordinary = mockedAsoAppleGet.getMockImplementation()!;
+    mockedAsoAppleGet.mockImplementation((async (url: string, config: any) => {
+      if (config?.params?.term === broken) throw new Error("socket hang up");
+      return ordinary(url, config);
+    }) as never);
+
+    const result = await keywordPipelineService.enrichAndPersist(
+      "US",
+      KEYWORDS.map((keyword) => ({
+        keyword,
+        popularity: keyword === invalid ? Number.NaN : 55,
+      }))
+    );
+
+    expect(result.failedKeywords.map((failure) => failure.keyword).sort()).toEqual(
+      [broken, invalid].sort()
+    );
+    expect(result.items).toHaveLength(KEYWORDS.length - 2);
+    expect(listKeywordFailures("US").map((failure) => failure.keyword).sort()).toEqual(
+      [broken, invalid].sort()
+    );
+    expect(
+      listKeywordFailures("US").find((failure) => failure.keyword === invalid)?.reasonCode
+    ).toBe("INVALID_REQUEST");
+    for (const keyword of KEYWORDS) {
+      const stored = getKeyword("US", keyword);
+      if (keyword === broken || keyword === invalid) expect(stored).toBeNull();
+      else expect(stored?.popularity).toBe(55);
+    }
+    // Still one merged lookup for the whole chunk.
+    expect(lookupRequests().length).toBeLessThanOrEqual(maxLookups);
   });
 });

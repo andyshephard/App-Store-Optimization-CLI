@@ -82,6 +82,9 @@ export class LocalAsoCacheRepository implements AsoCacheRepository {
       keywordMatch: KeywordMatchType;
       orderedAppIds: string[];
       orderSource?: string;
+      /** When the order was observed; defaults to now. */
+      updatedAt?: string;
+      positionCapturedAt?: string;
     }>;
     appDocs?: AsoAppDoc[];
   }): Promise<AsoKeywordRecord[]> {
@@ -103,6 +106,10 @@ export class LocalAsoCacheRepository implements AsoCacheRepository {
         keywordMatch: item.keywordMatch,
         orderedAppIds: item.orderedAppIds,
         orderSource: item.orderSource,
+        ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
+        ...(item.positionCapturedAt
+          ? { positionCapturedAt: item.positionCapturedAt }
+          : {}),
       }))
     );
 
