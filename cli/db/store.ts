@@ -17,6 +17,65 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
   }
 }
 
+/**
+ * Version of the schema created by `applyVersionedMigrations`, kept in
+ * SQLite's `PRAGMA user_version`. The tables above predate it and stay on
+ * their CREATE IF NOT EXISTS / column-sniffing path; anything added from now
+ * on goes in a numbered step below so an existing database is upgraded
+ * exactly once, in order.
+ */
+export const SCHEMA_VERSION = 1;
+
+const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
+  {
+    // Refresh runs, so "did last night's refresh finish, and per storefront
+    // how much of it worked?" survives a restart.
+    version: 1,
+    sql: `
+      CREATE TABLE IF NOT EXISTS refresh_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        status TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        counters_json TEXT,
+        last_error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_refresh_runs_trigger_started
+        ON refresh_runs(trigger, started_at);
+
+      CREATE TABLE IF NOT EXISTS refresh_run_storefronts (
+        run_id INTEGER NOT NULL,
+        country TEXT NOT NULL,
+        eligible INTEGER NOT NULL,
+        refreshed INTEGER NOT NULL,
+        failed INTEGER NOT NULL,
+        skipped INTEGER NOT NULL,
+        popularity_failed INTEGER NOT NULL DEFAULT 0,
+        abandoned INTEGER NOT NULL DEFAULT 0,
+        failure_reasons_json TEXT,
+        started_at TEXT,
+        finished_at TEXT,
+        PRIMARY KEY (run_id, country),
+        FOREIGN KEY (run_id) REFERENCES refresh_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_refresh_run_storefronts_country_finished
+        ON refresh_run_storefronts(country, finished_at);
+    `,
+  },
+];
+
+function applyVersionedMigrations(database: Database.Database): void {
+  const current = Number(database.pragma("user_version", { simple: true }) ?? 0);
+  for (const migration of VERSIONED_MIGRATIONS) {
+    if (migration.version <= current) continue;
+    database.transaction(() => {
+      database.exec(migration.sql);
+      database.pragma(`user_version = ${migration.version}`);
+    })();
+  }
+}
+
 function initializeDatabase(database: Database.Database): void {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
@@ -172,6 +231,7 @@ function initializeDatabase(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_app_keywords_country_app_favorite
       ON app_keywords(country, app_id, is_favorite);
   `);
+  applyVersionedMigrations(database);
 }
 
 export function getDbPath(): string {

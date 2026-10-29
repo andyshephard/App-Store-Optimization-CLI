@@ -27,6 +27,7 @@ export const ASO_DEFAULTS = {
   refreshTimeZone: "UTC",
   refreshInterCountryDelayMs: 60000,
   refreshInterBatchDelayMs: 5000,
+  refreshMaxCatchUpsPerDay: 2,
   keywordOrderTtlHours: 24,
   popularityCacheTtlHours: 720,
   appCacheTtlHours: 168,
@@ -70,6 +71,12 @@ export type AsoEnvConfig = {
   refreshInterCountryDelayMs: number;
   /** Pause between keyword batches during a background refresh. */
   refreshInterBatchDelayMs: number;
+  /**
+   * Most catch-up runs started in any 24h window. A scheduled run that a
+   * restart interrupted is re-run once on startup; if the crawl itself is
+   * what kills the process, this stops it turning into a crash loop.
+   */
+  refreshMaxCatchUpsPerDay: number;
   keywordOrderTtlHours: number;
   popularityCacheTtlHours: number;
   appCacheTtlHours: number;
@@ -225,6 +232,10 @@ function readAsoEnv(
     refreshInterBatchDelayMs: parseNonNegativeInt(
       env.ASO_REFRESH_INTER_BATCH_DELAY_MS,
       ASO_DEFAULTS.refreshInterBatchDelayMs
+    ),
+    refreshMaxCatchUpsPerDay: parseNonNegativeInt(
+      env.ASO_REFRESH_MAX_CATCHUPS_PER_DAY,
+      ASO_DEFAULTS.refreshMaxCatchUpsPerDay
     ),
     keywordOrderTtlHours: parsePositiveInt(
       env.ASO_KEYWORD_ORDER_TTL_HOURS,

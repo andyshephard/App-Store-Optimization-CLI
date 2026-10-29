@@ -224,6 +224,35 @@ describe("createRefreshScheduler", () => {
   });
 });
 
+describe("createRefreshScheduler fire reasons", () => {
+  it("tells a missed-occurrence catch-up from a scheduled run", () => {
+    let now = Date.parse("2026-01-15T08:00:00Z");
+    const timers: Array<{ callback: () => void; delayMs: number }> = [];
+    const reasons: string[] = [];
+    const scheduler = createRefreshScheduler({
+      dailyAt: "04:00",
+      timeZone: PRAGUE,
+      run: (reason) => reasons.push(reason),
+      // Last ran two days ago, so today's 04:00 was missed.
+      loadLastRunAt: () => Date.parse("2026-01-13T03:00:00Z"),
+      saveLastRunAt: () => {},
+      now: () => now,
+      setTimer: (callback, delayMs) => {
+        timers.push({ callback, delayMs });
+        return {} as NodeJS.Timeout;
+      },
+      clearTimer: () => {},
+    });
+
+    scheduler.start();
+    const due = timers.pop();
+    now += due!.delayMs;
+    due!.callback();
+
+    expect(reasons).toEqual(["missed-refresh-catch-up", "scheduled-refresh"]);
+  });
+});
+
 describe("getPreviousRunTimestamp", () => {
   const at4am = { hours: 4, minutes: 0 };
 

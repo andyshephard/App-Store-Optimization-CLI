@@ -19,13 +19,20 @@ export type RefreshSchedulerState = {
   lastRunAt: string | null;
 };
 
+export type RefreshSchedulerFireReason =
+  | "scheduled-refresh"
+  | "missed-refresh-catch-up";
+
 type RefreshSchedulerDeps = {
   /** "HH:MM" in 24-hour form. Null or empty disables the scheduler. */
   dailyAt: string | null;
   /** IANA timezone, e.g. "Europe/Prague". */
   timeZone: string;
-  /** Starts a refresh. Must be safe to call when one is already running. */
-  run: () => void;
+  /**
+   * Starts a refresh. Must be safe to call when one is already running.
+   * `reason` tells a scheduled run from the catch-up for a missed occurrence.
+   */
+  run: (reason: RefreshSchedulerFireReason) => void;
   /**
    * Persisted timestamp of the last scheduled run, injected so this module
    * stays storage-agnostic. Without it `lastRunAt` lives only in memory: a
@@ -209,7 +216,7 @@ export function createRefreshScheduler(
   let lastRunAt: number | null = null;
   let stopped = false;
 
-  const fire = (reason: "scheduled-refresh" | "missed-refresh-catch-up") => {
+  const fire = (reason: RefreshSchedulerFireReason) => {
     lastRunAt = now();
     // Recorded before running, so a crash-looping container cannot turn one
     // missed occurrence into a crawl on every restart.
@@ -219,7 +226,7 @@ export function createRefreshScheduler(
       deps.onError?.(error, { phase: "scheduled-refresh-persist" });
     }
     try {
-      deps.run();
+      deps.run(reason);
     } catch (error) {
       deps.onError?.(error, { phase: reason });
     }

@@ -280,7 +280,52 @@ Indexes:
 - PK: (`country`, `normalized_keyword`)
 - `idx_aso_keyword_failures_country_stage`: (`country`, `stage`)
 
+### `refresh_runs`
+
+One row per background refresh run (schema version 1). Written when the run
+starts, stamped when it finishes. A row still `running` at the next startup
+belonged to a process that died and is marked `interrupted`. Rows older than
+180 days are pruned at startup.
+
+| Column | SQLite type | App type | Nullable | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `INTEGER` | `number` | No | PK, autoincrement |
+| `started_at` | `TEXT` | `string` | No | ISO datetime |
+| `finished_at` | `TEXT` | `string \| null` | Yes | Null while running or when interrupted |
+| `status` | `TEXT` | `"running" \| "completed" \| "failed" \| "stopped" \| "interrupted"` | No | |
+| `trigger` | `TEXT` | `"scheduled" \| "catch-up" \| "manual" \| "startup"` | No | |
+| `counters_json` | `TEXT` | `StartupRefreshCounters` | Yes | Run totals and per-storefront breakdown |
+| `last_error` | `TEXT` | `string \| null` | Yes | First error of the run |
+
+Indexes:
+- `idx_refresh_runs_trigger_started`: (`trigger`, `started_at`)
+
+### `refresh_run_storefronts`
+
+One row per storefront per run, written when that storefront finishes.
+
+| Column | SQLite type | App type | Nullable | Notes |
+| --- | --- | --- | --- | --- |
+| `run_id` | `INTEGER` | `number` | No | PK part, FK to `refresh_runs.id` (`ON DELETE CASCADE`) |
+| `country` | `TEXT` | `string` | No | PK part |
+| `eligible` | `INTEGER` | `number` | No | Keywords selected for this pass |
+| `refreshed` | `INTEGER` | `number` | No | Ranking re-crawled (or newly enriched) |
+| `failed` | `INTEGER` | `number` | No | Ranking not refreshed; stored row left as it was |
+| `skipped` | `INTEGER` | `number` | No | Not attempted (stop, abandoned storefront, no session for a new keyword) |
+| `popularity_failed` | `INTEGER` | `number` | No | Popularity not refreshed (ranking may still have been) |
+| `abandoned` | `INTEGER` | `boolean` | No | Storefront given up as throttled |
+| `failure_reasons_json` | `TEXT` | `Record<string, number>` | Yes | reasonCode -> count; popularity reasons prefixed `popularity:` |
+| `started_at` | `TEXT` | `string \| null` | Yes | ISO datetime |
+| `finished_at` | `TEXT` | `string \| null` | Yes | ISO datetime |
+
+Indexes:
+- PK: (`run_id`, `country`)
+- `idx_refresh_run_storefronts_country_finished`: (`country`, `finished_at`)
+
 ## Notes
+- New tables are added through numbered steps in `store.ts`
+  (`VERSIONED_MIGRATIONS`), tracked in `PRAGMA user_version`. The older tables
+  predate it and keep their `CREATE TABLE IF NOT EXISTS` path.
 - DB init applies `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON`.
 - `owned_app_country_ratings.app_id` has FK to `owned_apps.id` (`ON DELETE CASCADE`).
 - ASO keyword/app-doc tables keep logical links enforced at service layer.

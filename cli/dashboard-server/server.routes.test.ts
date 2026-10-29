@@ -68,6 +68,7 @@ jest.mock("../db/app-keyword-position-history", () => ({
   listAppKeywordPositionHistory: jest.fn(() => []),
 }));
 
+jest.mock("../db/refresh-runs");
 jest.mock("../db/aso-keywords", () => ({
   listKeywords: jest.fn(() => []),
   getKeyword: jest.fn(() => null),

@@ -15,6 +15,20 @@ import {
 } from "../services/keywords/autocomplete-demand-service";
 import { getMetadataValue, setMetadataValue } from "../db/metadata";
 import {
+  countRefreshRunsSince,
+  finishRefreshRun,
+  getLatestRefreshRun,
+  insertRefreshRun,
+  markUnfinishedRefreshRunsInterrupted,
+  pruneRefreshRuns,
+  upsertRefreshRunStorefront,
+  type RefreshRunStatus,
+} from "../db/refresh-runs";
+import {
+  recoverInterruptedScheduledRun,
+  SCHEDULED_RUN_TRIGGERS,
+} from "./refresh-run-recovery";
+import {
   clearReauthenticationAlertState,
   sendReauthenticationAlert,
 } from "../services/notifications/reauth-alert-service";
@@ -208,6 +222,21 @@ const startupRefreshManager = createStartupRefreshManager({
     });
   },
   onRunHealthy: () => clearReauthenticationAlertState(),
+  recorder: {
+    start: ({ trigger, startedAt }) => insertRefreshRun({ trigger, startedAt }),
+    saveStorefront: (runId, counters) => {
+      const { country, ...rest } = counters;
+      upsertRefreshRunStorefront(runId, { country, ...rest });
+    },
+    finish: (runId, finished) => {
+      finishRefreshRun(runId, {
+        status: finished.status as RefreshRunStatus,
+        finishedAt: finished.finishedAt ?? new Date().toISOString(),
+        counters: finished.counters,
+        lastError: finished.lastError,
+      });
+    },
+  },
 });
 
 /**
@@ -241,7 +270,12 @@ const SCHEDULED_REFRESH_LAST_RUN_KEY =
 const refreshScheduler = createRefreshScheduler({
   dailyAt: ASO_ENV.refreshDailyAt,
   timeZone: ASO_ENV.refreshTimeZone,
-  run: () => startupRefreshManager.start({ force: true }),
+  run: (reason) => {
+    startupRefreshManager.start({
+      force: true,
+      trigger: reason === "scheduled-refresh" ? "scheduled" : "catch-up",
+    });
+  },
   loadLastRunAt: () => {
     const raw = getMetadataValue(SCHEDULED_REFRESH_LAST_RUN_KEY);
     if (!raw) return null;
@@ -263,8 +297,59 @@ function getStartupRefreshState(): StartupRefreshState {
   return startupRefreshManager.getState();
 }
 
-function startStartupRefresh(options?: { force?: boolean }): void {
-  startupRefreshManager.start(options);
+function startStartupRefresh(options?: {
+  force?: boolean;
+  trigger?: "manual" | "startup";
+}): void {
+  startupRefreshManager.start({
+    force: options?.force,
+    trigger: options?.trigger ?? "manual",
+  });
+}
+
+const REFRESH_RUN_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * Must run before anything can start a refresh: a row still "running" at this
+ * point belongs to a process that is gone.
+ */
+function settleRefreshRunHistory(): void {
+  try {
+    const interrupted = markUnfinishedRefreshRunsInterrupted();
+    if (interrupted > 0) {
+      logger.warn(
+        `[aso-refresh] ${interrupted} refresh run(s) were interrupted by a restart`
+      );
+    }
+    pruneRefreshRuns(new Date(Date.now() - REFRESH_RUN_RETENTION_MS).toISOString());
+  } catch (error) {
+    reportDashboardError(error, { context: "refresh-run-history" });
+  }
+}
+
+function recoverInterruptedRefresh(): void {
+  try {
+    const decision = recoverInterruptedScheduledRun({
+      getLastScheduledRun: () => getLatestRefreshRun(SCHEDULED_RUN_TRIGGERS),
+      countCatchUpsSince: (sinceIso) => countRefreshRunsSince("catch-up", sinceIso),
+      maxCatchUpsPerDay: ASO_ENV.refreshMaxCatchUpsPerDay,
+      startCatchUp: () =>
+        startupRefreshManager.start({ force: true, trigger: "catch-up" }),
+      onSuppressed: (suppressed) => {
+        logger.error(
+          `[aso-refresh] not catching up interrupted run: ${JSON.stringify(suppressed)}; ` +
+            `ASO_REFRESH_MAX_CATCHUPS_PER_DAY=${ASO_ENV.refreshMaxCatchUpsPerDay} reached, likely a restart loop`
+        );
+      },
+    });
+    if (decision.action === "catch-up") {
+      logger.warn(
+        `[aso-refresh] scheduled run ${decision.interruptedRunId} was interrupted; starting a catch-up run`
+      );
+    }
+  } catch (error) {
+    reportDashboardError(error, { context: "refresh-run-recovery" });
+  }
 }
 
 function stopStartupRefresh(): void {
@@ -274,7 +359,7 @@ function stopStartupRefresh(): void {
 function startConfiguredKeywordRefresh(): void {
   const settings = readDashboardSettings();
   if (settings.refreshMode === "startup") {
-    startStartupRefresh();
+    startStartupRefresh({ trigger: "startup" });
   }
 }
 
@@ -475,7 +560,10 @@ function handleApiAsoRefreshStartPost(
   query: Record<string, string>
 ): void {
   // force=1 re-crawls every tracked keyword instead of only the stale ones.
-  startStartupRefresh({ force: isTruthyQueryParam(query.force) });
+  startStartupRefresh({
+    force: isTruthyQueryParam(query.force),
+    trigger: "manual",
+  });
   sendJson(res, 202, { success: true, data: getStartupRefreshState() });
 }
 
@@ -1102,7 +1190,9 @@ export function startDashboard(openBrowser: boolean = true): Promise<never> {
     });
 
     registerShutdownHandlers(server);
+    settleRefreshRunHistory();
     refreshScheduler.start();
+    recoverInterruptedRefresh();
     if (hasEnvAppleCredentials()) sessionKeeper.start();
 
     server.listen(dashboardPort, dashboardHost, () => {

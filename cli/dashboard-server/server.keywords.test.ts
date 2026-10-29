@@ -13,6 +13,7 @@ jest.mock("../db/owned-apps", () => ({
   upsertOwnedAppSnapshots: jest.fn(),
 }));
 
+jest.mock("../db/refresh-runs");
 jest.mock("../db/aso-keywords", () => ({
   listKeywords: jest.fn(() => []),
   getKeyword: jest.fn(() => null),
