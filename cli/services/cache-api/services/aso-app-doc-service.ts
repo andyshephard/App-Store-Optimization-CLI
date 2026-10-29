@@ -209,6 +209,12 @@ function parseItunesLookupResult(
 export async function fetchItunesLookupAppDocs(params: {
   country: string;
   appIds: string[];
+  /**
+   * Called with the ids of every chunk whose request failed (or returned an
+   * unusable body). Ids Apple simply leaves out of a good response - delisted
+   * apps - are not reported: that is an answer, not a failure.
+   */
+  onFailedIds?: (ids: string[]) => void;
 }): Promise<Map<string, AsoAppDoc>> {
   const byId = new Map<string, AsoAppDoc>();
   if (params.appIds.length === 0) return byId;
@@ -241,10 +247,12 @@ export async function fetchItunesLookupAppDocs(params: {
         appIds: chunk,
         message: error instanceof Error ? error.message : String(error),
       });
+      params.onFailedIds?.(chunk);
       continue;
     }
 
     if (!response || !response.data || typeof response.data !== "object") {
+      params.onFailedIds?.(chunk);
       continue;
     }
     const results = Array.isArray(response.data.results) ? response.data.results : [];

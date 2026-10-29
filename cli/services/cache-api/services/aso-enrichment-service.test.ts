@@ -1098,10 +1098,9 @@ describe("aso-enrichment-service (ratings mode)", () => {
     const result = await enrichKeyword({ keyword: "budget", country: "US", popularity: 40 });
 
     expect(mockedAsoAppleGet).toHaveBeenCalledTimes(1);
-    expect(mockedFetchItunesLookupAppDocs).toHaveBeenCalledWith({
-      country: "US",
-      appIds: ids.slice(0, 10),
-    });
+    expect(mockedFetchItunesLookupAppDocs).toHaveBeenCalledWith(
+      expect.objectContaining({ country: "US", appIds: ids.slice(0, 10) })
+    );
     expect(mockedFetchAppStoreLookupAppDocs).not.toHaveBeenCalled();
     expect(mockedFetchAppStoreAdditionalLocalizations).not.toHaveBeenCalled();
     expect(result.appCount).toBe(240);
@@ -1453,6 +1452,41 @@ describe("aso-enrichment-service (batched lookups)", () => {
           : [outcome.keyword, "failed"]
       )
     ).toEqual(single.map((r, i) => [keywords[i], r.difficultyScore, r.orderedAppIds, r.appCount]));
+  });
+
+  it("fails only the keywords whose top apps were in a failed lookup chunk", async () => {
+    // "money"'s top 10 (7..16) are looked up; pretend the request for 9 and
+    // 10 failed, while 17 is simply delisted (Apple leaves it out).
+    mockedFetchItunesLookupAppDocs.mockImplementation((async (params: {
+      appIds: string[];
+      onFailedIds?: (ids: string[]) => void;
+    }) => {
+      params.onFailedIds?.(params.appIds.filter((id) => id === "9" || id === "10"));
+      return lookupImpl({
+        appIds: params.appIds.filter((id) => !["9", "10", "17"].includes(id)),
+      });
+    }) as never);
+
+    const batch = await refreshKeywordOrdersBatch({
+      country: "US",
+      keywords: ["budget planner", "money"],
+    });
+
+    expect(batch.map((outcome) => [outcome.keyword, outcome.ok])).toEqual([
+      ["budget planner", true],
+      ["money", false],
+    ]);
+    const failed = batch[1] as { ok: false; error: { code?: string } };
+    expect(failed.error.code).toBe("INSUFFICIENT_DOCS");
+  });
+
+  it("still scores a keyword whose top app is delisted (left out, not failed)", async () => {
+    mockedFetchItunesLookupAppDocs.mockImplementation((async (params: { appIds: string[] }) =>
+      lookupImpl({ appIds: params.appIds.filter((id) => id !== "3") })) as never);
+
+    const [outcome] = await refreshKeywordOrdersBatch({ country: "US", keywords: ["budget planner"] });
+
+    expect(outcome.ok).toBe(true);
   });
 
   it("isolates a keyword whose order fails without affecting the rest", async () => {

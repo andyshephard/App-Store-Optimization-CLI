@@ -2,6 +2,7 @@ import { jest } from "@jest/globals";
 import {
   fetchAppStoreLookupAppDocs,
   getAsoAppDocs,
+  fetchItunesLookupAppDocs,
 } from "./aso-app-doc-service";
 import { asoAppleGet } from "./aso-apple-client";
 import type { AsoCacheRepository } from "./aso-types";
@@ -538,5 +539,35 @@ describe("aso-app-doc-service", () => {
       "https://apps.apple.com/app/id1",
       expect.objectContaining({ throttleStatusCodes: [403] })
     );
+  });
+});
+
+describe("fetchItunesLookupAppDocs failed ids", () => {
+  it("reports the ids of a failed chunk, not ids Apple simply left out", async () => {
+    const ids = Array.from({ length: 60 }, (_, i) => String(i + 1));
+    mockedAsoAppleGet
+      .mockResolvedValueOnce({
+        data: {
+          results: ids.slice(0, 49).map((id) => ({
+            kind: "software",
+            trackId: Number(id),
+            trackName: `App ${id}`,
+            averageUserRating: 4,
+            userRatingCount: 10,
+          })),
+        },
+      } as never)
+      .mockRejectedValueOnce(new Error("socket hang up"));
+    const failed: string[] = [];
+
+    const docs = await fetchItunesLookupAppDocs({
+      country: "US",
+      appIds: ids,
+      onFailedIds: (chunk) => failed.push(...chunk),
+    });
+
+    expect(docs.size).toBe(49);
+    // id 50 was left out of a good response: not a failure.
+    expect(failed).toEqual(ids.slice(50));
   });
 });

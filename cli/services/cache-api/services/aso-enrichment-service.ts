@@ -1113,9 +1113,15 @@ export async function enrichKeywordFromRatings(
   options?: EnrichKeywordOptions
 ): Promise<EnrichKeywordResult> {
   const order = await resolveRatingsKeywordOrder(params, options);
-  const lookupById = await lookupTopDocs(order.country, order.topIds);
-  return finishRatingsEnrichment(params, options, order, lookupById);
+  const lookups = await lookupTopDocs(order.country, order.topIds);
+  return finishRatingsEnrichment(params, options, order, lookups);
 }
+
+type TopDocLookups = {
+  docs: Map<string, AsoAppDoc>;
+  /** Ids whose lookup request failed - unknown, as opposed to delisted. */
+  failedIds: Set<string>;
+};
 
 type RatingsKeywordOrder = {
   country: string;
@@ -1172,9 +1178,10 @@ async function resolveRatingsKeywordOrder(
 async function lookupTopDocs(
   country: string,
   appIds: string[]
-): Promise<Map<string, AsoAppDoc>> {
+): Promise<TopDocLookups> {
   const out = new Map<string, AsoAppDoc>();
-  if (appIds.length === 0) return out;
+  const failedIds = new Set<string>();
+  if (appIds.length === 0) return { docs: out, failedIds };
   const cache = currentRunLookupCache<AsoAppDoc>(country);
   const missing: string[] = [];
   for (const id of new Set(appIds)) {
@@ -1183,13 +1190,18 @@ async function lookupTopDocs(
     else missing.push(id);
   }
   if (missing.length > 0) {
-    const fetched = await fetchItunesLookupAppDocs({ country, appIds: missing });
+    const fetched = await fetchItunesLookupAppDocs({
+      country,
+      appIds: missing,
+      onFailedIds: (ids) => ids.forEach((id) => failedIds.add(id)),
+    });
     for (const [id, doc] of fetched) {
       out.set(id, doc);
+      failedIds.delete(id);
       cache?.set(id, doc);
     }
   }
-  return out;
+  return { docs: out, failedIds };
 }
 
 /** Phase 2: difficulty, docs, match and brand from the order and the lookup. */
@@ -1197,7 +1209,7 @@ async function finishRatingsEnrichment(
   params: EnrichKeywordParams,
   options: EnrichKeywordOptions | undefined,
   order: RatingsKeywordOrder,
-  allLookups: Map<string, AsoAppDoc>
+  lookups: TopDocLookups
 ): Promise<EnrichKeywordResult> {
   const { country, normalizedKeyword, orderedAppIds, orderSource, appCount, topIds } =
     order;
@@ -1205,8 +1217,25 @@ async function finishRatingsEnrichment(
   // per-keyword one (including the empty-lookup failure below).
   const lookupById = new Map<string, AsoAppDoc>();
   for (const id of topIds) {
-    const doc = allLookups.get(id);
+    const doc = lookups.docs.get(id);
     if (doc) lookupById.set(id, doc);
+  }
+  // A merged lookup can fail for one 50-id chunk and succeed for another.
+  // Scoring with those ids missing would read as zero ratings and give a
+  // silently low difficulty, so it fails like a failed per-keyword lookup.
+  // Ids Apple answered for by leaving out (delisted apps) still count as
+  // zero, as before.
+  const unresolvedTopIds = topIds.filter(
+    (id) => !lookupById.has(id) && lookups.failedIds.has(id)
+  );
+  if (unresolvedTopIds.length > 0) {
+    throw new InsufficientDifficultyDocsError({
+      keyword: params.keyword,
+      country,
+      appCount,
+      docsForDifficultyCount: lookupById.size,
+      missingTopIds: unresolvedTopIds,
+    });
   }
   if (topIds.length > 0 && lookupById.size === 0) {
     throw new InsufficientDifficultyDocsError({
