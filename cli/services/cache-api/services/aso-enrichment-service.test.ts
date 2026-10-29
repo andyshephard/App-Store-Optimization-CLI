@@ -1268,6 +1268,7 @@ describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
     delete process.env.ASO_ENRICHMENT_MODE;
     delete process.env.ASO_RANK_SEARCHPAGE_PREFIX;
     jest.clearAllMocks();
+    __resetIncompleteTopDocLookupCooldownForTests();
   });
 
   it("puts the search page's organic order first and appends MZSearch's unseen ids", async () => {
@@ -1361,6 +1362,43 @@ describe("aso-enrichment-service (ratings mode, search-page prefix)", () => {
 
     expect(result.orderedAppIds).toEqual(["1", "2"]);
     expect(result.orderSource).toBe("mzsearch");
+  });
+
+  it("skips the search page for a day after it answers 5xx for a term", async () => {
+    const serverError = Object.assign(new Error("Request failed with status code 500"), {
+      response: { status: 500 },
+    });
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1", "2"]))
+      .mockRejectedValueOnce(serverError)
+      .mockResolvedValueOnce(mzsearch(["1", "2"]));
+    mockedFetchItunesLookupAppDocs
+      .mockResolvedValueOnce(lookupFor(["1", "2"]))
+      .mockResolvedValueOnce(lookupFor(["1", "2"]));
+
+    await refreshKeywordOrder({ keyword: "trivia", country: "US" });
+    const second = await refreshKeywordOrder({ keyword: "Trivia", country: "us" });
+
+    // MZSearch, search page (500), then MZSearch only.
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(3);
+    expect(second.orderSource).toBe("mzsearch");
+  });
+
+  it("keeps trying the search page after a non-5xx failure", async () => {
+    mockedAsoAppleGet
+      .mockResolvedValueOnce(mzsearch(["1", "2"]))
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(mzsearch(["1", "2"]))
+      .mockResolvedValueOnce(organicPage(["2", "1"]));
+    mockedFetchItunesLookupAppDocs
+      .mockResolvedValueOnce(lookupFor(["1", "2"]))
+      .mockResolvedValueOnce(lookupFor(["1", "2"]));
+
+    await refreshKeywordOrder({ keyword: "quiz", country: "FR" });
+    const second = await refreshKeywordOrder({ keyword: "quiz", country: "FR" });
+
+    expect(mockedAsoAppleGet).toHaveBeenCalledTimes(4);
+    expect(second.orderSource).toBe("searchpage+mzsearch");
   });
 
   it("makes no search-page request when switched off", async () => {

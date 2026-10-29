@@ -97,6 +97,15 @@ const INSUFFICIENT_DOCS_RETRY_COUNT = 1;
 const INSUFFICIENT_DOCS_RETRY_BACKOFF_MS = 150;
 const INCOMPLETE_TOP_DOC_LOOKUP_COOLDOWN_MS = 10 * 60 * 1000;
 const incompleteTopDocLookupCooldownUntilByAppId = new Map<string, number>();
+// Apple's search page answers 500 for a few terms every time ("trivia",
+// "quiz", ...), which costs three requests per term per crawl. After a 5xx
+// the term skips the search page for a day and ranks from MZSearch alone.
+// In memory only: a restart costs one more failed request per such term.
+// More than SEARCH_PAGE_5XX_SKIP_MAX terms failing looks like an outage, not
+// bad terms, so no more are skipped and tomorrow's crawl tries them again.
+const SEARCH_PAGE_5XX_SKIP_MS = 24 * 60 * 60 * 1000;
+const SEARCH_PAGE_5XX_SKIP_MAX = 25;
+const searchPageSkipUntilByTerm = new Map<string, number>();
 
 function isIncompleteTopDocLookupOnCooldown(
   appId: string,
@@ -131,6 +140,26 @@ function clearIncompleteTopDocLookupCooldown(appIds: string[]): void {
 
 export function __resetIncompleteTopDocLookupCooldownForTests(): void {
   incompleteTopDocLookupCooldownUntilByAppId.clear();
+  searchPageSkipUntilByTerm.clear();
+}
+
+function searchPageSkipKey(keyword: string, country: string): string {
+  return `${country.toUpperCase()}:${normalizeKeyword(keyword)}`;
+}
+
+function isSearchPageSkipped(key: string, nowMs: number = Date.now()): boolean {
+  const skipUntil = searchPageSkipUntilByTerm.get(key);
+  if (skipUntil == null) return false;
+  if (skipUntil <= nowMs) {
+    searchPageSkipUntilByTerm.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function upstreamStatus(error: unknown): number | undefined {
+  const status = (error as { response?: { status?: unknown } } | null)?.response?.status;
+  return typeof status === "number" ? status : undefined;
 }
 
 class InsufficientDifficultyDocsError extends Error {
@@ -555,6 +584,10 @@ async function resolveRatingsOrder(params: {
   if (!ASO_ENV.rankSearchPagePrefix || params.mzSearchIds.length === 0) {
     return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
   }
+  const skipKey = searchPageSkipKey(params.keyword, params.country);
+  if (isSearchPageSkipped(skipKey)) {
+    return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
+  }
   let prefix: string[] = [];
   try {
     prefix = (
@@ -565,10 +598,19 @@ async function resolveRatingsOrder(params: {
       })
     ).orderedAppIds;
   } catch (error) {
+    const status = upstreamStatus(error);
+    const skipped =
+      status != null &&
+      status >= 500 &&
+      searchPageSkipUntilByTerm.size < SEARCH_PAGE_5XX_SKIP_MAX;
+    if (skipped) {
+      searchPageSkipUntilByTerm.set(skipKey, Date.now() + SEARCH_PAGE_5XX_SKIP_MS);
+    }
     logger.debug("[aso-enrichment] search-page prefix unavailable", {
       keyword: params.keyword,
       country: params.country.toUpperCase(),
       reason: error instanceof Error ? error.message : String(error),
+      skippedForMs: skipped ? SEARCH_PAGE_5XX_SKIP_MS : 0,
     });
     return { orderedAppIds: params.mzSearchIds, orderSource: "mzsearch" };
   }
