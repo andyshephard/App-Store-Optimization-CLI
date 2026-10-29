@@ -149,6 +149,9 @@ export async function asoAppleGet<T = unknown>(
     await waitForThrottleGate(host);
     // Every attempt, retries included, takes a slot from the host's limiter.
     const hostClass = await beforeAppleRequest(url);
+    // The slot may have been a long wait; a throttle elsewhere in the
+    // meantime closes the gate, and this request must respect it too.
+    await waitForThrottleGate(host);
     try {
       const response = await asoAppleHttpClient.get<T>(url, requestConfig);
       afterAppleResponse(hostClass, response.status);

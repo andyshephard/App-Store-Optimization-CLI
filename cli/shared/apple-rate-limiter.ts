@@ -94,6 +94,8 @@ export type HostCounters = {
 
 type HostState = {
   nextSlotAt: number;
+  /** Bumped by every throttle; a waiter that sees it change re-reserves. */
+  generation: number;
   /** Rate after the last throttle (null = at the cap). */
   reducedRate: number | null;
   reducedAt: number;
@@ -119,7 +121,13 @@ export class AppleRateLimiter {
   private state(hostClass: AppleHostClass): HostState {
     let state = this.hosts.get(hostClass);
     if (!state) {
-      state = { nextSlotAt: 0, reducedRate: null, reducedAt: 0, counters: emptyCounters() };
+      state = {
+        nextSlotAt: 0,
+        generation: 0,
+        reducedRate: null,
+        reducedAt: 0,
+        counters: emptyCounters(),
+      };
       this.hosts.set(hostClass, state);
     }
     return state;
@@ -148,12 +156,19 @@ export class AppleRateLimiter {
    */
   async acquire(hostClass: AppleHostClass): Promise<void> {
     const state = this.state(hostClass);
-    const intervalMs = 60_000 / this.effectiveRate(hostClass);
-    const now = this.clock.now();
-    const slot = Math.max(now, state.nextSlotAt);
-    state.nextSlotAt = slot + intervalMs;
     state.counters.requests += 1;
-    if (slot > now) await this.clock.sleep(slot - now);
+    // A throttle while this request waits discards every queued reservation
+    // (record() bumps the generation and restarts the schedule at the reduced
+    // spacing), so a waiter re-reserves instead of firing at the old rate.
+    for (;;) {
+      const generation = state.generation;
+      const intervalMs = 60_000 / this.effectiveRate(hostClass);
+      const now = this.clock.now();
+      const slot = Math.max(now, state.nextSlotAt);
+      state.nextSlotAt = slot + intervalMs;
+      if (slot > now) await this.clock.sleep(slot - now);
+      if (state.generation === generation) return;
+    }
   }
 
   /** Records the outcome of a request; a throttle halves the host's rate. */
@@ -169,8 +184,9 @@ export class AppleRateLimiter {
     state.reducedRate = after;
     state.reducedAt = this.clock.now();
     state.counters.throttles += 1;
-    // Push the next slot out to the new spacing straight away.
-    state.nextSlotAt = Math.max(state.nextSlotAt, this.clock.now() + 60_000 / after);
+    // Restart the schedule at the new spacing; waiters re-reserve against it.
+    state.generation += 1;
+    state.nextSlotAt = this.clock.now() + 60_000 / after;
     logger.warn(
       `[apple-rate] ${hostClass} answered ${status}; rate ${before.toFixed(1)} -> ${after.toFixed(1)}/min for ${THROTTLE_HOLD_MS / 60_000} min, then recovering towards ${readCap(hostClass)}/min`
     );

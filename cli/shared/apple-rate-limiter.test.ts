@@ -132,3 +132,56 @@ describe("AppleRateLimiter", () => {
     expect(limiter.counters().searchpage).toMatchObject({ status5xx: 1, throttles: 0 });
   });
 });
+
+describe("AppleRateLimiter with requests already queued", () => {
+  /** Clock whose sleeps really wait until advanced. */
+  function controllableClock() {
+    let now = 0;
+    const waiters: Array<{ at: number; resolve: () => void }> = [];
+    return {
+      clock: {
+        now: () => now,
+        sleep: (ms: number) =>
+          new Promise<void>((resolve) => waiters.push({ at: now + ms, resolve })),
+      },
+      async runUntil(target: number) {
+        for (;;) {
+          waiters.sort((a, b) => a.at - b.at);
+          const next = waiters[0];
+          if (!next || next.at > target) break;
+          waiters.shift();
+          now = next.at;
+          next.resolve();
+          for (let i = 0; i < 5; i += 1) await Promise.resolve();
+        }
+        now = target;
+      },
+      now: () => now,
+    };
+  }
+
+  it("slows requests that were already waiting when a throttle arrives", async () => {
+    const t = controllableClock();
+    const limiter = new AppleRateLimiter(t.clock);
+    const firedAt: number[] = [];
+    // 8 concurrent callers at 30/min: queued for 0, 2, 4, ... 14 s.
+    const calls = Array.from({ length: 8 }, () =>
+      limiter.acquire("mzsearch").then(() => firedAt.push(t.now()))
+    );
+    for (let i = 0; i < 5; i += 1) await Promise.resolve(); // the first goes out at once
+    await t.runUntil(2_000); // two have gone out
+    expect(firedAt).toEqual([0, 2_000]);
+
+    limiter.record("mzsearch", 429); // rate 30 -> 15/min, 4 s spacing
+
+    await t.runUntil(10 * 60_000);
+    await Promise.all(calls);
+    expect(firedAt).toHaveLength(8);
+    const afterThrottle = firedAt.slice(2);
+    // None of the queued six fires at the old 2 s spacing.
+    for (let i = 1; i < afterThrottle.length; i += 1) {
+      expect(afterThrottle[i] - afterThrottle[i - 1]).toBeGreaterThanOrEqual(4_000);
+    }
+    expect(afterThrottle[0]).toBeGreaterThanOrEqual(2_000 + 4_000);
+  });
+});
