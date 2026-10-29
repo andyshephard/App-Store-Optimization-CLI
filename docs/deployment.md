@@ -140,6 +140,18 @@ slot: an unattended start parks on the credentials prompt and holds it, and your
 later attempt in the browser is refused with "Another interactive prompt is
 already pending" until the container restarts. Alert, then log in yourself.
 
+To log in, open the dashboard and press **Reconnect Apple** in the toolbar. It
+appears whenever the refresh reports `requiresReauthentication`, or the session
+keeper's silent re-login hit 2FA (`sessionKeeper.needsTwoFactor` on
+`GET /api/aso/refresh-status`). It runs the same browser prompt flow as the
+first login: choose a verification method, then enter the code.
+
+Unattended re-logins (the session keeper, and the popularity stage's one silent
+retry) never prompt. Without a prompt handler and a TTY, a 2FA challenge throws.
+Before this fix it fell through to an inquirer prompt on the container's closed
+stdin, which exits the process. The container restarted and the browser never
+got a code field.
+
 ## Deploying alongside an existing stack
 
 Where a reverse proxy already owns 80/443 — the n8n VPS is the case this was

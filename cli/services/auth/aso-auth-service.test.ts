@@ -456,6 +456,80 @@ describe("aso-auth-service session reuse and keychain flow", () => {
       "Interactive terminal is required to enter Apple credentials"
     );
   });
+
+  it("rejects a 2FA prompt without TTY instead of handing it to inquirer", async () => {
+    const service = new AsoAuthService();
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+
+    jest.spyOn(asoCookieStoreService, "loadCookies").mockReturnValue([]);
+    jest.spyOn(asoKeychainService, "loadCredentials").mockReturnValue({
+      appleId: "user@example.com",
+      password: "pw",
+    });
+    jest
+      .spyOn(AsoAuthEngine.prototype, "ensureAuthenticated")
+      .mockImplementation(async function (this: any) {
+        await this.requestPrompt({
+          kind: "verification_code",
+          title: "Enter Verification Code",
+          message: "Enter code",
+          digits: 6,
+        });
+      });
+    const promptSpy = jest.spyOn(inquirer, "prompt");
+
+    await expect(service.reAuthenticate()).rejects.toThrow(
+      "Interactive terminal is required to answer Apple authentication prompts"
+    );
+    expect(promptSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes a 2FA prompt to the prompt handler without TTY", async () => {
+    const service = new AsoAuthService();
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    });
+
+    jest.spyOn(asoCookieStoreService, "loadCookies").mockReturnValue([]);
+    jest.spyOn(asoCookieStoreService, "saveCookies").mockImplementation(() => {});
+    jest.spyOn(asoKeychainService, "loadCredentials").mockReturnValue({
+      appleId: "user@example.com",
+      password: "pw",
+    });
+    jest
+      .spyOn(AsoAuthEngine.prototype, "ensureAuthenticated")
+      .mockImplementation(async function (this: any) {
+        await this.requestPrompt({
+          kind: "verification_code",
+          title: "Enter Verification Code",
+          message: "Enter code",
+          digits: 6,
+        });
+      });
+    const handler = {
+      prompt: jest
+        .fn()
+        .mockResolvedValue({ kind: "verification_code", code: "123456" }),
+    };
+
+    await service.reAuthenticate({ promptHandler: handler });
+
+    expect(handler.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "verification_code" })
+    );
+  });
 });
 
 describe("aso-auth-service cookie header scoping", () => {

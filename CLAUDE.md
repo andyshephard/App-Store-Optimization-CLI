@@ -226,7 +226,12 @@ Features added for the Chunks deployment; details in `docs/`:
   `scripts/astro/`.
 - **Session keeper** (`dashboard-server/session-keeper.ts`): re-authenticates
   every 6h with env credentials; never blocks on 2FA (records needsTwoFactor
-  and sends the re-auth alert). `POST /api/aso/session/check`.
+  and sends the re-auth alert). `POST /api/aso/session/check`. Its state rides
+  on `GET /api/aso/refresh-status` (`sessionKeeper`) and drives the dashboard's
+  **Reconnect Apple** button.
+- **Never let auth reach inquirer without a TTY.** inquirer 8 on a closed
+  stdin exits the process — in the container, a silent restart.
+  `reAuthenticate` only wires a prompt when there is a handler or a TTY.
 - **Rate-limit hardening:** host-wide throttle gate in `aso-apple-client.ts`,
   bounded localized fetches, 403 on app-lookup treated as throttle.
 

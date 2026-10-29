@@ -1304,6 +1304,142 @@ describe("dashboard auth modal UI flow", () => {
     );
   });
 
+  it("offers Reconnect Apple when the session keeper needs 2FA and collects the code", async () => {
+    const respondBodies: unknown[] = [];
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET" && url === "/api/aso/storefronts") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              storefronts: [
+                { country: "US", name: "United States", isDefault: true },
+              ],
+              defaultCountry: "US",
+            },
+          },
+        });
+      }
+      if (method === "GET" && url.split("?")[0] === "/api/apps") {
+        return jsonResponse({ status: 200, body: { success: true, data: [] } });
+      }
+      if (method === "GET" && url.startsWith("/api/aso/keywords?")) {
+        return jsonResponse({
+          status: 200,
+          body: { success: true, data: emptyKeywordPagedPayload() },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/refresh-status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "completed",
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              requiresReauthentication: false,
+              counters: {
+                eligibleKeywordCount: 0,
+                refreshedKeywordCount: 0,
+                failedKeywordCount: 0,
+              },
+              sessionKeeper: { needsTwoFactor: true },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/start") {
+        return jsonResponse({
+          status: 202,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-10-29T00:00:00.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+      if (method === "GET" && url === "/api/aso/auth/status") {
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "in_progress",
+              updatedAt: "2026-10-29T00:00:01.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: {
+                kind: "verification_code",
+                title: "Enter Verification Code",
+                message: "Enter 6-digit trusted-device code:",
+                digits: 6,
+              },
+            },
+          },
+        });
+      }
+      if (method === "POST" && url === "/api/aso/auth/respond") {
+        respondBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return jsonResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: {
+              status: "succeeded",
+              updatedAt: "2026-10-29T00:00:02.000Z",
+              lastError: null,
+              requiresTerminalAction: false,
+              canPrompt: true,
+              pendingPrompt: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<App />);
+
+    expect(
+      await screen.findByText(
+        "Apple needs a verification code to keep the session alive."
+      )
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Apple" }));
+
+    await screen.findByRole("heading", { name: "Enter Verification Code" });
+    fireEvent.change(screen.getByLabelText("Verification Code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify Code" }));
+
+    await waitFor(() =>
+      expect(respondBodies).toEqual([
+        { kind: "verification_code", code: "123456" },
+      ])
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Reconnect Apple" })
+      ).not.toBeInTheDocument()
+    );
+  });
+
   it("keeps auth prompt submit errors visible while status polling continues", async () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

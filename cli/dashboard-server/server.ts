@@ -283,6 +283,7 @@ const dashboardAuthStateManager = createDashboardAuthStateManager({
       path: "/api/aso/auth/start",
     });
   },
+  onSucceeded: () => sessionKeeper.markOk(),
 });
 
 const dashboardSetupStateManager = createDashboardSetupStateManager({
@@ -448,6 +449,7 @@ function handleApiAsoRefreshStatusGet(res: http.ServerResponse): void {
     data: {
       ...getStartupRefreshState(),
       schedule: refreshScheduler.getState(),
+      sessionKeeper: sessionKeeper.getState(),
     },
   });
 }

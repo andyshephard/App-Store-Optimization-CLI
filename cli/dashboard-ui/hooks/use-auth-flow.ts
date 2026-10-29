@@ -35,6 +35,7 @@ type AuthFlowContext =
   | { kind: "add-keywords" }
   | { kind: "retry-failed" }
   | { kind: "startup-refresh" }
+  | { kind: "manual" }
   | null;
 
 type UseAuthFlowParams = {
@@ -234,6 +235,19 @@ export function useAuthFlow(params: UseAuthFlowParams) {
     startReauthentication,
   ]);
 
+  const startManualReauthentication = useCallback(() => {
+    setAuthFlowContext((current) => current ?? { kind: "manual" });
+    if (!authCanPrompt || isStartingAuth || isSubmittingAuthPrompt) return;
+    if (authStatus === "in_progress") return;
+    void startReauthentication();
+  }, [
+    authCanPrompt,
+    authStatus,
+    isStartingAuth,
+    isSubmittingAuthPrompt,
+    startReauthentication,
+  ]);
+
   useEffect(() => {
     if (!isStartingAuth && authStatus !== "in_progress") return;
     let isActive = true;
@@ -338,6 +352,7 @@ export function useAuthFlow(params: UseAuthFlowParams) {
     openAuthModalForRetryFailed,
     requestStartupRefreshReauthentication,
     startReauthentication,
+    startManualReauthentication,
     submitAuthPromptResponse,
     authCheckLoadingText,
     isAddKeywordsAuthBusy,

@@ -41,3 +41,16 @@ describe("session-keeper", () => {
     await expect(keeper.check()).resolves.toMatchObject({ ok: false, lastError: "session check timed out" });
   });
 });
+
+describe("session-keeper markOk", () => {
+  it("clears needsTwoFactor after a dashboard login", async () => {
+    const keeper = createSessionKeeper({
+      reAuthenticate: async (options) => options.promptHandler.prompt({ kind: "code" }),
+      onNeedsTwoFactor: jest.fn(),
+    });
+    await keeper.check();
+    expect(keeper.getState().needsTwoFactor).toBe(true);
+    keeper.markOk();
+    expect(keeper.getState()).toMatchObject({ ok: true, needsTwoFactor: false, lastError: null });
+  });
+});

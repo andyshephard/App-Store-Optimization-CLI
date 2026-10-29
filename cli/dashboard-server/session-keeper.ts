@@ -93,5 +93,20 @@ export function createSessionKeeper(deps: Deps) {
     };
   }
 
-  return { check, start, getState: (): SessionKeeperState => ({ ...state }) };
+  // A human finished the 2FA login in the dashboard; clear the flag now
+  // rather than leaving the reconnect prompt up until the next 6h check.
+  function markOk(): void {
+    state.lastCheckAt = now().toISOString();
+    state.lastOkAt = state.lastCheckAt;
+    state.ok = true;
+    state.needsTwoFactor = false;
+    state.lastError = null;
+  }
+
+  return {
+    check,
+    start,
+    markOk,
+    getState: (): SessionKeeperState => ({ ...state }),
+  };
 }

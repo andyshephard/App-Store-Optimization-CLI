@@ -833,6 +833,13 @@ export class AsoAuthEngine {
     if (this.promptUser) {
       return this.promptUser(prompt);
     }
+    // inquirer on a closed stdin exits the whole process, which in a container
+    // means a restart instead of an error the dashboard could surface.
+    if (!hasInteractiveTerminal()) {
+      throw new Error(
+        "Interactive terminal is required to answer Apple authentication prompts."
+      );
+    }
     return promptWithCliAsoPrompt(prompt, { spinner: this.spinner });
   }
 
@@ -1964,7 +1971,11 @@ export class AsoAuthService {
           mode,
           spinner,
           options?.onUserActionRequired,
-          promptUser
+          // Without a handler or a TTY, leave it unset so the engine's 2FA
+          // guard throws instead of waiting on a prompt nobody can answer.
+          options?.promptHandler || hasInteractiveTerminal()
+            ? promptUser
+            : undefined
         );
         await engine.ensureAuthenticated(credentials);
 

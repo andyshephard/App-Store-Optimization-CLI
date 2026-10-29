@@ -315,6 +315,7 @@ type StartupRefreshStatusPayload = {
   lastError: string | null;
   requiresReauthentication: boolean;
   stopRequested?: boolean;
+  sessionKeeper?: { needsTwoFactor: boolean };
   counters: {
     eligibleKeywordCount: number;
     refreshedKeywordCount: number;
@@ -722,6 +723,7 @@ export function App() {
     openAuthModalForRetryFailed,
     requestStartupRefreshReauthentication,
     startReauthentication,
+    startManualReauthentication,
     submitAuthPromptResponse,
     authCheckLoadingText,
     isAddKeywordsAuthBusy,
@@ -2765,16 +2767,31 @@ export function App() {
       : isKeywordMutationBlockedByStartupReauth
         ? "Apple reauthentication required."
         : "";
+  // The session keeper's silent re-login hit 2FA. Nothing else fails until
+  // the session actually lapses, so this is what surfaces the reconnect button.
+  const sessionNeedsTwoFactor =
+    startupRefreshState?.sessionKeeper?.needsTwoFactor === true &&
+    authStatus !== "succeeded";
+  const isManualReauthInFlight =
+    activeAuthContext === "manual" &&
+    (isStartingAuth || authStatus === "in_progress") &&
+    !authModalOpen;
   const startupRefreshBanner = useMemo(() => {
     if (keywordMutationStatusText) {
+      const isBlocked =
+        isKeywordMutationBlockedByStartupReauth &&
+        !isStartupRefreshAutoRecoveryActive;
       return {
-        tone:
-          isKeywordMutationBlockedByStartupReauth &&
-          !isStartupRefreshAutoRecoveryActive
-            ? ("error" as const)
-            : ("muted" as const),
-        action: null,
+        tone: isBlocked ? ("error" as const) : ("muted" as const),
+        action: isBlocked ? ("reauth" as const) : null,
         text: keywordMutationStatusText,
+      };
+    }
+    if (isManualReauthInFlight) {
+      return {
+        tone: "muted" as const,
+        action: null,
+        text: "Connecting to Apple...",
       };
     }
     if (manualRefreshFeedback === "refreshed") {
@@ -2782,6 +2799,16 @@ export function App() {
         tone: "muted" as const,
         action: null,
         text: "Refreshed.",
+      };
+    }
+    if (
+      sessionNeedsTwoFactor &&
+      !startupRefreshState?.requiresReauthentication
+    ) {
+      return {
+        tone: "error" as const,
+        action: "reauth" as const,
+        text: "Apple needs a verification code to keep the session alive.",
       };
     }
     if (!startupRefreshState) return null;
@@ -2805,7 +2832,7 @@ export function App() {
     if (startupRefreshState.requiresReauthentication) {
       return {
         tone: "error" as const,
-        action: null,
+        action: "reauth" as const,
         text: "Apple reauthentication required.",
       };
     }
@@ -2816,9 +2843,11 @@ export function App() {
     };
   }, [
     isKeywordMutationBlockedByStartupReauth,
+    isManualReauthInFlight,
     isStartupRefreshAutoRecoveryActive,
     keywordMutationStatusText,
     manualRefreshFeedback,
+    sessionNeedsTwoFactor,
     startupRefreshState,
   ]);
   const hasRankFiltersApplied =
@@ -3240,6 +3269,19 @@ export function App() {
                 }}
               >
                 {isRestartingStartupRefresh ? "Retrying..." : "Retry Refresh"}
+              </Button>
+            ) : null}
+            {startupRefreshBanner?.action === "reauth" ? (
+              <Button
+                id="apple-reconnect"
+                className="startup-refresh-action"
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled={!canStartReauth}
+                onClick={startManualReauthentication}
+              >
+                Reconnect Apple
               </Button>
             ) : null}
           </div>

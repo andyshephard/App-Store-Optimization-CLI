@@ -20,6 +20,7 @@ type CreateDashboardAuthStateParams = {
     promptHandler?: AsoPromptHandler;
   }) => Promise<unknown>;
   onError: (error: unknown) => void;
+  onSucceeded?: () => void;
 };
 
 function nowIsoString(): string {
@@ -94,6 +95,7 @@ export function createDashboardAuthStateManager(
         .then(() => {
           promptSession.reset();
           setState("succeeded", null);
+          params.onSucceeded?.();
         })
         .catch((error) => {
           promptSession.failPendingPrompt(error);
