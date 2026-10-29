@@ -1,7 +1,7 @@
-# Node 20: scripts/check-node-version.js requires >= 20.19.0 for the build, and
-# .nvmrc pins 20. Debian rather than Alpine because better-sqlite3 ships glibc
+# Node 22: scripts/check-node-version.js requires >= 22.22.0 for the build
+# (posthog-node's floor on the 22 line), and .nvmrc pins 22. Debian rather than Alpine because better-sqlite3 ships glibc
 # prebuilds; musl would force a source build on every image rebuild.
-FROM node:20-bookworm AS builder
+FROM node:22-bookworm AS builder
 WORKDIR /app
 # Toolchain for the case where no better-sqlite3 prebuild matches this arch/ABI.
 RUN apt-get update \
@@ -15,7 +15,7 @@ RUN npm run build
 # Production dependencies only. esbuild marks axios, better-sqlite3, dotenv,
 # yargs, zod and zod-validation-error as external, so cli/dist/cli.js is not
 # self-contained and needs a real node_modules at runtime.
-FROM node:20-bookworm AS deps
+FROM node:22-bookworm AS deps
 WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
@@ -23,7 +23,7 @@ RUN apt-get update \
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     HOME=/home/node \
     ASO_DASHBOARD_HOST=0.0.0.0 \

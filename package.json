@@ -60,7 +60,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18.14.1",
+    "node": ">=22.22.0",
     "npm": ">=8.0.0"
   },
   "homepage": "https://github.com/semihcihan/App-Store-Optimization-CLI",

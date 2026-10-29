@@ -1,4 +1,6 @@
-const MIN_NODE_VERSION: [number, number, number] = [18, 14, 1];
+// Node 22 only: posthog-node needs >= 22.22.0 on the 22 line, and this fork
+// is built and deployed on Node 22 (Dockerfile, .nvmrc).
+const MIN_NODE_VERSION: [number, number, number] = [22, 22, 0];
 
 function parseNodeVersion(version: string): [number, number, number] {
   const [major = "0", minor = "0", patch = "0"] = version

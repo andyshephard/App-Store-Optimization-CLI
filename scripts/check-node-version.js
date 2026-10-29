@@ -1,4 +1,4 @@
-const MIN_NODE_VERSION = [20, 19, 0];
+const MIN_NODE_VERSION = [22, 22, 0];
 const version = process.version;
 
 function parseVersion(input) {
@@ -25,7 +25,7 @@ if (!isAtLeast(parsed, MIN_NODE_VERSION)) {
   console.error(
     `Local development/build requires Node.js >= ${MIN_NODE_VERSION.join(
       "."
-    )}. Current runtime: ${version}. Run "nvm use 20".`
+    )}. Current runtime: ${version}. Run "nvm use 22".`
   );
   process.exit(1);
 }

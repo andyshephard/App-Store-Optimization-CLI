@@ -4,8 +4,7 @@
 Runtime flow contracts across CLI commands, local dashboard API, and ASO services.
 
 ## Runtime Requirement
-- Runtime: Node.js `>=18.14.1`.
-- Local development/build: Node.js `>=20.19.0`.
+- Runtime and local development/build: Node.js `>=22.22.0`.
 
 ## Operational Prerequisite
 - Apple Search Ads setup is required only for ASO command flows (`aso ...`).

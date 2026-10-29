@@ -44,9 +44,9 @@ Jest runs two projects: `node` matches `cli/**/*.test.ts`, `jsdom` matches
 `npm run mcp:test`. `website/` is a separate Astro package with its own lockfile
 (`npm ci --prefix website`).
 
-Node: `.npmrc` sets `engine-strict=true` and posthog-node wants
-`^20.20.0 || >=22.22.0`. On Node 22.19 install with `--engine-strict=false`.
-Runtime target is `>=18.14.1`; dev/build checks enforce `>=20.19.0`.
+Node 22 (`.nvmrc`, Dockerfile, `engines >=22.22.0`, which is posthog-node's
+floor on the 22 line). `.npmrc` sets `engine-strict=true`, so `npm ci` refuses
+older Node.
 
 ## Architecture
 
