@@ -322,6 +322,11 @@ returns the stored results:
 `lettersNeeded: null` = never suggested. Use it where Apple's popularity is 5
 (no data): a term suggested within a few letters is genuinely searched.
 
+Each POST checks about a seventh of the storefront's tracked keywords (oldest
+check first), so a daily trigger covers every keyword once a week rather than
+all of them in one burst. Within a call each prefix is requested once (related
+keywords share prefixes) and every request is preceded by a 250 ms pause.
+
 ## `GET /api/aso/storefronts`
 
 Enabled storefronts. Pure read. Use it to drive a per-country loop rather than

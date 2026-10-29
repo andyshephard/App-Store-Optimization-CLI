@@ -65,3 +65,11 @@ export function listKeywordsDueForAutocomplete(
       .all(country, checkedBefore, limit) as Array<{ keyword: string }>
   ).map((r) => r.keyword);
 }
+
+/** How many distinct tracked keywords a storefront has. */
+export function countTrackedKeywords(country: string): number {
+  const row = getDb()
+    .prepare(`SELECT COUNT(DISTINCT keyword) AS n FROM app_keywords WHERE country = ?`)
+    .get(country) as { n: number } | undefined;
+  return Number(row?.n ?? 0);
+}

@@ -3,6 +3,7 @@ import { ASO_APPLE_WEB_USER_AGENT } from "../../shared/aso-apple-http";
 import { getStoreFrontHeader } from "../../shared/aso-storefronts";
 import { logger } from "../../utils/logger";
 import {
+  countTrackedKeywords,
   listKeywordsDueForAutocomplete,
   upsertKeywordAutocomplete,
   type KeywordAutocomplete,
@@ -80,24 +81,84 @@ export async function measureAutocomplete(
 
 let running = false;
 
+/** Pause before every hint request; the old per-keyword pause, now per request. */
+const DEFAULT_PREFIX_DELAY_MS = 250;
+const WEEK_DAYS = 7;
+
+/**
+ * Hint lookups for one refresh: each prefix is asked at most once (related
+ * keywords share most of their prefixes), and every real request is
+ * preceded by a pause. Before this, a keyword's 2..20 prefixes went out
+ * back to back and only keywords were paced.
+ */
+export function createPacedHintFetcher(options: {
+  delayMs?: number;
+  fetch?: (prefix: string, country: string) => Promise<string[]>;
+  sleep?: (ms: number) => Promise<void>;
+} = {}): {
+  hints: (prefix: string, country: string) => Promise<string[]>;
+  stats: () => { requests: number; cacheHits: number };
+} {
+  const delayMs = options.delayMs ?? DEFAULT_PREFIX_DELAY_MS;
+  const fetch = options.fetch ?? fetchHints;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const cache = new Map<string, string[]>();
+  let requests = 0;
+  let cacheHits = 0;
+  return {
+    hints: async (prefix, country) => {
+      const key = `${country.toUpperCase()}\u0000${prefix}`;
+      const cached = cache.get(key);
+      if (cached) {
+        cacheHits += 1;
+        return cached;
+      }
+      if (requests > 0) await sleep(delayMs);
+      requests += 1;
+      const list = await fetch(prefix, country);
+      cache.set(key, list);
+      return list;
+    },
+    stats: () => ({ requests, cacheHits }),
+  };
+}
+
 /**
  * Re-measure tracked keywords not checked within `maxAgeDays`. Single-flight;
  * a second call while one runs returns immediately.
+ *
+ * Spread over the week: unless `limit` is given, a call checks about a
+ * seventh of the storefront's tracked keywords (oldest first), so a daily
+ * trigger covers everything once a week instead of all of it in one burst.
  */
 export async function refreshAutocomplete(
   country: string,
-  options: { maxAgeDays?: number; limit?: number; delayMs?: number } = {}
-): Promise<{ started: boolean; checked: number; suggested: number }> {
+  options: {
+    maxAgeDays?: number;
+    limit?: number;
+    delayMs?: number;
+    fetch?: (prefix: string, country: string) => Promise<string[]>;
+    sleep?: (ms: number) => Promise<void>;
+  } = {}
+): Promise<{ started: boolean; checked: number; suggested: number; requests?: number }> {
   if (running) return { started: false, checked: 0, suggested: 0 };
   running = true;
   try {
-    const maxAgeDays = options.maxAgeDays ?? 7;
+    const maxAgeDays = options.maxAgeDays ?? WEEK_DAYS;
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
-    const due = listKeywordsDueForAutocomplete(country, cutoff, options.limit ?? 500);
+    const limit =
+      options.limit ?? Math.max(1, Math.ceil(countTrackedKeywords(country) / WEEK_DAYS));
+    const due = listKeywordsDueForAutocomplete(country, cutoff, limit);
+    const fetcher = createPacedHintFetcher({
+      delayMs: options.delayMs,
+      fetch: options.fetch,
+      sleep: options.sleep,
+    });
     let suggested = 0;
     for (const keyword of due) {
       try {
-        const result = await measureAutocomplete(keyword, country);
+        const result = await measureAutocomplete(keyword, country, fetcher.hints);
         const row: KeywordAutocomplete = {
           country,
           keyword,
@@ -109,9 +170,12 @@ export async function refreshAutocomplete(
       } catch (error) {
         logger.debug(`[autocomplete] ${keyword} skipped: ${String(error)}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 250));
     }
-    return { started: true, checked: due.length, suggested };
+    const { requests, cacheHits } = fetcher.stats();
+    logger.info(
+      `[autocomplete] ${country}: checked=${due.length} limit=${limit} requests=${requests} prefixCacheHits=${cacheHits}`
+    );
+    return { started: true, checked: due.length, suggested, requests };
   } finally {
     running = false;
   }

@@ -1,4 +1,20 @@
-import { measureAutocomplete, parseHintTerms } from "./autocomplete-demand-service";
+import {
+  createPacedHintFetcher,
+  measureAutocomplete,
+  parseHintTerms,
+  refreshAutocomplete,
+} from "./autocomplete-demand-service";
+import {
+  countTrackedKeywords,
+  listKeywordsDueForAutocomplete,
+  upsertKeywordAutocomplete,
+} from "../../db/aso-keyword-autocomplete";
+
+jest.mock("../../db/aso-keyword-autocomplete", () => ({
+  countTrackedKeywords: jest.fn(() => 0),
+  listKeywordsDueForAutocomplete: jest.fn(() => []),
+  upsertKeywordAutocomplete: jest.fn(),
+}));
 
 describe("autocomplete-demand-service", () => {
   it("parses suggestion terms from Apple's plist, in order", () => {
@@ -35,5 +51,46 @@ describe("autocomplete-demand-service", () => {
     const hints = jest.fn(async (prefix: string) => (prefix === "fun f" ? ["fun facts"] : ["fun"]));
     await measureAutocomplete("fun facts", "US", hints);
     expect(hints.mock.calls.map((c) => c[0])).not.toContain("fun ");
+  });
+});
+
+describe("paced, cached autocomplete refresh", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("asks each prefix once and pauses before every real request", async () => {
+    const sleeps: number[] = [];
+    const fetch = jest.fn(async (prefix: string) =>
+      prefix === "budg" ? ["budget", "budget planner"] : ["x"]
+    );
+    const fetcher = createPacedHintFetcher({
+      delayMs: 250,
+      fetch,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await measureAutocomplete("budget", "US", fetcher.hints);
+    await measureAutocomplete("budget planner", "US", fetcher.hints);
+
+    // bu, bud, budg once each; the second keyword is served from the cache.
+    expect(fetch.mock.calls.map((call) => call[0])).toEqual(["bu", "bud", "budg"]);
+    expect(fetcher.stats()).toEqual({ requests: 3, cacheHits: 3 });
+    // A pause before every request but the first, none for cache hits.
+    expect(sleeps).toEqual([250, 250]);
+  });
+
+  it("checks about a seventh of the tracked keywords per call", async () => {
+    jest.mocked(countTrackedKeywords).mockReturnValue(100);
+    jest.mocked(listKeywordsDueForAutocomplete).mockReturnValue(["ab"]);
+
+    const result = await refreshAutocomplete("GB", {
+      fetch: async () => [],
+      sleep: async () => {},
+    });
+
+    expect(jest.mocked(listKeywordsDueForAutocomplete).mock.calls[0][2]).toBe(15);
+    expect(result).toMatchObject({ started: true, checked: 1, requests: 1 });
+    expect(jest.mocked(upsertKeywordAutocomplete)).toHaveBeenCalledTimes(1);
   });
 });
