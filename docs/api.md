@@ -332,7 +332,11 @@ returns the stored results:
 
 Each POST checks about a seventh of the storefront's tracked keywords (oldest
 check first), so a daily trigger covers every keyword once a week rather than
-all of them in one burst. Within a call each prefix is requested once (related
+all of them in one burst. **asocli does not schedule this itself: it relies on
+a caller POSTing once a day per storefront.** Today that caller is the Chunks
+middleware's `asoSnapshotSync` (daily, 06:00 UTC), which posts `country=US`
+only, so other storefronts' autocomplete is not refreshed unless something
+else calls it. If the caller stops, results just age; nothing fails. Within a call each prefix is requested once (related
 keywords share prefixes) and every request is preceded by a 250 ms pause.
 
 ## `GET /api/aso/storefronts`
