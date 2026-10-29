@@ -187,6 +187,18 @@ function operationalAlertKey(key: string): string {
 }
 
 /**
+ * Process-local copy of when each condition last alerted. The metadata row is
+ * the durable record, but if the database is unwritable (one of the things
+ * these alerts report) the row never lands and every hourly check would email
+ * again. Suppression uses the later of the two.
+ */
+const operationalAlertSentAtMs = new Map<string, number>();
+
+export function __resetOperationalAlertMemoryForTests(): void {
+  operationalAlertSentAtMs.clear();
+}
+
+/**
  * Health alerts (stale storefront, no completed run, restart loop), sent
  * through the same Resend path as the reauthentication alert and suppressed
  * per condition for a day. Fail-quiet for the same reason.
@@ -209,8 +221,17 @@ export async function sendOperationalAlert(
     deps.writeLastSentAt ??
     ((iso: string) => setMetadataValue(metadataKey, iso));
 
-  const lastSentRaw = readLastSentAt();
-  const lastSent = lastSentRaw ? Date.parse(lastSentRaw) : NaN;
+  let lastSentRaw: string | null = null;
+  try {
+    lastSentRaw = readLastSentAt();
+  } catch (error) {
+    logger.debug(`[aso-alert] could not read alert timestamp: ${String(error)}`);
+  }
+  const lastSentDb = lastSentRaw ? Date.parse(lastSentRaw) : NaN;
+  const lastSent = Math.max(
+    Number.isFinite(lastSentDb) ? lastSentDb : -Infinity,
+    operationalAlertSentAtMs.get(params.key) ?? -Infinity
+  );
   if (Number.isFinite(lastSent) && now - lastSent < RESEND_SUPPRESSION_MS) {
     return "suppressed";
   }
@@ -226,6 +247,7 @@ export async function sendOperationalAlert(
     logger.warn(`[aso-alert] ${params.key} alert failed to send: ${String(error)}`);
     return "failed";
   }
+  operationalAlertSentAtMs.set(params.key, now);
   try {
     writeLastSentAt(new Date(now).toISOString());
   } catch (error) {
@@ -240,6 +262,7 @@ export function clearOperationalAlertState(
   key: string,
   deps: Pick<AlertDeps, "readLastSentAt" | "writeLastSentAt"> = {}
 ): void {
+  operationalAlertSentAtMs.delete(key);
   try {
     const metadataKey = operationalAlertKey(key);
     const read = deps.readLastSentAt ?? (() => getMetadataValue(metadataKey));

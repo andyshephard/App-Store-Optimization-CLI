@@ -1,4 +1,5 @@
 import {
+  __resetOperationalAlertMemoryForTests,
   clearOperationalAlertState,
   clearReauthenticationAlertState,
   sendOperationalAlert,
@@ -175,6 +176,7 @@ describe("sendOperationalAlert", () => {
   beforeEach(() => {
     process.env.ASO_RESEND_API_KEY = "re_test";
     process.env.ASO_ALERT_EMAIL_TO = "ops@example.com";
+    __resetOperationalAlertMemoryForTests();
   });
 
   afterEach(() => {
@@ -201,5 +203,28 @@ describe("sendOperationalAlert", () => {
 
     clearOperationalAlertState("storefront-stale", deps);
     await expect(sendOperationalAlert(alert, deps)).resolves.toBe("sent");
+  });
+
+  it("still suppresses repeats when the database cannot be read or written", async () => {
+    let now = Date.parse("2026-10-29T12:00:00Z");
+    const mailer = jest.fn(async () => {});
+    const deps = {
+      mailer,
+      now: () => now,
+      readLastSentAt: () => {
+        throw new Error("SQLITE_READONLY");
+      },
+      writeLastSentAt: () => {
+        throw new Error("SQLITE_READONLY");
+      },
+    };
+    const alert = { key: "restart-loop", subject: "s", text: "t" };
+
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("sent");
+    now += 60 * 60 * 1000;
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("suppressed");
+    now += 24 * 60 * 60 * 1000;
+    await expect(sendOperationalAlert(alert, deps)).resolves.toBe("sent");
+    expect(mailer).toHaveBeenCalledTimes(2);
   });
 });
