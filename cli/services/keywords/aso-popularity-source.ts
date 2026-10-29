@@ -19,14 +19,16 @@ type PopularityFetchOptions = {
 };
 
 async function fetchLegacy(
+  country: string,
   keywords: string[],
   options?: PopularityFetchOptions
 ): Promise<PopularityFetchResult> {
-  return options?.allowInteractiveAuthRecovery === false
-    ? asoPopularityService.fetchKeywordPopularitiesWithFailures(keywords, {
-        allowInteractiveAuthRecovery: false,
-      })
-    : asoPopularityService.fetchKeywordPopularitiesWithFailures(keywords);
+  return asoPopularityService.fetchKeywordPopularitiesWithFailures(keywords, {
+    country,
+    ...(options?.allowInteractiveAuthRecovery === false
+      ? { allowInteractiveAuthRecovery: false }
+      : {}),
+  });
 }
 
 /**
@@ -49,7 +51,7 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
   options?: PopularityFetchOptions
 ): Promise<PopularityFetchResult> {
   if (!isAppleAdsApiConfigured()) {
-    return fetchLegacy(keywords, options);
+    return fetchLegacy(country, keywords, options);
   }
   if (ASO_ENV.popularitySource === "legacy") {
     return fetchLegacyWithAdsApiHistory(country, keywords, options);
@@ -64,7 +66,7 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
         error
       )}`
     );
-    return fetchLegacy(keywords, options);
+    return fetchLegacy(country, keywords, options);
   }
 
   const popularities: Record<string, number> = {};
@@ -103,7 +105,7 @@ export async function fetchKeywordPopularitiesPreferringAdsApi(
   );
   let legacy: PopularityFetchResult;
   try {
-    legacy = await fetchLegacy(uncovered, options);
+    legacy = await fetchLegacy(country, uncovered, options);
   } catch (error) {
     // With no Ads API coverage at all, the legacy error must propagate
     // unchanged — it carries the auth-recovery signals (e.g. reauth required)
@@ -150,7 +152,7 @@ async function fetchLegacyWithAdsApiHistory(
   options?: PopularityFetchOptions
 ): Promise<PopularityFetchResult> {
   // Errors propagate unchanged: they carry the reauth signals surfaces act on.
-  const legacy = await fetchLegacy(keywords, options);
+  const legacy = await fetchLegacy(country, keywords, options);
 
   let snapshots: Awaited<ReturnType<typeof fetchSearchTermPopularitySnapshots>>;
   try {

@@ -605,5 +605,12 @@ serves it.
 - **One instance only.** SQLite is single-writer.
 - **`AUTH_REQUIRED` is ambiguous** — bad API token or dead Apple session. Probe
   `/health` first.
-- **Popularity does not vary by storefront.** Reporting it per country implies
-  precision that is not there.
+- **Popularity may or may not vary by storefront.** The legacy endpoint was
+  always asked for the account-level score, which is the same everywhere. With
+  `ASO_POPULARITY_PER_STOREFRONT` on (default) it is now asked for the
+  storefront's own score first, falling back to account level per keyword for
+  anything Apple rejects or leaves empty. Whether Apple really answers per
+  storefront is unverified; each fetch logs
+  `[aso-popularity] mode=storefront country=GB storefront=N account-fallback=M fallbackReason=...`.
+  Until those logs show storefront answers that differ between countries,
+  treat per-country popularity as account-level.

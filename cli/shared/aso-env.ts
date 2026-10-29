@@ -28,6 +28,8 @@ export const ASO_DEFAULTS = {
   refreshInterCountryDelayMs: 60000,
   refreshInterBatchDelayMs: 5000,
   refreshMaxCatchUpsPerDay: 2,
+  popularityPerStorefront: true,
+  rankSearchPagePrefix: true,
   keywordOrderTtlHours: 24,
   popularityCacheTtlHours: 720,
   appCacheTtlHours: 168,
@@ -77,6 +79,18 @@ export type AsoEnvConfig = {
    * what kills the process, this stops it turning into a crash loop.
    */
   refreshMaxCatchUpsPerDay: number;
+  /**
+   * Ask the legacy Search Ads popularity endpoint for the storefront's own
+   * score (`storefronts: [country]`), falling back to the account-level score
+   * for anything it does not answer. ASO_POPULARITY_PER_STOREFRONT=0 turns it off.
+   */
+  popularityPerStorefront: boolean;
+  /**
+   * Ratings mode: take the first ~11 ranks from the App Store search page and
+   * append MZSearch's remaining ids as the tail. ASO_RANK_SEARCHPAGE_PREFIX=0
+   * reverts to MZSearch order only.
+   */
+  rankSearchPagePrefix: boolean;
   keywordOrderTtlHours: number;
   popularityCacheTtlHours: number;
   appCacheTtlHours: number;
@@ -164,6 +178,12 @@ function parseEnabled(raw: string | undefined): boolean {
   return raw === "1";
 }
 
+/** On unless explicitly switched off with 0/false/off/no. */
+function parseDefaultOn(raw: string | undefined): boolean {
+  if (raw == null) return true;
+  return !["0", "false", "off", "no"].includes(raw.trim().toLowerCase());
+}
+
 function readAsoEnv(
   env:
     | NodeJS.ProcessEnv
@@ -237,6 +257,8 @@ function readAsoEnv(
       env.ASO_REFRESH_MAX_CATCHUPS_PER_DAY,
       ASO_DEFAULTS.refreshMaxCatchUpsPerDay
     ),
+    popularityPerStorefront: parseDefaultOn(env.ASO_POPULARITY_PER_STOREFRONT),
+    rankSearchPagePrefix: parseDefaultOn(env.ASO_RANK_SEARCHPAGE_PREFIX),
     keywordOrderTtlHours: parsePositiveInt(
       env.ASO_KEYWORD_ORDER_TTL_HOURS,
       ASO_DEFAULTS.keywordOrderTtlHours

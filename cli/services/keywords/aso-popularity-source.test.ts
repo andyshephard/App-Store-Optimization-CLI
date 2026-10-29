@@ -69,7 +69,7 @@ describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
     const result = await fetchKeywordPopularitiesPreferringAdsApi("US", ["a"]);
     expect(result).toBe(legacyResult);
     expect(mockSnapshots).not.toHaveBeenCalled();
-    expect(mockLegacy).toHaveBeenCalledWith(["a"]);
+    expect(mockLegacy).toHaveBeenCalledWith(["a"], { country: "US" });
   });
 
   it("forwards allowInteractiveAuthRecovery: false to the legacy service", async () => {
@@ -79,6 +79,7 @@ describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
       allowInteractiveAuthRecovery: false,
     });
     expect(mockLegacy).toHaveBeenCalledWith(["a"], {
+      country: "US",
       allowInteractiveAuthRecovery: false,
     });
   });
@@ -95,7 +96,7 @@ describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
       "longtail",
     ]);
     expect(result.popularities).toEqual({ covered: 70, longtail: 8 });
-    expect(mockLegacy).toHaveBeenCalledWith(["longtail"]);
+    expect(mockLegacy).toHaveBeenCalledWith(["longtail"], { country: "GB" });
     expect(mockPersistHistory).toHaveBeenCalledWith("GB", [
       expect.objectContaining({
         keyword: "covered",
@@ -158,7 +159,7 @@ describe("fetchKeywordPopularitiesPreferringAdsApi", () => {
       "b",
     ]);
     expect(result).toBe(legacyResult);
-    expect(mockLegacy).toHaveBeenCalledWith(["a", "b"]);
+    expect(mockLegacy).toHaveBeenCalledWith(["a", "b"], { country: "US" });
     expect(mockPersistHistory).not.toHaveBeenCalled();
   });
 });

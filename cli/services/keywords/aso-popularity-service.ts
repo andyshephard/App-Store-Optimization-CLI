@@ -17,6 +17,7 @@ import {
 } from "./apple-upstream-error";
 import { getAsoResilienceConfig } from "../../shared/aso-resilience";
 import type { FailedKeyword } from "./aso-types";
+import { ASO_ENV } from "../../shared/aso-env";
 import {
   ASO_MAX_KEYWORDS,
   ASO_MAX_KEYWORDS_PER_CALL_ERROR,
@@ -85,12 +86,60 @@ async function tryUnattendedReauth(): Promise<string | null> {
 
 type FetchKeywordPopularitiesOptions = {
   allowInteractiveAuthRecovery?: boolean;
+  /**
+   * Storefront to ask for. With ASO_POPULARITY_PER_STOREFRONT on (default),
+   * the request names this storefront and falls back to the account-level
+   * score for anything it cannot answer. Omitted: account-level only.
+   */
+  country?: string;
 };
+
+export type PopularitySourceMode = "storefront" | "account";
 
 type KeywordPopularityResult = {
   popularities: Record<string, number>;
   failedKeywords: FailedKeyword[];
+  /** Which request answered each keyword in `popularities`. */
+  sourceByKeyword?: Record<string, PopularitySourceMode>;
 };
+
+function sourceMap(
+  popularities: Record<string, number>,
+  mode: PopularitySourceMode
+): Record<string, PopularitySourceMode> {
+  return Object.fromEntries(Object.keys(popularities).map((k) => [k, mode]));
+}
+
+/**
+ * A storefront whose per-storefront request Apple rejected outright (non-auth
+ * error status) is asked account-level only for a day, so every batch does
+ * not pay for a doomed extra request. Logged once when it trips.
+ */
+const STOREFRONT_REJECTION_TTL_MS = 24 * 60 * 60 * 1000;
+const storefrontPopularityRejectedAt = new Map<string, number>();
+
+function isStorefrontPopularityRejected(country: string): boolean {
+  const at = storefrontPopularityRejectedAt.get(country);
+  if (at == null) return false;
+  if (Date.now() - at > STOREFRONT_REJECTION_TTL_MS) {
+    storefrontPopularityRejectedAt.delete(country);
+    return false;
+  }
+  return true;
+}
+
+function markStorefrontPopularityRejected(country: string, status: number): void {
+  if (!storefrontPopularityRejectedAt.has(country)) {
+    logger.warn(
+      `[aso-popularity] Apple rejected the per-storefront popularity request for ${country} (status ${status}); using account-level popularity for ${country} for 24h`
+    );
+  }
+  storefrontPopularityRejectedAt.set(country, Date.now());
+}
+
+export function __resetStorefrontPopularityRejectionsForTests(): void {
+  storefrontPopularityRejectedAt.clear();
+}
 
 export class AsoAuthReauthRequiredError extends ContextualError {
   readonly code = AUTH_REAUTH_REQUIRED_ERROR_CODE;
@@ -277,15 +326,17 @@ export class AsoPopularityService {
         cookieHeader = await asoAuthService.reAuthenticate();
       }
     }
+    let activeStorefronts: string[] = [];
     const requestWithAuthRecovery = async (
       terms: string[],
       stageLabel: string,
-      options?: { maxAttempts?: number }
+      baseOptions?: { maxAttempts?: number }
     ): Promise<{
       statusCode: number;
       data: PopularityResponse;
       attempts: number;
     }> => {
+      const options = { ...baseOptions, storefronts: activeStorefronts };
       logger.debug(
         `[aso-popularity] sending ${stageLabel} request cookieHeaderLength=${cookieHeader.length} terms=${terms.length}`
       );
@@ -466,9 +517,25 @@ export class AsoPopularityService {
       return toFailedKeyword(keyword, normalized);
     };
 
-    let response = await requestWithAuthRecovery(sanitizedKeywords, "initial");
+    const fetchTerms = async (
+      terms: string[],
+      modeLabel: string,
+      isolate: boolean
+    ): Promise<KeywordPopularityResult & { rejectedStatus?: number }> => {
+      let response = await requestWithAuthRecovery(terms, `${modeLabel}:initial`);
 
-    if (response.statusCode !== 200 || response.data.status !== "success") {
+      if (response.statusCode !== 200 || response.data.status !== "success") {
+      if (!isolate) {
+        // Per-storefront attempt: no keyword-by-keyword isolation. The
+        // account-level fallback re-asks for every term in one request.
+        return {
+          popularities: {},
+          failedKeywords: terms.map((term) =>
+            toFailureFromResponse(sanitizedToOriginal.get(term) ?? term, response)
+          ),
+          rejectedStatus: response.statusCode,
+        };
+      }
       const messageCode = firstMessageCode(response.data);
       const message = firstMessage(response.data);
       if (isPrimaryAppIdAccessError(response.statusCode, response.data)) {
@@ -483,7 +550,7 @@ export class AsoPopularityService {
             operation: "keywords-popularities-response",
             context: {
               adamId,
-              termsCount: sanitizedKeywords.length,
+              termsCount: terms.length,
               statusCode: response.statusCode,
               requestID: response.data.requestID || null,
               messageCode: messageCode || null,
@@ -502,9 +569,9 @@ export class AsoPopularityService {
           }; attempting keyword-level isolation`
         );
       }
-      if (sanitizedKeywords.length === 1) {
+      if (terms.length === 1) {
         const keyword =
-          sanitizedToOriginal.get(sanitizedKeywords[0]) ?? sanitizedKeywords[0];
+          sanitizedToOriginal.get(terms[0]) ?? terms[0];
         return {
           popularities: {},
           failedKeywords: [toFailureFromResponse(keyword, response)],
@@ -513,12 +580,12 @@ export class AsoPopularityService {
 
       const popularities: Record<string, number> = {};
       const failedKeywords: FailedKeyword[] = [];
-      for (const term of sanitizedKeywords) {
+      for (const term of terms) {
         const keyword = sanitizedToOriginal.get(term) ?? term;
         try {
           const singleResponse = await requestWithAuthRecovery(
             [term],
-            `isolation:${term}`,
+            `${modeLabel}:isolation:${term}`,
             { maxAttempts: 1 }
           );
           if (
@@ -540,10 +607,71 @@ export class AsoPopularityService {
       };
     }
 
-    return {
-      popularities: parseSuccessPopularities(response),
-      failedKeywords: [],
+      return {
+        popularities: parseSuccessPopularities(response),
+        failedKeywords: [],
+      };
     };
+
+    const country = options?.country?.trim().toUpperCase() || null;
+    const perStorefront =
+      ASO_ENV.popularityPerStorefront &&
+      country != null &&
+      !isStorefrontPopularityRejected(country);
+    if (!perStorefront) {
+      const result = await fetchTerms(sanitizedKeywords, "account", true);
+      logger.info(
+        `[aso-popularity] mode=account country=${country ?? "none"} answered=${Object.keys(result.popularities).length}/${sanitizedKeywords.length} failed=${result.failedKeywords.length}`
+      );
+      return { ...result, sourceByKeyword: sourceMap(result.popularities, "account") };
+    }
+
+    activeStorefronts = [country];
+    const storefrontResult = await fetchTerms(
+      sanitizedKeywords,
+      `storefront:${country}`,
+      false
+    );
+    activeStorefronts = [];
+    // Only a malformed-request answer means "this endpoint will not take a
+    // storefront"; throttling and 5xx are transient and must not switch it off.
+    if (
+      storefrontResult.rejectedStatus === 400 ||
+      storefrontResult.rejectedStatus === 404 ||
+      storefrontResult.rejectedStatus === 422
+    ) {
+      markStorefrontPopularityRejected(country, storefrontResult.rejectedStatus);
+    }
+    const popularities: Record<string, number> = {
+      ...storefrontResult.popularities,
+    };
+    const sourceByKeyword = sourceMap(popularities, "storefront");
+    // Terms the storefront could not answer - rejected, missing or no data -
+    // fall back to the account-level score in one more request.
+    const remaining = sanitizedKeywords.filter(
+      (term) => popularities[sanitizedToOriginal.get(term) ?? term] == null
+    );
+    let failedKeywords: FailedKeyword[] = [];
+    let fallbackAnswered = 0;
+    if (remaining.length > 0) {
+      const fallback = await fetchTerms(remaining, "account-fallback", true);
+      for (const [keyword, value] of Object.entries(fallback.popularities)) {
+        popularities[keyword] = value;
+        sourceByKeyword[keyword] = "account";
+        fallbackAnswered += 1;
+      }
+      failedKeywords = fallback.failedKeywords;
+    }
+    const fallbackReason =
+      storefrontResult.rejectedStatus != null
+        ? `rejected(${storefrontResult.rejectedStatus})`
+        : remaining.length > 0
+          ? "no-data"
+          : "none";
+    logger.info(
+      `[aso-popularity] mode=storefront country=${country} storefront=${sanitizedKeywords.length - remaining.length} account-fallback=${fallbackAnswered} fallbackReason=${fallbackReason} failed=${failedKeywords.length} of ${sanitizedKeywords.length}`
+    );
+    return { popularities, failedKeywords, sourceByKeyword };
   }
 
   async fetchKeywordPopularities(

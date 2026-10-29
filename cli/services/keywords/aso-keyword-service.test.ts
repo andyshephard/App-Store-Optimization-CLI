@@ -309,7 +309,7 @@ describe("keyword-pipeline-service", () => {
     expect(mockLookupAsoCacheLocal).not.toHaveBeenCalled();
     expect(mockFetchKeywordPopularitiesWithFailures).toHaveBeenCalledWith(
       ["fresh term"],
-      { allowInteractiveAuthRecovery: false }
+      { allowInteractiveAuthRecovery: false, country: "US" }
     );
     expect(mockEnrichAsoKeywordsLocal).toHaveBeenCalledWith("US", [
       { keyword: "fresh term", popularity: 72 },
@@ -645,8 +645,8 @@ describe("keyword-pipeline-service", () => {
       fetchedBatches.map((batch) => batch.requestedKeywords.length)
     ).toEqual([100, 1]);
     expect(fetchedBatches.map((batch) => batch.options)).toEqual([
-      { allowInteractiveAuthRecovery: false },
-      { allowInteractiveAuthRecovery: false },
+      { allowInteractiveAuthRecovery: false, country: "US" },
+      { allowInteractiveAuthRecovery: false, country: "US" },
     ]);
     expect(
       new Set(fetchedBatches.flatMap((batch) => batch.requestedKeywords))

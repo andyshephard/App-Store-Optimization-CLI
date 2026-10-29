@@ -59,15 +59,18 @@ function wait(ms: number): Promise<void> {
 async function requestPopularitiesOnce(
   terms: string[],
   cookieHeader: string,
-  adamId: string
+  adamId: string,
+  storefronts: string[] = []
 ): Promise<{
   statusCode: number;
   data: PopularityResponse;
   headers?: Record<string, unknown>;
 }> {
   const requestUrl = `${APPLE_POPULARITY_URL}?adamId=${encodeURIComponent(adamId)}`;
+  // An empty list asks for the account-level score; a country code asks for
+  // that storefront's (see aso-popularity-service, ASO_POPULARITY_PER_STOREFRONT).
   const requestBody = {
-    storefronts: [],
+    storefronts,
     terms,
   };
   const requestHeaders = {
@@ -134,7 +137,7 @@ export async function requestPopularitiesWithKwsRetry(
   terms: string[],
   cookieHeader: string,
   adamId: string,
-  options?: { maxAttempts?: number }
+  options?: { maxAttempts?: number; storefronts?: string[] }
 ): Promise<{ statusCode: number; data: PopularityResponse; attempts: number }> {
   const maxAttempts = Math.max(
     1,
@@ -142,7 +145,12 @@ export async function requestPopularitiesWithKwsRetry(
   );
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await requestPopularitiesOnce(terms, cookieHeader, adamId);
+      const response = await requestPopularitiesOnce(
+        terms,
+        cookieHeader,
+        adamId,
+        options?.storefronts ?? []
+      );
       const retryable = isTransientStatus(response.statusCode, response.data);
       if (!retryable || attempt >= maxAttempts) {
         return {

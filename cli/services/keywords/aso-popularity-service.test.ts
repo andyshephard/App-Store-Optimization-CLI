@@ -1,5 +1,6 @@
 import { jest } from "@jest/globals";
 import {
+  __resetStorefrontPopularityRejectionsForTests,
   asoPopularityService,
   resetUnattendedReauthCooldown,
   probeAsoPopularitySession,
@@ -83,7 +84,7 @@ describe("AsoPopularityService", () => {
         ["keyword", "another"],
         "cookie=value",
         expect.any(String),
-        undefined
+        { storefronts: [] }
       );
       expect(asoAuthService.getCookieHeader).toHaveBeenCalledWith(
         "https://app-ads.apple.com/cm/api/v2/keywords/popularities"
@@ -163,7 +164,7 @@ describe("AsoPopularityService", () => {
         ["x"],
         "new-cookie",
         expect.any(String),
-        undefined
+        { storefronts: [] }
       );
     });
 
@@ -349,14 +350,14 @@ describe("AsoPopularityService", () => {
         ["good"],
         "cookie=value",
         expect.any(String),
-        { maxAttempts: 1 }
+        { maxAttempts: 1, storefronts: [] }
       );
       expect(mockRequestPopularitiesWithKwsRetry).toHaveBeenNthCalledWith(
         3,
         ["bad"],
         "cookie=value",
         expect.any(String),
-        { maxAttempts: 1 }
+        { maxAttempts: 1, storefronts: [] }
       );
     });
   });
@@ -448,5 +449,93 @@ describe("probeAsoPopularitySession", () => {
 
     jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("");
     await expect(probeAsoPopularitySession()).resolves.toBe("rejected");
+  });
+});
+
+describe("per-storefront popularity", () => {
+  const ok = (items: Array<{ name: string; popularity: number | null }>) =>
+    ({ statusCode: 200, attempts: 1, data: { status: "success", data: items } }) as never;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(asoAuthService.getCookieHeader).mockReturnValue("cookie=value");
+    jest.mocked(getConfiguredAsoAdamId).mockReturnValue("1234567890");
+    __resetStorefrontPopularityRejectionsForTests();
+    delete process.env.ASO_POPULARITY_PER_STOREFRONT;
+  });
+
+  it("asks for the storefront's score and reports it as the source", async () => {
+    mockRequestPopularitiesWithKwsRetry.mockResolvedValueOnce(
+      ok([{ name: "a", popularity: 30 }, { name: "b", popularity: 20 }])
+    );
+
+    const result = await asoPopularityService.fetchKeywordPopularitiesWithFailures(
+      ["a", "b"],
+      { country: "gb" }
+    );
+
+    expect(mockRequestPopularitiesWithKwsRetry).toHaveBeenCalledTimes(1);
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls[0][3]).toEqual({
+      storefronts: ["GB"],
+    });
+    expect(result.popularities).toEqual({ a: 30, b: 20 });
+    expect(result.sourceByKeyword).toEqual({ a: "storefront", b: "storefront" });
+  });
+
+  it("falls back to account level for terms the storefront did not answer", async () => {
+    mockRequestPopularitiesWithKwsRetry
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: 30 }]))
+      .mockResolvedValueOnce(ok([{ name: "b", popularity: 12 }]));
+
+    const result = await asoPopularityService.fetchKeywordPopularitiesWithFailures(
+      ["a", "b"],
+      { country: "GB" }
+    );
+
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls[1][0]).toEqual(["b"]);
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls[1][3]).toEqual({
+      storefronts: [],
+    });
+    expect(result.popularities).toEqual({ a: 30, b: 12 });
+    expect(result.sourceByKeyword).toEqual({ a: "storefront", b: "account" });
+    expect(result.failedKeywords).toEqual([]);
+  });
+
+  it("falls back when Apple rejects the storefront request, and stops asking for a day", async () => {
+    mockRequestPopularitiesWithKwsRetry
+      .mockResolvedValueOnce({ statusCode: 400, attempts: 1, data: { status: "error" } } as never)
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: 30 }]))
+      .mockResolvedValueOnce(ok([{ name: "a", popularity: 31 }]));
+
+    const first = await asoPopularityService.fetchKeywordPopularitiesWithFailures(
+      ["a"],
+      { country: "GB" }
+    );
+    const second = await asoPopularityService.fetchKeywordPopularitiesWithFailures(
+      ["a"],
+      { country: "GB" }
+    );
+
+    expect(first).toMatchObject({ popularities: { a: 30 }, failedKeywords: [] });
+    expect(second.sourceByKeyword).toEqual({ a: "account" });
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls.map((call) => call[3])).toEqual([
+      { storefronts: ["GB"] },
+      { storefronts: [] },
+      { storefronts: [] },
+    ]);
+  });
+
+  it("uses account level only when switched off", async () => {
+    process.env.ASO_POPULARITY_PER_STOREFRONT = "0";
+    mockRequestPopularitiesWithKwsRetry.mockResolvedValueOnce(ok([{ name: "a", popularity: 30 }]));
+
+    const result = await asoPopularityService.fetchKeywordPopularitiesWithFailures(
+      ["a"],
+      { country: "GB" }
+    );
+
+    expect(mockRequestPopularitiesWithKwsRetry.mock.calls[0][3]).toEqual({ storefronts: [] });
+    expect(result.sourceByKeyword).toEqual({ a: "account" });
+    delete process.env.ASO_POPULARITY_PER_STOREFRONT;
   });
 });
