@@ -883,6 +883,9 @@ function handleApiAsoStorefrontsGet(res: http.ServerResponse): void {
       // Google Play countries (ASO_PLAY_COUNTRIES); separate so App Store
       // consumers iterating `storefronts` are unaffected.
       playCountries: listEnabledPlayCountries(),
+      // Only when Play is configured, so an App Store-only install keeps its
+      // shape; the dashboard shows its store toggle only when this is set.
+      ...(isPlayConfigured() ? { playAppId: ASO_ENV.playAppId } : {}),
     },
   });
 }

@@ -39,6 +39,18 @@ import { KeywordActionMenu } from "./components/keyword-action-menu";
 import { AddAppDialog } from "./components/add-app-dialog";
 import { AppActionMenu } from "./components/app-action-menu";
 import { ContextDeleteConfirm } from "./components/context-delete-confirm";
+import { MetricBar } from "./components/metric-bar";
+import { StoreToggle } from "./components/store-toggle";
+import { PlayKeywordsView } from "./components/play-keywords-view";
+import { BothStoresView } from "./components/both-stores-view";
+import {
+  readStoredPlayCountry,
+  readStoredStoreMode,
+  sharedCountries,
+  writeStoredPlayCountry,
+  writeStoredStoreMode,
+  type StoreMode,
+} from "./store-merge";
 import {
   DASHBOARD_FILTER_DEFAULTS,
   DASHBOARD_FILTER_OPTIONS,
@@ -463,31 +475,6 @@ function MoonIcon() {
   );
 }
 
-function MetricBar({
-  value,
-  tone,
-}: {
-  value: number | null;
-  tone: "popularity" | "difficulty";
-}) {
-  if (value == null) return <span className="metric-empty">-</span>;
-  const clamped = Math.max(0, Math.min(100, value));
-  // For popularity a low score is the weak one, for difficulty a high score is.
-  const severity = tone === "difficulty" ? clamped : 100 - clamped;
-  const band = severity >= 66 ? "high" : severity >= 33 ? "mid" : "low";
-  return (
-    <span className="metric">
-      <span className="metric-value">{Math.round(value)}</span>
-      <span className="metric-track">
-        <span
-          className={`metric-fill metric-fill--${band}`}
-          style={{ width: `${clamped}%` }}
-        />
-      </span>
-    </span>
-  );
-}
-
 function TopAppsCell({
   keyword,
   appIds,
@@ -556,8 +543,21 @@ function isSidebarSelectionControlTarget(target: EventTarget | null): boolean {
 }
 
 export function App() {
-  const { storefronts, country, setCountry, hasMultipleStorefronts } =
-    useStorefronts();
+  const {
+    storefronts,
+    country,
+    setCountry,
+    hasMultipleStorefronts,
+    playCountries,
+    playAppId,
+  } = useStorefronts();
+  const [storeMode, setStoreModeState] = useState<StoreMode>(() => readStoredStoreMode());
+  const [playCountryChoice, setPlayCountryChoice] = useState<string | null>(() =>
+    readStoredPlayCountry()
+  );
+  // Without Google Play on the server there is no toggle and the dashboard is
+  // the App Store one, whatever was remembered.
+  const activeStoreMode: StoreMode = playAppId ? storeMode : "ios";
   const { isDark, toggleTheme } = useTheme();
   const [apps, setApps] = useState<AppItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState(() => {
@@ -717,6 +717,7 @@ export function App() {
   } = useSelection({
     keywords,
     filteredRows,
+    enabled: activeStoreMode === "ios",
   });
   const {
     authModalOpen,
@@ -1658,6 +1659,8 @@ export function App() {
   );
 
   useEffect(() => {
+    // The store views own their own keyboard and clipboard handling.
+    if (activeStoreMode !== "ios") return;
     const isEditableTarget = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) return false;
       const element = target;
@@ -1739,7 +1742,7 @@ export function App() {
       document.removeEventListener("paste", onPaste);
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [filteredRows, onContextCopy, onContextDelete, selectedKeywords]);
+  }, [activeStoreMode, filteredRows, onContextCopy, onContextDelete, selectedKeywords]);
 
   const getContextSelection = useCallback(
     (rowKeyword: string): string[] => {
@@ -2969,6 +2972,34 @@ export function App() {
   const keywordCountLabelValue = keywordTotalCount;
   const showKeywordPagination = keywordTotalPages > 1;
   const keywordPageLabel = Math.min(keywordPage, keywordTotalPages);
+  const setStoreMode = (mode: StoreMode) => {
+    setStoreModeState(mode);
+    writeStoredStoreMode(mode);
+    if (mode !== "ios") {
+      setSelectedKeywords(new Set());
+      setSelectionAnchor(null);
+      setKeywordActionMenu(null);
+      setDeleteConfirmMenu(null);
+    }
+  };
+  const setPlayCountry = (next: string) => {
+    setPlayCountryChoice(next);
+    writeStoredPlayCountry(next);
+  };
+  const playCountry =
+    playCountries.find((entry) => entry.country === playCountryChoice)?.country ??
+    playCountries[0]?.country ??
+    "";
+  const bothCountries = sharedCountries(
+    storefronts.map((entry) => entry.country),
+    playCountries.map((entry) => entry.country)
+  ).map((code) => playCountries.find((entry) => entry.country === code)!);
+  const bothCountry =
+    bothCountries.find((entry) => entry.country === playCountryChoice)?.country ??
+    bothCountries.find((entry) => entry.country === country)?.country ??
+    bothCountries[0]?.country ??
+    "";
+
   return (
     <div id="app-shell" className="app-shell">
       <aside className="sidebar ui-card" aria-label="Apps">
@@ -3024,6 +3055,9 @@ export function App() {
               </Button>
             </div>
           </div>
+          {playAppId ? (
+            <StoreToggle value={activeStoreMode} onChange={setStoreMode} />
+          ) : null}
           <p className="sidebar-subtitle"></p>
           <div className="sidebar-actions">
             <div className="onboarding-target-slot">
@@ -3274,7 +3308,49 @@ export function App() {
         </div>
       </aside>
 
-      <main className="main">
+      {activeStoreMode === "android" && playAppId ? (
+        <main className="main" aria-label="Google Play keywords">
+          <PlayKeywordsView
+            country={playCountry}
+            countries={playCountries}
+            onCountryChange={setPlayCountry}
+            playAppId={playAppId}
+            displayLocale={displayLocale}
+          />
+        </main>
+      ) : null}
+      {activeStoreMode === "both" && playAppId ? (
+        <main className="main" aria-label="Keywords on both stores">
+          {bothCountry ? (
+            <BothStoresView
+              country={bothCountry}
+              countries={bothCountries}
+              onCountryChange={setPlayCountry}
+              iosAppId={selectedAppId}
+              iosAppName={selectedAppName}
+              iosHasRank={showRankingColumns}
+              playAppId={playAppId}
+              onIosKeywordsChanged={() => {
+                // Errors are reported by the request helper; the App Store
+                // view reloads again when it is next used.
+                void Promise.all([
+                  loadApps(),
+                  loadKeywords(selectedAppIdRef.current, keywordPage),
+                ]).catch(() => undefined);
+              }}
+            />
+          ) : (
+            <Card className="table-card">
+              <p className="empty">
+                No country is enabled on both stores (ASO_SUPPORTED_COUNTRIES and
+                ASO_PLAY_COUNTRIES).
+              </p>
+            </Card>
+          )}
+        </main>
+      ) : null}
+      {/* The App Store view stays mounted while hidden, so switching back keeps its state. */}
+      <main className="main" hidden={activeStoreMode !== "ios"}>
         <Card className="add-card">
           <form id="add-form" className="add-form" onSubmit={onAddKeywords}>
             <div className="onboarding-target-slot add-keywords-slot">

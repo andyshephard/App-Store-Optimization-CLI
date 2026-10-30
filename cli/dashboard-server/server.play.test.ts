@@ -226,6 +226,15 @@ describe("Google Play on the keyword API (platform=android)", () => {
     expect(response.body.data.items[0].topApps).toEqual([expect.objectContaining({ appId: OURS })]);
   });
 
+  it("names the Play package on /api/aso/storefronts only when Play is configured", async () => {
+    const unconfigured = await requestJson({ method: "GET", path: "/api/aso/storefronts" });
+    expect(unconfigured.body.data).not.toHaveProperty("playAppId");
+    process.env.ASO_PLAY_APP_ID = OURS;
+    const configured = await requestJson({ method: "GET", path: "/api/aso/storefronts" });
+    delete process.env.ASO_PLAY_APP_ID;
+    expect(configured.body.data.playAppId).toBe(OURS);
+  });
+
   it("keeps the App Store response when no platform is given", async () => {
     addPlayAppKeywords(OURS, ["chunks"], "US");
     observe("chunks", [OURS]);

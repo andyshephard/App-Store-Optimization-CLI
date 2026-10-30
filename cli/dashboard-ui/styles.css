@@ -3130,3 +3130,169 @@ td.updated-value {
   font-size: 11px;
   white-space: nowrap;
 }
+
+/* Store views: App Store | Google Play | Both (shown only when Play is configured). */
+.main[hidden] {
+  display: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.store-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.store-toggle-option {
+  border: 0;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 6px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.store-toggle-option + .store-toggle-option {
+  border-left: 1px solid var(--border);
+}
+
+.store-toggle-option:hover {
+  color: var(--foreground);
+}
+
+.store-toggle-option.active {
+  background: color-mix(in oklab, var(--primary) 18%, var(--card));
+  color: var(--foreground);
+  font-weight: 640;
+}
+
+.store-toggle-option:focus-visible,
+.store-track-button:focus-visible,
+.store-row-remove:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.store-add-slot {
+  display: grid;
+}
+
+.store-add-slot .store-add-input,
+#play-add-submit {
+  width: 100%;
+  font-size: 1rem;
+}
+
+#play-add-submit {
+  width: auto;
+  white-space: nowrap;
+}
+
+.store-toolbar {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  overflow: visible;
+}
+
+.store-app-id,
+.store-both-apps {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.store-both-apps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.store-filter {
+  flex: 0 1 220px;
+  min-width: 120px;
+}
+
+.store-table {
+  min-width: 860px;
+}
+
+.store-table.both-table {
+  min-width: 620px;
+}
+
+.store-table tbody tr {
+  cursor: default;
+}
+
+.play-popularity-rank {
+  color: var(--muted-foreground);
+}
+
+.store-rank,
+.store-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.play-failure {
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.store-not-tracked {
+  white-space: nowrap;
+}
+
+.store-not-tracked .metric-empty {
+  margin-right: 8px;
+}
+
+.store-track-button,
+.store-row-remove {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.store-track-button:hover:not(:disabled),
+.store-row-remove:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--primary) 55%, transparent);
+}
+
+.store-row-remove:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.store-track-button:disabled,
+.store-row-remove:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 640px) {
+  .store-filter {
+    flex: 1 1 100%;
+  }
+}

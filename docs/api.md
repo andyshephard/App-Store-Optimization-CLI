@@ -354,6 +354,8 @@ hardcoding the list.
 ```
 
 `playCountries` lists the enabled Google Play countries (`ASO_PLAY_COUNTRIES`).
+`playAppId` is the Play package (`ASO_PLAY_APP_ID`) and is present only when
+Play is configured; the dashboard shows its store toggle only then.
 
 ---
 

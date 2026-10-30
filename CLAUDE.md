@@ -301,6 +301,10 @@ table.
   ranking. This is not a bug.
 - Storefront picker appears only when more than one storefront is enabled, so a
   default install looks exactly like upstream.
+- **Store toggle** (App Store | Google Play | Both) appears only when
+  `ASO_PLAY_APP_ID` is set. The App Store `<main>` stays mounted (hidden) in the
+  other modes, and its clipboard/delete/select-all shortcuts are off there.
+  See `docs/google-play.md#dashboard`.
 
 ## Telemetry
 

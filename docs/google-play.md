@@ -223,6 +223,31 @@ directly. `keywordStatus` is `pending` until the first crawl, `failed` with a
 run; `GET /api/aso/health` carries `lastRun.play` (informational: Play never
 changes the health status).
 
+## Dashboard
+
+When `ASO_PLAY_APP_ID` is set (`playAppId` on `GET /api/aso/storefronts`), the
+sidebar header has a store toggle: **App Store | Google Play | Both**,
+remembered per browser. Without it the dashboard is the App Store one,
+unchanged.
+
+- **Google Play**: the tracked keywords for `ASO_PLAY_APP_ID` in a country from
+  `playCountries` - rank ("Not in top 30" when outside the list), change,
+  popularity as autocomplete letters and suggestion position, difficulty,
+  result layout and count, last updated, and the search failure code. Add
+  keywords with the form at the top; remove one with its row's × or the
+  right-click menu. Rank opens a 90-day chart from `position-history`
+  (`platform=android`); a day outside the top 30 is a gap in the line.
+- **Both**: one row per keyword (case and whitespace ignored) across both
+  stores for a country enabled on both, with App Store popularity and rank
+  (for the app selected in the sidebar) beside Play popularity and rank, all
+  sortable. A keyword tracked on one store only offers "Track on <store>":
+  App Store adds are deferred (`defer: true`, no Apple session needed; data
+  arrives with the next refresh), Play adds are crawled at once.
+
+The views read every row (pages of 500) and sort in the browser. Code:
+`cli/dashboard-ui/store-merge.ts` (merge and sort),
+`components/play-keywords-view.tsx`, `components/both-stores-view.tsx`.
+
 ## CLI and MCP
 
 ```bash

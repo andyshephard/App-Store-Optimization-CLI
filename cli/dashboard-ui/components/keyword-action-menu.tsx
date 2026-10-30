@@ -8,7 +8,8 @@ type KeywordActionMenuProps = {
    * the first is in flight dropped its keywords (upstream's known issue).
    */
   forceRefreshDisabled?: boolean;
-  onForceRefresh: () => void;
+  /** Omitted where there is no per-keyword refresh (Google Play). */
+  onForceRefresh?: () => void;
   onCopy: () => void;
   onDelete: () => void;
 };
@@ -21,15 +22,17 @@ export function KeywordActionMenu(props: KeywordActionMenuProps) {
       role="menu"
       aria-label="Keyword actions"
     >
-      <button
-        type="button"
-        className="keyword-action-item"
-        role="menuitem"
-        disabled={props.forceRefreshDisabled}
-        onClick={props.onForceRefresh}
-      >
-        Force Refresh
-      </button>
+      {props.onForceRefresh ? (
+        <button
+          type="button"
+          className="keyword-action-item"
+          role="menuitem"
+          disabled={props.forceRefreshDisabled}
+          onClick={props.onForceRefresh}
+        >
+          Force Refresh
+        </button>
+      ) : null}
       <button
         type="button"
         className="keyword-action-item"

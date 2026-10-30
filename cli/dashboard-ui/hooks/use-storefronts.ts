@@ -9,9 +9,19 @@ export type Storefront = {
   isDefault: boolean;
 };
 
+export type PlayCountryOption = {
+  country: string;
+  name: string;
+};
+
+const NO_PLAY_COUNTRIES: PlayCountryOption[] = [];
+
 type StorefrontsPayload = {
   storefronts: Storefront[];
   defaultCountry: string;
+  playCountries?: PlayCountryOption[];
+  /** Present only when the server has Google Play configured (ASO_PLAY_APP_ID). */
+  playAppId?: string;
 };
 
 function readStoredCountry(): string {
@@ -37,6 +47,8 @@ export function useStorefronts() {
   const [storefronts, setStorefronts] = useState<Storefront[]>([]);
   const [country, setCountryState] = useState<string>(() => readStoredCountry());
   const [storefrontsError, setStorefrontsError] = useState("");
+  const [playCountries, setPlayCountries] = useState<PlayCountryOption[]>([]);
+  const [playAppId, setPlayAppId] = useState<string | null>(null);
   const countryRef = useRef(country);
 
   useEffect(() => {
@@ -61,6 +73,8 @@ export function useStorefronts() {
         if (cancelled) return;
         const list = payload.storefronts ?? [];
         setStorefronts(list);
+        setPlayCountries(payload.playCountries ?? []);
+        setPlayAppId(payload.playAppId?.trim() || null);
         const fallback = payload.defaultCountry || DEFAULT_ASO_COUNTRY;
         if (!list.some((entry) => entry.country === countryRef.current)) {
           setCountry(list.length > 0 ? list[0].country : fallback);
@@ -93,5 +107,8 @@ export function useStorefronts() {
     setCountry,
     storefrontsError,
     hasMultipleStorefronts: storefronts.length > 1,
+    /** Google Play countries; empty unless the server has Play enabled. */
+    playCountries: playAppId ? playCountries : NO_PLAY_COUNTRIES,
+    playAppId,
   };
 }

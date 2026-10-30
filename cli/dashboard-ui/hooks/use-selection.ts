@@ -8,6 +8,8 @@ type KeywordRow = {
 type UseSelectionParams = {
   keywords: KeywordRow[];
   filteredRows: KeywordRow[];
+  /** False while another view is shown: Cmd/Ctrl+A then selects nothing here. */
+  enabled?: boolean;
 };
 
 export function useSelection(params: UseSelectionParams) {
@@ -20,7 +22,9 @@ export function useSelection(params: UseSelectionParams) {
     setSelectionAnchor((prev) => (prev && !keep.has(prev) ? null : prev));
   }, [params.keywords]);
 
+  const enabled = params.enabled !== false;
   useEffect(() => {
+    if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
@@ -33,7 +37,7 @@ export function useSelection(params: UseSelectionParams) {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [params.keywords]);
+  }, [enabled, params.keywords]);
 
   const onSelectRow = (
     rowKeyword: string,
