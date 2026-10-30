@@ -1,5 +1,6 @@
 /**
- * Per-host request limiter for every call to Apple.
+ * Per-host request limiter for every call to Apple, and to Google Play
+ * (host classes `playsearch` and `playsuggest`).
  *
  * Pacing used to come from fixed sleeps between batches and storefronts, so
  * the real request rate depended on Apple's latency and on how many keywords a
@@ -17,13 +18,21 @@
 
 import { logger } from "../utils/logger";
 
-export type AppleHostClass = "mzsearch" | "searchpage" | "lookup" | "popularity";
+export type AppleHostClass =
+  | "mzsearch"
+  | "searchpage"
+  | "lookup"
+  | "popularity"
+  | "playsearch"
+  | "playsuggest";
 
 export const APPLE_HOST_CLASSES: AppleHostClass[] = [
   "mzsearch",
   "searchpage",
   "lookup",
   "popularity",
+  "playsearch",
+  "playsuggest",
 ];
 
 /**
@@ -38,6 +47,10 @@ export const DEFAULT_RATE_PER_MIN: Record<AppleHostClass, number> = {
   searchpage: 15,
   lookup: 15,
   popularity: 4,
+  // Google Play: no measured limit yet, so start well below what a browser
+  // session does. The search page is ~1 MB, so it gets the lower cap.
+  playsearch: 20,
+  playsuggest: 30,
 };
 
 const RATE_ENV: Record<AppleHostClass, string> = {
@@ -45,6 +58,8 @@ const RATE_ENV: Record<AppleHostClass, string> = {
   searchpage: "ASO_RATE_SEARCHPAGE_PER_MIN",
   lookup: "ASO_RATE_LOOKUP_PER_MIN",
   popularity: "ASO_RATE_POPULARITY_PER_MIN",
+  playsearch: "ASO_RATE_PLAYSEARCH_PER_MIN",
+  playsuggest: "ASO_RATE_PLAYSUGGEST_PER_MIN",
 };
 
 /** How long a throttle keeps the rate halved before recovery starts. */
@@ -69,6 +84,11 @@ export function classifyAppleHost(url: string): AppleHostClass | null {
   if (host === "apps.apple.com") return "searchpage";
   if (host === "itunes.apple.com") return "lookup";
   if (host === "app-ads.apple.com") return "popularity";
+  if (host === "play.google.com") {
+    const pathname = new URL(url).pathname;
+    if (pathname.startsWith("/store/search")) return "playsearch";
+    if (pathname.startsWith("/_/PlayStoreUi/data/batchexecute")) return "playsuggest";
+  }
   return null;
 }
 
@@ -82,8 +102,14 @@ function readCap(hostClass: AppleHostClass): number {
 export function isThrottleStatus(hostClass: AppleHostClass, status: number): boolean {
   if (status === 429 || status === 503) return true;
   // apps.apple.com answers 403 when it throttles. On app-ads.apple.com 403 is
-  // usually an auth or business error, so it does not count there.
-  return status === 403 && hostClass !== "popularity";
+  // usually an auth or business error, so it does not count there; Google
+  // Play throttles with 429.
+  return (
+    status === 403 &&
+    hostClass !== "popularity" &&
+    hostClass !== "playsearch" &&
+    hostClass !== "playsuggest"
+  );
 }
 
 export type HostCounters = {

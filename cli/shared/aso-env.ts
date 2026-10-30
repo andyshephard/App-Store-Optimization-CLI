@@ -39,6 +39,7 @@ export const ASO_DEFAULTS = {
   ownedAppDocRefreshMaxAgeHours: 24,
   dashboardHost: DEFAULT_DASHBOARD_HOST,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
+  playCountries: ["US", "GB"] as readonly string[],
 } as const;
 
 export type AsoEnvConfig = {
@@ -126,6 +127,23 @@ export type AsoEnvConfig = {
   alertEmailFrom: string;
   /** Whether to open a browser at startup; never in a container. */
   openBrowser: boolean;
+  /**
+   * Google Play package tracked by default (ASO_PLAY_APP_ID), e.g.
+   * com.andyshephard.chunks. Null: Play commands need an explicit app id.
+   */
+  playAppId: string | null;
+  /**
+   * Google Play countries (ASO_PLAY_COUNTRIES, default US,GB). Only those in
+   * shared/play-countries.ts are used. Independent of ASO_SUPPORTED_COUNTRIES.
+   */
+  playCountries: string[];
+  /** Packages whose Play ranks are kept per keyword (ASO_PLAY_ROSTER_APP_IDS). */
+  playRosterAppIds: string[];
+  /**
+   * Crawl tracked Play keywords in the background refresh, after the App
+   * Store. ASO_PLAY_REFRESH=0 turns it off.
+   */
+  playRefreshEnabled: boolean;
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -199,6 +217,13 @@ function parseEnabled(raw: string | undefined): boolean {
 function parseDefaultOn(raw: string | undefined): boolean {
   if (raw == null) return true;
   return !["0", "false", "off", "no"].includes(raw.trim().toLowerCase());
+}
+
+function parseList(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function readAsoEnv(
@@ -321,6 +346,12 @@ function readAsoEnv(
         : env.ASO_OPEN_BROWSER === "1"
           ? true
           : isLoopbackDashboardHost(parseBindHost(env.ASO_DASHBOARD_HOST)),
+    playAppId: parseTrimmed(env.ASO_PLAY_APP_ID),
+    playCountries: env.ASO_PLAY_COUNTRIES
+      ? parseList(env.ASO_PLAY_COUNTRIES).map((c) => c.toUpperCase())
+      : [...ASO_DEFAULTS.playCountries],
+    playRosterAppIds: parseList(env.ASO_PLAY_ROSTER_APP_IDS),
+    playRefreshEnabled: parseDefaultOn(env.ASO_PLAY_REFRESH),
   };
 }
 

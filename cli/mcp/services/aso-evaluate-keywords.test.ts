@@ -297,4 +297,58 @@ describe("aso_evaluate_keywords service", () => {
       })
     );
   });
+
+  it("evaluates on Google Play with platform android, filtering by difficulty only", async () => {
+    mockRunAsoCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        items: [
+          {
+            keyword: "microlearning",
+            platform: "android",
+            popularity: null,
+            difficultyScore: 36,
+            autocompleteLetters: 6,
+            autocompleteRank: 3,
+            rank: 6,
+            appCount: 30,
+          },
+          { keyword: "history", platform: "android", popularity: null, difficultyScore: 90 },
+        ],
+        failedKeywords: [],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const result = await handleAsoEvaluateKeywords({
+      keywords: ["microlearning", "history"],
+      platform: "android",
+      country: "gb",
+    });
+
+    expect(mockRunAsoCommand).toHaveBeenCalledWith([
+      "keywords",
+      "microlearning,history",
+      "--stdout",
+      "--min-popularity",
+      "6",
+      "--max-difficulty",
+      "70",
+      "--platform",
+      "android",
+      "--country",
+      "GB",
+    ]);
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual([
+      {
+        keyword: "microlearning",
+        platform: "android",
+        difficulty: 36,
+        autocompleteLetters: 6,
+        autocompleteRank: 3,
+        rank: 6,
+        appCount: 30,
+      },
+    ]);
+  });
 });

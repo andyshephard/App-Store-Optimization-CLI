@@ -42,6 +42,7 @@ describe("AppleRateLimiter", () => {
   afterEach(() => {
     delete process.env.ASO_RATE_MZSEARCH_PER_MIN;
     delete process.env.ASO_RATE_LOOKUP_PER_MIN;
+    delete process.env.ASO_RATE_PLAYSEARCH_PER_MIN;
   });
 
   it("classifies Apple hosts", () => {
@@ -130,6 +131,40 @@ describe("AppleRateLimiter", () => {
     limiter.record("searchpage", 502);
     limiter.record("searchpage", 200);
     expect(limiter.counters().searchpage).toMatchObject({ status5xx: 1, throttles: 0 });
+  });
+  it("classifies Google Play search and suggest as their own hosts", () => {
+    expect(classifyAppleHost("https://play.google.com/store/search?q=x&c=apps")).toBe("playsearch");
+    expect(
+      classifyAppleHost("https://play.google.com/_/PlayStoreUi/data/batchexecute?rpcids=IJ4APc")
+    ).toBe("playsuggest");
+    expect(classifyAppleHost("https://play.google.com/store/apps/details?id=x")).toBeNull();
+  });
+
+  it("paces Google Play at conservative default caps, overridable from the environment", async () => {
+    expect(DEFAULT_RATE_PER_MIN.playsearch).toBe(20);
+    expect(DEFAULT_RATE_PER_MIN.playsuggest).toBe(30);
+    const { clock, sentAt } = fakeClock();
+    const limiter = new AppleRateLimiter(clock);
+    await Promise.all(Array.from({ length: 50 }, () => limiter.acquire("playsearch")));
+    expect(maxPerMinute([0, ...sentAt])).toBe(20);
+
+    process.env.ASO_RATE_PLAYSEARCH_PER_MIN = "5";
+    const second = fakeClock();
+    const slower = new AppleRateLimiter(second.clock);
+    await Promise.all(Array.from({ length: 12 }, () => slower.acquire("playsearch")));
+    expect(maxPerMinute([0, ...second.sentAt])).toBe(5);
+  });
+
+  it("halves Google Play on 429 but not on 403, and reports both hosts", () => {
+    const limiter = new AppleRateLimiter(fakeClock().clock);
+    limiter.record("playsuggest", 403);
+    expect(limiter.effectiveRate("playsuggest")).toBe(DEFAULT_RATE_PER_MIN.playsuggest);
+    limiter.record("playsearch", 429);
+    expect(limiter.effectiveRate("playsearch")).toBe(DEFAULT_RATE_PER_MIN.playsearch / 2);
+    expect(limiter.counters().playsearch).toMatchObject({ status429: 1, throttles: 1 });
+    expect(Object.keys(limiter.snapshot())).toEqual(
+      expect.arrayContaining(["playsearch", "playsuggest"])
+    );
   });
 });
 

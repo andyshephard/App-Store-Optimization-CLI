@@ -24,7 +24,7 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
  * on goes in a numbered step below so an existing database is upgraded
  * exactly once, in order.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
@@ -103,6 +103,75 @@ const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
       DROP INDEX IF EXISTS idx_app_keyword_position_history_lookup;
       CREATE INDEX IF NOT EXISTS idx_app_keyword_position_history_captured
         ON app_keyword_position_history(captured_at);
+    `,
+  },
+  {
+    // Google Play keyword tracking (cli/db/play-keywords.ts). Separate tables
+    // rather than a platform column on the App Store ones, so existing iOS
+    // rows, keys and queries are untouched. Same shapes as their App Store
+    // counterparts: associations, latest observation per keyword/country,
+    // autocomplete evidence, failures and daily positions.
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS play_app_keywords (
+        app_id TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        country TEXT NOT NULL,
+        is_favorite INTEGER NOT NULL DEFAULT 0,
+        previous_position INTEGER,
+        added_at TEXT,
+        PRIMARY KEY (app_id, keyword, country)
+      );
+      CREATE INDEX IF NOT EXISTS idx_play_app_keywords_country_keyword
+        ON play_app_keywords(country, keyword);
+
+      CREATE TABLE IF NOT EXISTS play_keywords (
+        country TEXT NOT NULL,
+        normalized_keyword TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        difficulty_score REAL,
+        difficulty_model_version TEXT,
+        result_count INTEGER NOT NULL,
+        rank_depth INTEGER NOT NULL,
+        layout TEXT NOT NULL,
+        ordered_app_ids TEXT NOT NULL,
+        top_apps_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (country, normalized_keyword)
+      );
+
+      CREATE TABLE IF NOT EXISTS play_keyword_autocomplete (
+        country TEXT NOT NULL,
+        normalized_keyword TEXT NOT NULL,
+        letters_needed INTEGER,
+        hint_rank INTEGER,
+        checked_at TEXT NOT NULL,
+        PRIMARY KEY (country, normalized_keyword)
+      );
+
+      CREATE TABLE IF NOT EXISTS play_keyword_failures (
+        country TEXT NOT NULL,
+        normalized_keyword TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status_code INTEGER,
+        attempts INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (country, normalized_keyword, stage)
+      );
+
+      CREATE TABLE IF NOT EXISTS play_keyword_position_history (
+        app_id TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        country TEXT NOT NULL,
+        position INTEGER,
+        captured_at TEXT NOT NULL,
+        PRIMARY KEY (app_id, keyword, country, captured_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_play_keyword_position_history_captured
+        ON play_keyword_position_history(captured_at);
     `,
   },
 ];

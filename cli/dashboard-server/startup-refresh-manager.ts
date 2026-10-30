@@ -1,4 +1,5 @@
 import type { StoredAppKeyword, StoredAsoKeyword } from "../db/types";
+import type { PlayRefreshCounters } from "../services/play/play-keyword-service";
 import { logger } from "../utils/logger";
 import { normalizeKeyword } from "../shared/aso-keyword-utils";
 import {
@@ -71,6 +72,8 @@ export type StartupRefreshCounters = {
   storefronts: StorefrontRefreshCounters[];
   /** Apple requests made during the run, per host; set when the run ends. */
   requests?: StartupRefreshRequestMetrics;
+  /** The Google Play phase, when one ran. Never affects the run's status. */
+  play?: PlayRefreshCounters;
 };
 
 /**
@@ -131,6 +134,16 @@ type StartupRefreshDeps = {
     options: { force: boolean; skipPopularity: boolean }
   ) => Promise<unknown>;
   recorder?: RefreshRunRecorder;
+  /**
+   * Google Play crawl, run after every App Store storefront is done so it can
+   * never delay or slow the App Store crawl. Soft: whatever it throws is
+   * reported and kept in counters.play, never in the run's status or lastError.
+   * Resolves null when it did nothing (nothing tracked, or already running).
+   */
+  refreshPlay?: (options: {
+    force: boolean;
+    isStopRequested: () => boolean;
+  }) => Promise<PlayRefreshCounters | null>;
   /** Called after every run, whatever the outcome. */
   onRunFinished?: (state: StartupRefreshState) => void;
   /** Storefronts refreshed at once (default 1). */
@@ -705,6 +718,27 @@ export function createStartupRefreshManager(
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
   };
 
+  const refreshPlayPhase = async (force: boolean): Promise<void> => {
+    if (!deps.refreshPlay || stopRequested) return;
+    try {
+      const play = await deps.refreshPlay({
+        force,
+        isStopRequested: () => stopRequested,
+      });
+      if (play) state.counters.play = play;
+    } catch (error) {
+      state.counters.play = {
+        eligibleKeywordCount: 0,
+        refreshedKeywordCount: 0,
+        failedKeywordCount: 0,
+        countries: [],
+        error: errorToMessage(error),
+      };
+      logger.warn(`[aso-refresh] play phase failed: ${errorToMessage(error)}`);
+      deps.reportError?.(error, { phase: "play-refresh" });
+    }
+  };
+
   let requestCountersAtStart: Record<string, RequestHostCounters> | null = null;
   let lookupCacheHitsAtStart: number | null = null;
   const readLookupCacheHitsSafely = (): number | null => {
@@ -790,6 +824,7 @@ export function createStartupRefreshManager(
     popularityUnavailable = false;
 
     await refreshKeywordsInBatches(force);
+    await refreshPlayPhase(force);
 
     const finalStatus: StartupRefreshStatus =
       state.requiresReauthentication || (!stopRequested && state.lastError)

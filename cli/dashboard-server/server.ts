@@ -97,6 +97,13 @@ import {
 } from "./dashboard-settings";
 import { createAsoRouteHandlers } from "./routes/aso-routes";
 import {
+  createPlayKeywordHandlers,
+  resolveRequestPlatform,
+} from "./routes/play-keyword-handlers";
+import { listPlayTrackedCountries } from "../db/play-keywords";
+import { refreshPlayKeywords } from "../services/play/play-keyword-service";
+import { listEnabledPlayCountries } from "../shared/play-countries";
+import {
   sendApiError,
   sendJson,
   parseJsonBody,
@@ -234,6 +241,16 @@ const startupRefreshManager = createStartupRefreshManager({
     withObservationRun(startupRefreshManager.getState().runId, () =>
       keywordPipelineService.refreshStartup(country, items, options)
     ),
+  // Google Play, after the App Store: only when something is tracked there.
+  refreshPlay: async ({ force, isStopRequested }) => {
+    if (!ASO_ENV.playRefreshEnabled) return null;
+    if (listPlayTrackedCountries().length === 0) return null;
+    return refreshPlayKeywords({
+      force,
+      isStopRequested,
+      isForegroundBusy: () => foregroundMutationCount > 0,
+    });
+  },
   isForegroundBusy: () => foregroundMutationCount > 0,
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
   storefrontConcurrency: ASO_ENV.storefrontConcurrency,
@@ -446,6 +463,9 @@ function collectHealthReport(): HealthReport {
         requests:
           (lastRunRow.counters as { requests?: HealthRunInput["requests"] } | null)
             ?.requests ?? null,
+        play:
+          (lastRunRow.counters as { play?: HealthRunInput["play"] } | null)
+            ?.play ?? null,
       }
     : null;
   const current = getStartupRefreshState();
@@ -848,6 +868,9 @@ function handleApiAsoStorefrontsGet(res: http.ServerResponse): void {
     data: {
       storefronts: listEnabledStorefronts(),
       defaultCountry: DEFAULT_ASO_COUNTRY,
+      // Google Play countries (ASO_PLAY_COUNTRIES); separate so App Store
+      // consumers iterating `storefronts` are unaffected.
+      playCountries: listEnabledPlayCountries(),
     },
   });
 }
@@ -1018,8 +1041,17 @@ async function handleApiAsoSetupRespondPost(
   }
   sendJson(res, 202, { success: true, data: getDashboardSetupState() });
 }
+/**
+ * Bodies already read by the router (to see their `platform`), handed to the
+ * App Store handlers instead of reading the stream a second time.
+ */
+const preParsedBodies = new WeakMap<http.IncomingMessage, unknown>();
+
 const asoRouteHandlers = createAsoRouteHandlers({
-  parseJsonBody,
+  parseJsonBody: <T>(req: http.IncomingMessage, res: http.ServerResponse) =>
+    preParsedBodies.has(req)
+      ? Promise.resolve(preParsedBodies.get(req) as T | null)
+      : parseJsonBody<T>(req, res),
   sendJson,
   sendApiError,
   reportDashboardError,
@@ -1029,6 +1061,30 @@ const asoRouteHandlers = createAsoRouteHandlers({
   isDashboardAuthInProgress: () => dashboardAuthStateManager.isInProgress(),
   isTruthyQueryParam,
 });
+
+const playKeywordHandlers = createPlayKeywordHandlers({
+  sendJson,
+  sendApiError,
+  isTruthyQueryParam,
+});
+
+/**
+ * Reads a JSON body once and returns it with the request's platform (query
+ * `platform`, else body `platform`, default "ios"). Null after responding.
+ */
+async function readBodyWithPlatform(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  query: Record<string, string>
+): Promise<{ body: Record<string, unknown>; platform: "ios" | "android" } | null> {
+  const body = await parseJsonBody<Record<string, unknown>>(req, res);
+  // A null body is answered (or not) by the App Store handler, as before.
+  if (body == null) return null;
+  const bodyPlatform = typeof body === "object" ? body.platform : undefined;
+  const platform = resolveRequestPlatform(res, query.platform ?? bodyPlatform, sendApiError);
+  if (!platform) return null;
+  return { body, platform };
+}
 
 export function createServerRequestHandler(): http.RequestListener {
   return async (req, res) => {
@@ -1172,6 +1228,12 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "GET" && pathname === "/api/aso/position-history") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayPositionHistoryGet(res, query);
+          return;
+        }
         handleApiAsoPositionHistoryGet(res, query);
         return;
       }
@@ -1179,6 +1241,12 @@ export function createServerRequestHandler(): http.RequestListener {
       // Autocomplete demand signal. POST starts a background refresh of
       // keywords not checked in 7 days (single-flight); GET returns results.
       if (req.method === "POST" && pathname === "/api/aso/autocomplete/refresh") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayAutocompleteRefreshPost(res, query);
+          return;
+        }
         const country = (query.country || "US").toUpperCase();
         const alreadyRunning = isAutocompleteRefreshRunning();
         if (!alreadyRunning) {
@@ -1197,6 +1265,12 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "GET" && pathname === "/api/aso/autocomplete") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayAutocompleteGet(res, query);
+          return;
+        }
         const country = (query.country || "US").toUpperCase();
         sendJson(res, 200, {
           success: true,
@@ -1239,6 +1313,12 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "POST" && pathname === "/api/aso/refresh/start") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayRefreshStartPost(res, query);
+          return;
+        }
         runAsForegroundMutationSync(() => {
           handleApiAsoRefreshStartPost(res, query);
         });
@@ -1281,6 +1361,12 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "GET" && pathname === "/api/aso/keywords") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayKeywordsGet(res, query);
+          return;
+        }
         asoRouteHandlers.handleApiAsoKeywordsGet(res, query);
         return;
       }
@@ -1314,6 +1400,15 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "POST" && pathname === "/api/aso/keywords") {
+        const parsed = await readBodyWithPlatform(req, res, query);
+        if (!parsed) return;
+        if (parsed.platform === "android") {
+          runAsForegroundMutationSync(() => {
+            playKeywordHandlers.handlePlayKeywordsPost(res, parsed.body);
+          });
+          return;
+        }
+        preParsedBodies.set(req, parsed.body);
         await runAsForegroundMutation(() =>
           asoRouteHandlers.handleApiAsoKeywordsPost(req, res)
         );
@@ -1345,6 +1440,15 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "DELETE" && pathname === "/api/aso/keywords") {
+        const parsed = await readBodyWithPlatform(req, res, query);
+        if (!parsed) return;
+        if (parsed.platform === "android") {
+          runAsForegroundMutationSync(() => {
+            playKeywordHandlers.handlePlayKeywordsDelete(res, parsed.body);
+          });
+          return;
+        }
+        preParsedBodies.set(req, parsed.body);
         await runAsForegroundMutation(() =>
           asoRouteHandlers.handleApiAsoKeywordsDelete(req, res)
         );

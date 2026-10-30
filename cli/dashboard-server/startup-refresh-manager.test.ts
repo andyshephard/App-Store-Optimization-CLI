@@ -1133,4 +1133,99 @@ describe("startup-refresh-manager", () => {
       expect(manager.getState().counters.requests?.lookupCacheHits).toBe(42);
     });
   });
+
+  describe("Google Play phase", () => {
+    const playCounters = {
+      eligibleKeywordCount: 2,
+      refreshedKeywordCount: 2,
+      failedKeywordCount: 0,
+      countries: [],
+    };
+
+    function managerWith(overrides: Partial<Parameters<typeof createStartupRefreshManager>[0]>) {
+      return createStartupRefreshManager({
+        country: "US",
+        listKeywords: () => [buildKeyword({ orderExpiresAt: "2000-01-01T00:00:00.000Z" })],
+        listAppKeywords: () => [buildAssociation({})],
+        listAssociatedAppIds: () => new Set(["app-1"]),
+        listOrderRelevantAppIds: () => new Set(["app-1"]),
+        enrichKeywords: async (_country, items) => items,
+        isForegroundBusy: () => false,
+        sleep: async () => {},
+        ...overrides,
+      });
+    }
+
+    it("runs after every App Store storefront and keeps its counters with the run", async () => {
+      const order: string[] = [];
+      const finished: Array<Record<string, unknown>> = [];
+      const manager = managerWith({
+        listRefreshCountries: () => ["US", "GB"],
+        enrichKeywords: async (country, items) => {
+          order.push(`ios:${country}`);
+          return items;
+        },
+        refreshPlay: async ({ force }) => {
+          order.push(`play:force=${force}`);
+          return playCounters;
+        },
+        recorder: {
+          start: () => 7,
+          saveStorefront: () => {},
+          finish: (_runId, state) => {
+            finished.push(state.counters as unknown as Record<string, unknown>);
+          },
+        },
+      });
+
+      manager.start({ force: true, trigger: "scheduled" });
+      await waitForManagerToFinish(manager);
+
+      expect(order).toEqual(["ios:US", "ios:GB", "play:force=true"]);
+      expect(manager.getState().status).toBe("completed");
+      expect(manager.getState().counters.play).toEqual(playCounters);
+      expect(finished[0].play).toEqual(playCounters);
+      // App Store accounting is unchanged by the Play phase.
+      expect(manager.getState().counters.storefronts.map((sf) => sf.country)).toEqual(["US", "GB"]);
+    });
+
+    it("never fails the run when the Play phase throws", async () => {
+      const errors: unknown[] = [];
+      const manager = managerWith({
+        refreshPlay: async () => {
+          throw new Error("play exploded");
+        },
+        reportError: (error) => errors.push(error),
+      });
+
+      manager.start({ force: true });
+      await waitForManagerToFinish(manager);
+
+      const state = manager.getState();
+      expect(state.status).toBe("completed");
+      expect(state.lastError).toBeNull();
+      expect(state.counters.play?.error).toBe("play exploded");
+      expect(errors).toHaveLength(1);
+    });
+
+    it("skips the Play phase when the run was stopped", async () => {
+      const refreshPlay = jest.fn(async () => playCounters);
+      let manager: ReturnType<typeof createStartupRefreshManager>;
+      manager = managerWith({
+        enrichKeywords: async (_country, items) => {
+          // After start() has returned, so the stop lands on a running run.
+          await Promise.resolve();
+          manager.stop();
+          return items;
+        },
+        refreshPlay,
+      });
+
+      manager.start({ force: true });
+      await waitForManagerToFinish(manager);
+
+      expect(manager.getState().status).toBe("stopped");
+      expect(refreshPlay).not.toHaveBeenCalled();
+    });
+  });
 });

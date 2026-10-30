@@ -52,6 +52,8 @@ export type HealthRunInput = {
     >;
     rates: Record<string, unknown> | null;
   } | null;
+  /** The run's Google Play phase (refresh_runs counters.play), if it had one. */
+  play?: Record<string, unknown> | null;
 };
 
 export type HealthInputs = {
@@ -135,6 +137,11 @@ export type HealthReport = {
     failuresByReason: Record<string, number>;
     /** Apple requests per host, 429/403/5xx and per-minute rate, and duration. */
     requests: HealthRunInput["requests"] | null;
+    /**
+     * Google Play counters for the run. Informational: Play failures never
+     * change the health status.
+     */
+    play: Record<string, unknown> | null;
   } | null;
   lastCompletedRunAt: string | null;
   currentRun: HealthInputs["currentRun"];
@@ -258,6 +265,7 @@ export function buildHealthReport(inputs: HealthInputs): HealthReport {
           popularityFailed,
           failuresByReason,
           requests: run.requests ?? null,
+          play: run.play ?? null,
         }
       : null,
     lastCompletedRunAt: inputs.lastFinishedRunAt,

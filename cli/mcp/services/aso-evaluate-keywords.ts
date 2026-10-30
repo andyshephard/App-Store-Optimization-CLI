@@ -59,6 +59,18 @@ export const asoEvaluateKeywordsInputSchema = z.object({
     .boolean()
     .optional()
     .describe("Alias for excludeExisting."),
+  platform: z
+    .enum(["ios", "android"])
+    .optional()
+    .describe(
+      "Store to evaluate on: ios (App Store, default) or android (Google Play). Google Play has no popularity score: its items carry autocompleteLetters/autocompleteRank as the demand signal, plus the app's rank, and minPopularity is not applied."
+    ),
+  country: z
+    .string()
+    .trim()
+    .length(2)
+    .optional()
+    .describe("Country code, e.g. US or GB. Defaults to US."),
 });
 
 export type AsoEvaluateKeywordsArgs = z.infer<typeof asoEvaluateKeywordsInputSchema>;
@@ -206,6 +218,13 @@ export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
   if (excludeExisting) {
     commandArgs.push("--exclude-existing");
   }
+  const isPlay = args.platform === "android";
+  if (isPlay) {
+    commandArgs.push("--platform", "android");
+  }
+  if (args.country) {
+    commandArgs.push("--country", args.country.toUpperCase());
+  }
 
   const commandResult = await runAsoCommand(commandArgs);
   if (commandResult.exitCode !== 0) {
@@ -265,6 +284,36 @@ export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
     return buildFailureResult(
       "ASO command succeeded but response format was not valid `{ items, failedKeywords }` payload."
     );
+  }
+
+  if (isPlay) {
+    const acceptedPlay = parsedItems.flatMap((raw) => {
+      const item = (raw ?? {}) as Record<string, unknown>;
+      const keyword = asString(item.keyword);
+      const difficulty = asNumber(item.difficultyScore);
+      if (keyword === "" || difficulty == null || difficulty > maxDifficulty) {
+        return [];
+      }
+      return [
+        {
+          keyword,
+          platform: "android",
+          difficulty,
+          autocompleteLetters: asNumber(item.autocompleteLetters),
+          autocompleteRank: asNumber(item.autocompleteRank),
+          rank: asNumber(item.rank),
+          appCount: asNumber(item.appCount),
+        },
+      ];
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(acceptedPlay, null, 2),
+        },
+      ],
+    };
   }
 
   const accepted = parsedItems

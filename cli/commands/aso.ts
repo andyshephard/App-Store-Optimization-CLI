@@ -27,6 +27,11 @@ import {
   normalizeKeyword,
   normalizeCountry,
 } from "../domain/keywords/policy";
+import {
+  collectKeywords,
+  runPlayKeywordsCommand,
+  runTrackCommand,
+} from "./play-commands";
 
 const AUTH_REAUTH_REQUIRED_ERROR_CODE = "ASO_AUTH_REAUTH_REQUIRED";
 const STDOUT_INTERACTIVE_AUTH_REQUIRED_MESSAGE =
@@ -183,18 +188,31 @@ async function runKeywordFetch(
 const asoCommand: CommandModule = {
   command: "$0 [subcommand] [terms]",
   describe:
-    "Open ASO dashboard (default), fetch ASO keyword metrics (`aso keywords`), discover keyword opportunities (`aso suggest`), reauthenticate (`aso auth`), or reset saved ASO auth state (`aso reset-credentials`). `aso keywords` supports optional popularity/difficulty filters and keyword association controls (default target app: research).",
+    "Open ASO dashboard (default), fetch ASO keyword metrics (`aso keywords`), discover keyword opportunities (`aso suggest`), track or untrack keywords without fetching (`aso track`, `aso untrack`), reauthenticate (`aso auth`), or reset saved ASO auth state (`aso reset-credentials`). `aso keywords` supports optional popularity/difficulty filters and keyword association controls (default target app: research). `--platform android` uses Google Play.",
   builder: (yargs) =>
     yargs
       .positional("subcommand", {
         type: "string",
-        choices: ["keywords", "suggest", "auth", "reset-credentials"],
+        choices: ["keywords", "suggest", "track", "untrack", "auth", "reset-credentials"],
         describe: "ASO subcommand",
       })
       .positional("terms", {
         type: "string",
         describe:
           'Comma-separated keywords for `keywords`, or seed terms describing the app niche for `suggest`, e.g. aso suggest "microlearning, daily learning"',
+      })
+      .option("platform", {
+        type: "string",
+        choices: ["ios", "android"],
+        default: "ios",
+        describe:
+          "Store for `keywords`, `track` and `untrack`: ios (App Store) or android (Google Play; countries from ASO_PLAY_COUNTRIES, app from --app-id or ASO_PLAY_APP_ID).",
+      })
+      .option("file", {
+        type: "string",
+        demandOption: false,
+        describe:
+          "For `track`/`untrack`: a file of keywords, one per line (# starts a comment).",
       })
       .option("genre", {
         type: "string",
@@ -216,7 +234,7 @@ const asoCommand: CommandModule = {
         type: "string",
         default: DEFAULT_ASO_COUNTRY,
         describe:
-          "Storefront country code. Must be enabled via ASO_SUPPORTED_COUNTRIES (defaults to US alone).",
+          "Storefront country code. Must be enabled via ASO_SUPPORTED_COUNTRIES (defaults to US alone); with --platform android, via ASO_PLAY_COUNTRIES. `track`/`untrack` take a comma-separated list.",
       })
       .option("stdout", {
         type: "boolean",
@@ -276,6 +294,47 @@ const asoCommand: CommandModule = {
 
     if (subcommand === "auth") {
       await asoAuthService.reAuthenticate();
+      return;
+    }
+
+    const platform = (argv.platform as "ios" | "android" | undefined) ?? "ios";
+    if (subcommand === "track" || subcommand === "untrack") {
+      runTrackCommand({
+        action: subcommand,
+        platform,
+        keywords: collectKeywords(
+          argv.terms as string | undefined,
+          argv.file as string | undefined
+        ),
+        countries: (argv.country as string | undefined) ?? DEFAULT_ASO_COUNTRY,
+        appId: argv["app-id"] as string | undefined,
+      });
+      return;
+    }
+    if (platform === "android") {
+      if (subcommand !== "keywords") {
+        throw new Error(
+          "--platform android is supported by `aso keywords`, `aso track` and `aso untrack`."
+        );
+      }
+      const playKeywords = keywordPipelineService.parseKeywords(
+        argv.terms as string | undefined
+      );
+      if (playKeywords.length === 0) {
+        throw new Error(
+          "`aso keywords` requires a comma-separated keyword argument."
+        );
+      }
+      if (playKeywords.length > ASO_MAX_KEYWORDS) {
+        throw new Error(ASO_MAX_KEYWORDS_PER_CALL_ERROR);
+      }
+      await runPlayKeywordsCommand({
+        keywords: playKeywords,
+        country: (argv.country as string | undefined) ?? DEFAULT_ASO_COUNTRY,
+        appId: argv["app-id"] as string | undefined,
+        associate: (argv.associate as boolean | undefined) !== false,
+        stdout,
+      });
       return;
     }
 
