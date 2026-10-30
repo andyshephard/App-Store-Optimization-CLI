@@ -130,6 +130,11 @@ the mistake this section exists to prevent.
 The main endpoint. Paged keywords for one app in one storefront, joined with
 this app's ranking position. Pure database read.
 
+Google Play: add `platform=android` (here and on `POST`/`DELETE
+/api/aso/keywords`, `position-history`, `autocomplete`, `autocomplete/refresh`
+and `refresh/start`). Without it, or with `platform=ios`, nothing below
+changes. Shapes in [google-play.md](google-play.md#api).
+
 | Parameter | Required | Default | Notes |
 |---|---|---|---|
 | `country` | yes | — | Must be enabled, else 400 |
@@ -345,8 +350,10 @@ Enabled storefronts. Pure read. Use it to drive a per-country loop rather than
 hardcoding the list.
 
 ```json
-{ "success": true, "data": { "storefronts": [ { "country": "US", "name": "United States", "isDefault": true }, { "country": "GB", "name": "United Kingdom", "isDefault": false } ], "defaultCountry": "US" } }
+{ "success": true, "data": { "storefronts": [ { "country": "US", "name": "United States", "isDefault": true }, { "country": "GB", "name": "United Kingdom", "isDefault": false } ], "defaultCountry": "US", "playCountries": [ { "country": "US", "name": "United States", "language": "en" }, { "country": "GB", "name": "United Kingdom", "language": "en" } ] } }
 ```
+
+`playCountries` lists the enabled Google Play countries (`ASO_PLAY_COUNTRIES`).
 
 ---
 

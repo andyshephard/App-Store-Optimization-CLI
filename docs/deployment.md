@@ -147,6 +147,8 @@ window carries more than the cap - whatever the concurrency settings.
 | `searchpage` | `apps.apple.com` (search page and app pages) | `ASO_RATE_SEARCHPAGE_PER_MIN` | 15 |
 | `lookup` | `itunes.apple.com/lookup` | `ASO_RATE_LOOKUP_PER_MIN` | 15 |
 | `popularity` | `app-ads.apple.com` | `ASO_RATE_POPULARITY_PER_MIN` | 4 |
+| `playsearch` | `play.google.com/store/search` (Google Play, [google-play.md](google-play.md)) | `ASO_RATE_PLAYSEARCH_PER_MIN` | 20 |
+| `playsuggest` | `play.google.com/_/PlayStoreUi/data/batchexecute` (Play suggestions) | `ASO_RATE_PLAYSUGGEST_PER_MIN` | 30 |
 
 **How the defaults were set (today's effective rate).** Before the limiter the
 only pacing was sleeps: a 15 s pause after each 25-keyword batch and 60 s

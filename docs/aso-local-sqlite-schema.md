@@ -334,6 +334,28 @@ two-year prune), `country`, `keyword` (normalized), `metric`
 `storefront_language`. Kept `ASO_OBSERVATIONS_RETENTION_DAYS` (default 90),
 pruned daily; ~1 MB a day per 1,000 tracked keywords.
 
+### Google Play tables (schema version 4)
+
+Separate from the App Store tables, which they mirror; see
+[google-play.md](google-play.md). App ids are package names.
+
+- `play_app_keywords`: `app_id`, `keyword` (normalized), `country`,
+  `is_favorite`, `previous_position` (rank before the latest crawl),
+  `added_at`. PK (`app_id`, `keyword`, `country`); index (`country`, `keyword`).
+- `play_keywords`: latest crawl per (`country`, `normalized_keyword`):
+  `keyword`, `difficulty_score`, `difficulty_model_version`, `result_count`,
+  `rank_depth`, `layout` (`list` | `top-card` | `empty`), `ordered_app_ids`
+  (JSON package list, <= 30), `top_apps_json` (title, developer, category,
+  installs, rating per result), `created_at`, `updated_at`.
+- `play_keyword_autocomplete`: (`country`, `normalized_keyword`) ->
+  `letters_needed`, `hint_rank`, `checked_at`, as `aso_keyword_autocomplete`.
+- `play_keyword_failures`: last failure per (`country`, `normalized_keyword`,
+  `stage`), stage `search` | `autocomplete`: `reason_code`, `message`,
+  `status_code`, `attempts`, `updated_at`. Cleared by the next success.
+- `play_keyword_position_history`: (`app_id`, `keyword`, `country`,
+  `captured_at`) -> `position` (null = outside the top 30). Tracked apps every
+  crawl, roster apps where they rank; 730 days kept; index on `captured_at`.
+
 ## Notes
 - New tables are added through numbered steps in `store.ts`
   (`VERSIONED_MIGRATIONS`), tracked in `PRAGMA user_version`. The older tables

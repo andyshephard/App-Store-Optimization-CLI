@@ -1,0 +1,253 @@
+# Google Play keyword tracking
+
+asocli tracks keywords on Google Play with its own fetchers. It uses no
+DataForSEO and no third-party API: it reads the same public pages a browser
+does, paced by the same per-host limiter as the App Store crawl.
+
+Code: `cli/services/play/` (fetchers, parsers, difficulty, crawl),
+`cli/db/play-keywords.ts` (storage), `cli/dashboard-server/routes/play-keyword-handlers.ts`
+(API), `cli/commands/play-commands.ts` (CLI).
+
+## What is measured
+
+Per keyword and country:
+
+| Field | Source | Notes |
+|---|---|---|
+| `rank` | Search page | Position of the app in the results, 1–30. `null` = not in the results Play shows. |
+| `resultCount` / `appCount` | Search page | How many results Play listed (at most 30). |
+| `rankDepth` | Search page | How deep the ranking was checked: equal to `resultCount`, which is the whole list. |
+| `orderedAppIds` | Search page | Package names in rank order. |
+| `topApps` | Search page | Title, developer, category, install band, rating per result (API: `includeTopApps=1`). |
+| `competitorRanks` | Search page | Rank of each roster package (`ASO_PLAY_ROSTER_APP_IDS`, plus `competitors=` on the request). |
+| `difficultyScore` | Top 10 results | 5–100, model `play-installs-v1` (below). |
+| `autocompleteLetters` / `autocompleteRank` | Play search suggestions | Fewest letters typed (from 2) before Play suggests the exact term, and its position (1–5). `null` = never suggested. |
+| `popularity` | — | Always `null`: Play publishes no search volume or popularity score. |
+
+### Limits
+
+- **Top 30 only.** Play's search page shows at most 30 results and has no next
+  page. A keyword where the app is not in those 30 is "not ranked", with
+  `rankDepth` saying how far was checked. Short lists (e.g. 11 results for
+  "audio stories") are the whole result set, not a parse failure.
+- **Popularity is an estimate from autocomplete, not a volume.** asocli stores
+  the raw autocomplete letters and position; it does not turn them into a 0–100
+  score (it does not for the App Store either). The middleware's App Store rule
+  (`30 − 3 × letters` when suggested within 5 letters, `asoSnapshotSync.js`)
+  can be applied to Play the same way.
+- **Difficulty is not calibrated.** The App Store model was fitted to Astro's
+  scores; there is no Play reference to fit to. Compare Play keywords with each
+  other, not with App Store difficulty.
+- **English-language countries only** (US, GB, AU, CA, NZ, IE). Install bands
+  and title matching assume English text.
+- Rank and difficulty are per country; autocomplete is per country too
+  (`gl`/`hl` on the request).
+
+## How it is fetched
+
+**Search:** `GET https://play.google.com/store/search?q=<term>&c=apps&hl=en&gl=<CC>`
+with a desktop Chrome user agent and `Accept-Language`. The page is
+server-rendered; its data sits in `AF_initDataCallback({key: 'ds:N', ..., data: <json>})`
+blocks. The results block (`ds:4`) holds `data[0][1]`, a list of sections:
+
+- **Organic list:** `section[22][0]`, one item per result; the app is `item[0]`
+  with package `[0][0]`, title `[3]`, rating `[4][1]`, category `[5]`, price
+  `[8]`, developer `[14]`, install band `[15]`. Its `section[3]` token (base64)
+  names the cluster `search_results_cluster_apps_range_<from>_<to>`, which the
+  parser checks against the item count.
+- **Top-result card** (seen for "stoic", "great people", "history timeline",
+  "storytelling"): a section with an app-details record at `section[23][16][2]`,
+  followed by the organic list as `range_1_<to>`. The card is rank 1. This is
+  why a fixed `data[0][1][0][22][0]` path returned 0 results for those terms in
+  the spike.
+- **No results:** a `zero_results_cluster` section and no list.
+
+Anything else — an app list without a range label (a "similar apps" style
+cluster) is left out of the ranking; a page with only such lists, a range that
+disagrees with its items, a top card after other results, or a page with no
+result sections — is a **contract failure**: `PlayContractError`
+(`PLAY_CONTRACT_CHANGED`), logged and reported like
+`reportAppleContractChange` (`reportPlayContractChange`, deduplicated hourly),
+recorded as the keyword's failure, and no ranks are written. Fixtures for each
+layout are in `cli/services/play/__fixtures__/`.
+
+**Autocomplete:** `POST https://play.google.com/_/PlayStoreUi/data/batchexecute?rpcids=IJ4APc&hl=en&gl=<CC>`
+with form body `f.req=[[["IJ4APc","[[null,[\"<prefix>\"],[10],[2],4]]"]]]`. The
+`[["wrb.fr","IJ4APc","<json>"...` line holds the payload; suggestions are at
+`[0][0][i][0]`. A prefix with no suggestions answers `[[null, ...]]`, which is
+an empty list, not an error. The letters measure is the App Store one
+(`measureAutocomplete`) reused as is, with prefixes shared between keywords.
+
+**Difficulty (`play-installs-v1`, `play-difficulty.ts`):** each top-10 app's
+strength = reach × quality × relevance, where reach is the install band on a log
+scale (100 → 0, 100M+ → 1), quality is the rating (0.8 unrated or ≤ 3.5 → 1.0 at
+5.0), and relevance is the title match (1.0 exact phrase, 0.85 all words, 0.7
+none). Strengths are sorted strongest first and weighted with the App Store
+ratings-mode weights; empty slots count as 0. Result: 5–100.
+
+## Rate limits
+
+Every Play request goes through `shared/apple-rate-limiter.ts` (now covering
+Play as two host classes), with the same AIMD guard: a 429 or 503 halves the
+rate for 30 minutes, then it recovers towards the cap. A 403 is not treated as
+a throttle on Play. Requests and errors per host appear in
+`lastRun.requests.byHost` and the health report's `rateLimits`.
+
+| Host class | Endpoint | Env var | Default |
+|---|---|---|---|
+| `playsearch` | `play.google.com/store/search` | `ASO_RATE_PLAYSEARCH_PER_MIN` | 20 |
+| `playsuggest` | `play.google.com/_/PlayStoreUi/data/batchexecute` | `ASO_RATE_PLAYSUGGEST_PER_MIN` | 30 |
+
+Retries and timeouts follow `ASO_RETRY_*` (transient statuses and network
+errors; 20 s search / 15 s suggest timeout).
+
+## Nightly refresh
+
+The background refresh crawls Play **after** every App Store storefront has
+finished, in the same run, so it never delays or slows the App Store crawl.
+
+- Runs only when `ASO_PLAY_REFRESH` is not `0` and at least one Play keyword is
+  tracked; countries from `ASO_PLAY_COUNTRIES`.
+- Scheduled runs are forced (every keyword re-crawled daily); manual runs
+  without `force` skip keywords crawled within `ASO_KEYWORD_ORDER_TTL_HOURS`.
+- Least recently crawled first, so a stopped run resumes where it stopped.
+- Failures are per keyword and soft: recorded in `play_keyword_failures`, the
+  stored observation kept. Ten failures in a row abandon that country for the
+  run. Nothing from the Play phase changes the run's status or `lastError`; a
+  failure of the whole phase is kept in `counters.play.error`.
+- Autocomplete: like the App Store check, each run re-measures about a seventh
+  of a country's keywords (oldest first), so each is checked weekly; newly
+  added keywords are measured at once.
+- Run accounting: `counters.play` on `GET /api/aso/refresh-status` and on the
+  run row (health `lastRun.play`): per country eligible / refreshed / failed /
+  skipped / abandoned / failure reasons / autocomplete checked.
+- A stop request stops the Play phase too, and a stopped App Store run skips it.
+
+Cost: about one search request per keyword and country per night (≈ 200 for
+~100 keywords in US and GB, ~10 minutes at 20/min) plus ~15 keywords' worth of
+autocomplete prefixes per country.
+
+## Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `ASO_PLAY_APP_ID` | unset | Package tracked by default, e.g. `com.andyshephard.chunks`. API and CLI fall back to it when no `appId` is given. |
+| `ASO_PLAY_COUNTRIES` | `US,GB` | Play countries crawled and accepted. Add `AU`, `CA`, `NZ`, `IE`. Independent of `ASO_SUPPORTED_COUNTRIES`. |
+| `ASO_PLAY_ROSTER_APP_IDS` | unset | Comma-separated competitor packages; their ranks are kept in history and returned as `competitorRanks`. |
+| `ASO_PLAY_REFRESH` | on | `0` leaves Play out of the background refresh. |
+| `ASO_RATE_PLAYSEARCH_PER_MIN` | 20 | See Rate limits. |
+| `ASO_RATE_PLAYSUGGEST_PER_MIN` | 30 | See Rate limits. |
+
+With nothing tracked on Play, behaviour is unchanged.
+
+## API
+
+All on the existing endpoints; add `platform=android` (query string, or
+`"platform": "android"` in a JSON body). Without it, or with `platform=ios`,
+every endpoint behaves and responds exactly as before. Any other value is a 400.
+Play countries are validated against `ASO_PLAY_COUNTRIES` (400
+`COUNTRY_NOT_ENABLED`).
+
+### `GET /api/aso/keywords?platform=android&country=US&appId=com.andyshephard.chunks`
+
+`appId` defaults to `ASO_PLAY_APP_ID`. Paging and envelope as for the App Store
+(`page`, `pageSize` ≤ 500, `keyword` filter; `sortBy` = `keyword` | `rank` |
+`difficulty` | `autocomplete` | `updatedAt`, `sortDir`). Also `includeTopApps=1`
+and `competitors=pkg1,pkg2`.
+
+```json
+{ "success": true, "data": {
+  "platform": "android",
+  "items": [ {
+    "platform": "android", "keyword": "microlearning", "normalizedKeyword": "microlearning",
+    "country": "US", "appId": "com.andyshephard.chunks",
+    "popularity": null, "autocompleteLetters": 6, "autocompleteRank": 3, "autocompleteCheckedAt": "…",
+    "difficultyScore": 36, "difficultyModelVersion": "play-installs-v1",
+    "isBrandKeyword": null, "appCount": 30, "resultCount": 30, "rankDepth": 30, "layout": "list",
+    "rank": 6, "previousRank": 7, "rankChange": -1,
+    "orderedAppIds": ["com.app.smartyme", "…"],
+    "competitorRanks": { "com.app.smartyme": 1 },
+    "isFavorite": false, "addedAt": "…", "updatedAt": "…",
+    "keywordStatus": "ok", "failure": null,
+    "positions": [ { "appId": "com.andyshephard.chunks", "previousPosition": 7, "currentPosition": 6 } ]
+  } ],
+  "page": 1, "pageSize": 100, "totalCount": 99, "totalPages": 1,
+  "hasPrevPage": false, "hasNextPage": false,
+  "associatedCount": 99, "failedCount": 0, "pendingCount": 0
+} }
+```
+
+The fields the middleware's `syncAsoSnapshots` reads for the App Store
+(`keyword`, `popularity`, `difficultyScore`, `appCount`, `country`,
+`isBrandKeyword`, `orderedAppIds`, and the rank as the app's index in
+`orderedAppIds` + 1) are all present with the same meaning; `rank` is also given
+directly. `keywordStatus` is `pending` until the first crawl, `failed` with a
+`failure` (`stage: "search"`, `reasonCode` e.g. `HTTP_429`,
+`PLAY_CONTRACT_CHANGED`) after a failed one — the last good data is kept.
+
+### Other endpoints
+
+| Endpoint | With `platform=android` |
+|---|---|
+| `POST /api/aso/keywords` | Body `{ platform, appId?, country, keywords, defer? }`. Tracks the keywords; unless `defer: true`, crawls the new ones in the background. `201 { platform, country, appId, addedCount, pendingCount, cachedCount: 0, failedCount: 0, deferred, refreshStarted }`. |
+| `DELETE /api/aso/keywords` | Body `{ platform, appId?, country, keywords }` → `{ platform, removedCount }`. Stored observations are kept. |
+| `GET /api/aso/position-history` | Daily rank per app/keyword/country from `play_keyword_position_history` (`since`, `appIds`, `limit` ≤ 5000, `offset`). Tracked apps get a point every crawl (`null` = outside the top 30); roster apps where they rank. |
+| `GET /api/aso/autocomplete` | `{ platform, country, running, items: [ { keyword, lettersNeeded, hintRank, checkedAt } ] }`. |
+| `POST /api/aso/autocomplete/refresh` | Re-measures the due seventh for `country` (202). |
+| `POST /api/aso/refresh/start` | Play-only crawl in the background (`force=1` to ignore freshness). |
+| `GET /api/aso/storefronts` | (no parameter) now also returns `playCountries`. |
+
+`GET /api/aso/refresh-status` carries `counters.play` for the current or last
+run; `GET /api/aso/health` carries `lastRun.play` (informational: Play never
+changes the health status).
+
+## CLI and MCP
+
+```bash
+# Live crawl (search + autocomplete), stored and associated with the app; JSON envelope like the App Store path.
+aso keywords "microlearning,chunks" --platform android --country US --app-id com.andyshephard.chunks --stdout
+
+# Track / untrack without crawling (the nightly refresh picks them up). Works for --platform ios too.
+aso track --platform android --file scripts/play/chunks-play-keywords.txt --country US,GB --app-id com.andyshephard.chunks
+aso untrack "old term" --platform android --country US,GB --app-id com.andyshephard.chunks
+```
+
+The MCP tool `aso_evaluate_keywords` takes `platform: "android"` (and an
+optional `country`); Play items are filtered by `maxDifficulty` only and carry
+`autocompleteLetters`, `autocompleteRank`, `rank` and `appCount`.
+
+## Seeding Chunks
+
+`scripts/play/chunks-play-keywords.txt` holds the 99 Chunks terms (the spike's
+94 plus the microlearning and brand terms). On a hosted asocli:
+
+```bash
+ASO_BASE_URL=https://keywords.chunks.app ASO_API_TOKEN=… \
+  scripts/play/seed-play-keywords.sh scripts/play/chunks-play-keywords.txt US,GB com.andyshephard.chunks
+```
+
+That posts with `defer: true`, so nothing is crawled until the next nightly
+refresh. Locally, use `aso track` as above.
+
+## Storage
+
+Schema version 4 adds five tables and changes none of the existing ones
+(`docs/aso-local-sqlite-schema.md`): `play_app_keywords` (associations),
+`play_keywords` (latest observation per country/keyword), `play_keyword_autocomplete`,
+`play_keyword_failures` (per stage: `search` / `autocomplete`) and
+`play_keyword_position_history` (730 days kept). The migration runs once on
+open; rolling back to an older build leaves the tables unused.
+
+## Validation
+
+A spike on 2026-10-30 crawled the Chunks terms in US and GB with these requests
+and compared the ranks with DataForSEO's Google Play SERP API for the same
+moment: **10 of 10 terms matched exactly** — same rank for Chunks and the same
+top 10 — at a DataForSEO cost of $0.03. The spike's fixed path
+(`data[0][1][0][22][0]`) returned 0 results wherever Play shows a top-result
+card ("stoic", "great people", "history timeline", "storytelling"); the
+section-based parser here reads those (the card is rank 1). The 10–13 results
+it found for "audio stories", "biography" and "marcus aurelius" were plain short
+lists when re-fetched in the US (`range_0_11` etc.): Play lists only that many. A live check of
+this implementation from a workstation the same day gave, in the US: chunks 1,
+microlearning 6, bite sized learning 8, free microlearning 10, micro learning 11.

@@ -265,6 +265,26 @@ there when onboarding a storefront with a new number format.
 Keyword-match detection still splits on spaces, so it suits Latin-script
 storefronts. CJK storefronts would need a different tokenizer.
 
+## Google Play
+
+Keywords can also be tracked on Google Play, per country (`ASO_PLAY_COUNTRIES`,
+default `US,GB`), with asocli's own fetchers: the Play search page for rank (top
+30 only), result count and difficulty, and Play's search suggestions for an
+autocomplete demand signal. Play has no popularity score, so `popularity` is
+`null` there; autocomplete letters/position are the estimate, not a volume.
+
+```bash
+aso keywords "microlearning" --platform android --country US --app-id com.example.app
+aso track --platform android --file keywords.txt --country US,GB --app-id com.example.app
+```
+
+The HTTP API takes `platform=android` on the same endpoints; without it every
+response is unchanged. Validated against DataForSEO's Play SERP (exact match on
+10 of 10 terms, 30 Oct 2026). Details, env vars (`ASO_PLAY_APP_ID`,
+`ASO_PLAY_COUNTRIES`, `ASO_PLAY_ROSTER_APP_IDS`, `ASO_PLAY_REFRESH`,
+`ASO_RATE_PLAYSEARCH_PER_MIN`, `ASO_RATE_PLAYSUGGEST_PER_MIN`) and limits:
+[docs/google-play.md](docs/google-play.md).
+
 ## Hosting
 
 The dashboard and its API can run on a server behind TLS, with a bearer token

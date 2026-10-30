@@ -235,6 +235,17 @@ Features added for the Chunks deployment; details in `docs/`:
 - **Rate-limit hardening:** host-wide throttle gate in `aso-apple-client.ts`,
   bounded localized fetches, 403 on app-lookup treated as throttle.
 
+## Google Play (2026-10-30)
+
+`docs/google-play.md`. Own fetchers in `cli/services/play/` (search page +
+`IJ4APc` suggestions), separate `play_*` tables (schema v4), `platform=android`
+on the existing endpoints (default stays iOS, responses unchanged), Play crawl
+runs after the App Store one in the same refresh and never affects its status.
+The search parser reads sections by their range label and throws
+`PlayContractError` rather than guess; fixtures in `cli/services/play/__fixtures__/`.
+Validated 10/10 against DataForSEO's Play ranks. Play has no popularity:
+`popularity` is null, autocomplete letters/position are stored raw.
+
 ## Apple Ads Platform API (popularity source)
 
 The official Apple Ads Platform API (`api.ads.apple.com/v1`, OAuth2, released

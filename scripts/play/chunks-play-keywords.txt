@@ -1,0 +1,103 @@
+# Google Play keywords tracked for Chunks (com.andyshephard.chunks) in US and GB.
+# The 94 terms from the 2026-10-30 Play spike, plus the microlearning and brand
+# terms. Seed with scripts/play/seed-play-keywords.sh (API) or
+#   aso track --platform android --file scripts/play/chunks-play-keywords.txt --country US,GB --app-id com.andyshephard.chunks
+american history
+ancient
+ancient egypt
+ancient greek
+ancient history
+ancient rome
+art history
+audio learning
+audio stories
+bedtime stories for adults
+biographies
+biography
+bite sized learning
+book summaries
+brain food
+british history
+chunks
+chunks app
+chunks history
+cold war
+curiosity
+daily facts
+daily history
+daily history app
+daily learning
+did you know
+educational audio
+educational podcasts
+fact of the day
+famous people
+free microlearning
+fun facts
+great people
+greek gods
+greek mythology
+historical figures
+history
+history app
+history audio stories
+history audiobook app
+history books
+history daily
+history facts
+history learning
+history lessons
+history podcast
+history podcast app
+history podcasts
+history stories
+history timeline
+inventors
+learn history
+learn something
+learn something new
+learning for adults
+marcus aurelius
+medieval
+micro learn
+micro learning
+micro learning free
+microlearning
+moon landing
+mythology
+mythology stories
+nonfiction
+norse mythology
+on this day
+philosophy
+philosophy learning
+psychology
+random facts
+roman empire
+science
+science stories
+short history lessons
+short podcasts
+short stories
+socrates
+space history
+stoic
+stoicism
+story podcast
+storytelling
+storytelling app
+this day in history
+titanic
+today in history
+true stories
+us history
+vikings
+world history
+world war 2
+ww1
+ww2
+microlearning app
+microlearning apps
+micro learning apps
+best free microlearning app
+bite sized learning app
