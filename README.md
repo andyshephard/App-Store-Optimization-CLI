@@ -272,6 +272,9 @@ default `US,GB`), with asocli's own fetchers: the Play search page for rank (top
 30 only), result count and difficulty, and Play's search suggestions for an
 autocomplete demand signal. Play has no popularity score, so `popularity` is
 `null` there; autocomplete letters/position are the estimate, not a volume.
+The suggestions those checks receive are kept too and listed, minus the tracked
+terms, by `GET /api/aso/play-suggestions?country=US`: new keyword
+ideas at no extra request.
 
 ```bash
 aso keywords "microlearning" --platform android --country US --app-id com.example.app

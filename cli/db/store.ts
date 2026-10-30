@@ -24,7 +24,7 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
  * on goes in a numbered step below so an existing database is upgraded
  * exactly once, in order.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
@@ -185,6 +185,28 @@ const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
         app_id TEXT PRIMARY KEY,
         added_at TEXT NOT NULL
       );
+    `,
+  },
+  {
+    // Google Play's autocomplete suggestions, kept from the prefixes the
+    // autocomplete check already asks (cli/db/play-suggestions.ts), so new
+    // keyword ideas cost no extra request. One row per country, prefix and
+    // suggestion: the prefix's latest answer, and the tracked keyword (seed)
+    // whose check asked it.
+    version: 6,
+    sql: `
+      CREATE TABLE IF NOT EXISTS play_keyword_suggestions (
+        country TEXT NOT NULL,
+        prefix TEXT NOT NULL,
+        suggestion TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        seed TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (country, prefix, suggestion)
+      );
+      CREATE INDEX IF NOT EXISTS idx_play_keyword_suggestions_seen
+        ON play_keyword_suggestions(country, last_seen_at);
     `,
   },
 ];

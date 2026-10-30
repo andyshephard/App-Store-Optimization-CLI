@@ -223,6 +223,54 @@ directly. `keywordStatus` is `pending` until the first crawl, `failed` with a
 run; `GET /api/aso/health` carries `lastRun.play` (informational: Play never
 changes the health status).
 
+## Suggestions
+
+The autocomplete check asks Play's suggestions for the prefixes of our tracked
+keywords ("mi", "mic", … until the keyword shows up). Every answer is kept in
+`play_keyword_suggestions` (schema v6), so the terms Play suggests can be
+offered as new keyword ideas (the middleware's Play gems) **without any extra
+request**: the same prefixes, asked by the same check, at the same pace.
+
+- Kept per country, prefix and suggested term: its position (1–5), the
+  tracked keyword (seed) whose check asked the prefix, and when it was first
+  and last seen. Each answer replaces the prefix's earlier one, so a term that
+  dropped out of a prefix's list is gone from that prefix.
+- The check re-measures about a seventh of the keywords each night, so the
+  whole set of prefixes is re-asked about once a week. A keyword suggested at
+  2 letters asks one prefix; one never suggested asks up to 20.
+- Storing never fails or changes the check: an error is logged and counted as
+  nothing stored. `counters.play.countries[].suggestionsStored` says how many
+  were kept in a run.
+- Rows not seen for 90 days are pruned by the nightly refresh.
+
+### `GET /api/aso/play-suggestions?country=US`
+
+One item per suggested term seen in the last `days` (default 14, 1–90),
+leaving out terms tracked on Play in that country (any app) unless
+`includeTracked=1`. Its own path, no `platform` parameter:
+`/api/aso/suggestions` is the App Store's Apple Ads keyword ideas, unchanged.
+The read token may call it (a database read only).
+
+```json
+{ "success": true, "data": {
+  "platform": "android", "country": "US", "days": 14, "since": "…", "totalCount": 120,
+  "items": [ {
+    "keyword": "micro learning courses", "country": "US",
+    "prefix": "micro", "letters": 5, "position": 2, "seed": "microlearning",
+    "prefixCount": 3, "firstSeenAt": "…", "lastSeenAt": "…", "tracked": false
+  } ]
+} }
+```
+
+`prefix`, `letters` and `position` are the term's shortest prefix and its
+position there (best position on a tie); `letters` counts the prefix's
+characters, as `autocompleteLetters` does. `seed` is the tracked keyword whose
+check asked that prefix, `prefixCount` how many asked prefixes suggested the
+term. `firstSeenAt` is the start of its current run of sightings: a term that
+drops out of a prefix's list and comes back starts again. Ordered by letters, then position. The terms are raw: other apps' names
+and unrelated words are common (prefix "mi" suggests "minecraft"); the
+middleware filters them.
+
 ## Competitors
 
 Competitors are the Play counterpart of the App Store's competitor apps: their
@@ -353,7 +401,9 @@ Schema version 4 adds five tables and changes none of the existing ones
 `play_keyword_failures` (per stage: `search` / `autocomplete`) and
 `play_keyword_position_history` (730 days kept). The migration runs once on
 open; rolling back to an older build leaves the tables unused. Schema version 5
-adds `play_competitor_apps` (package, `added_at`) the same way.
+adds `play_competitor_apps` (package, `added_at`) the same way, and version 6
+adds `play_keyword_suggestions` (see [Suggestions](#suggestions)), also
+without changing an existing table.
 
 ## Validation
 

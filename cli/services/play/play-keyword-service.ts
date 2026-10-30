@@ -18,6 +18,11 @@ import {
   type PlayKeywordObservation,
 } from "../../db/play-keywords";
 import { listPlayRosterAppIds } from "../../db/play-competitors";
+import {
+  PLAY_SUGGESTIONS_RETENTION_DAYS,
+  prunePlaySuggestions,
+  recordPlaySuggestions,
+} from "../../db/play-suggestions";
 import { fetchPlaySearch, fetchPlaySuggestions } from "./play-client";
 import { calculatePlayDifficulty, PLAY_DIFFICULTY_MODEL_VERSION } from "./play-difficulty";
 import { PlayContractError, type PlaySearchParseResult } from "./play-search-parser";
@@ -50,6 +55,8 @@ export type PlayCountryRefreshCounters = {
   autocompleteChecked: number;
   autocompleteSuggested: number;
   autocompleteFailed: number;
+  /** Suggestions kept from the check's prefixes (play_keyword_suggestions); no extra request. */
+  suggestionsStored: number;
   startedAt: string;
   finishedAt: string | null;
 };
@@ -239,6 +246,7 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
       autocompleteChecked: 0,
       autocompleteSuggested: 0,
       autocompleteFailed: 0,
+      suggestionsStored: 0,
       startedAt: now().toISOString(),
       finishedAt: null,
     };
@@ -300,13 +308,20 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
     }
     cc.finishedAt = now().toISOString();
     logger.info(
-      `[play-refresh] country=${country} eligible=${cc.eligible} refreshed=${cc.refreshed} failed=${cc.failed} skipped=${cc.skipped} abandoned=${cc.abandoned} autocomplete=${cc.autocompleteChecked}/${cc.autocompleteSuggested} reasons=${JSON.stringify(cc.failureReasons)}`
+      `[play-refresh] country=${country} eligible=${cc.eligible} refreshed=${cc.refreshed} failed=${cc.failed} skipped=${cc.skipped} abandoned=${cc.abandoned} autocomplete=${cc.autocompleteChecked}/${cc.autocompleteSuggested} suggestions=${cc.suggestionsStored} reasons=${JSON.stringify(cc.failureReasons)}`
     );
   }
 
   prunePlayPositionHistory(
     new Date(now().getTime() - PLAY_POSITION_HISTORY_RETENTION_DAYS * DAY_MS).toISOString()
   );
+  try {
+    prunePlaySuggestions(
+      new Date(now().getTime() - PLAY_SUGGESTIONS_RETENTION_DAYS * DAY_MS).toISOString()
+    );
+  } catch (error) {
+    logger.warn(`[play-refresh] suggestions not pruned: ${messageOf(error)}`);
+  }
   return counters;
 }
 
@@ -334,12 +349,28 @@ async function refreshPlayAutocompleteForCountry(
     .filter((keyword) => !options.keywords || options.keywords.includes(keyword))
     .slice(0, limit);
   // The limiter paces the requests; this only shares prefixes between keywords.
+  // Every prefix's answer is also kept as suggestions (keepPlaySuggestions):
+  // the same requests, none added.
+  const suggest = options.suggest ?? fetchPlaySuggestions;
+  let seed = "";
   const fetcher = createPacedHintFetcher({
     delayMs: 0,
-    fetch: options.suggest ?? fetchPlaySuggestions,
+    fetch: async (prefix, requestCountry) => {
+      const askedFor = seed;
+      const list = await suggest(prefix, requestCountry);
+      cc.suggestionsStored += keepPlaySuggestions({
+        country: requestCountry,
+        prefix,
+        seed: askedFor,
+        suggestions: list,
+        seenAt: options.now().toISOString(),
+      });
+      return list;
+    },
   });
   for (const keyword of due) {
     if (options.isStopRequested()) break;
+    seed = keyword;
     try {
       const result = await measurePlayAutocomplete(keyword, country, fetcher.hints);
       upsertPlayKeywordAutocomplete({
@@ -368,6 +399,20 @@ async function refreshPlayAutocompleteForCountry(
 }
 
 /**
+ * Stores a prefix's suggestions. Never throws: keeping suggestions must not
+ * fail or change the autocomplete check, so a store error is logged and
+ * counted as nothing stored.
+ */
+function keepPlaySuggestions(params: Parameters<typeof recordPlaySuggestions>[0]): number {
+  try {
+    return recordPlaySuggestions(params);
+  } catch (error) {
+    logger.warn(`[play-suggestions] ${params.country} "${params.prefix}" not stored: ${messageOf(error)}`);
+    return 0;
+  }
+}
+
+/**
  * Only the autocomplete check for one country (the weekly seventh), outside a
  * refresh. Shares the single-flight guard with refreshPlayKeywords; null when
  * a Play crawl is already running.
@@ -391,6 +436,7 @@ export async function refreshPlayAutocomplete(
       autocompleteChecked: 0,
       autocompleteSuggested: 0,
       autocompleteFailed: 0,
+      suggestionsStored: 0,
       startedAt: now().toISOString(),
       finishedAt: null,
     };

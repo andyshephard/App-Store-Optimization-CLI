@@ -20,6 +20,7 @@ export const READ_TOKEN_PATHS = new Set([
   "/api/aso/keywords",
   "/api/aso/position-history",
   "/api/aso/autocomplete",
+  "/api/aso/play-suggestions",
   "/api/aso/refresh-status",
   "/api/aso/health",
   "/api/aso/v1/observations",

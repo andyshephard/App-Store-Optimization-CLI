@@ -12,6 +12,7 @@ import {
   savePlayKeywordObservation,
 } from "../db/play-keywords";
 import { listPlayCompetitorApps } from "../db/play-competitors";
+import { recordPlaySuggestions } from "../db/play-suggestions";
 import { upsertOwnedApps } from "../db/owned-apps";
 import { refreshPlayKeywords } from "../services/play/play-keyword-service";
 import { createServerRequestHandler } from "./server";
@@ -354,6 +355,58 @@ describe("Google Play on the keyword API (platform=android)", () => {
     const storefronts = await requestJson({ method: "GET", path: "/api/aso/storefronts" });
     expect(storefronts.body.data.playCountries.map((c: any) => c.country)).toEqual(["US", "GB"]);
   });
+  it("serves Play suggestions not already tracked on their own path", async () => {
+    addPlayAppKeywords(OURS, ["microlearning"], "US");
+    const seenAt = new Date().toISOString();
+    recordPlaySuggestions({
+      country: "US",
+      prefix: "microl",
+      seed: "microlearning",
+      suggestions: ["microlife blood pressure app", "microlearning", "microlab"],
+      seenAt,
+    });
+
+    const ideas = await requestJson({ method: "GET", path: "/api/aso/play-suggestions?country=US" });
+    expect(ideas.statusCode).toBe(200);
+    expect(ideas.body.data).toMatchObject({ platform: "android", country: "US", days: 14, totalCount: 2 });
+    expect(ideas.body.data.items).toEqual([
+      {
+        keyword: "microlife blood pressure app",
+        country: "US",
+        prefix: "microl",
+        letters: 6,
+        position: 1,
+        seed: "microlearning",
+        prefixCount: 1,
+        firstSeenAt: seenAt,
+        lastSeenAt: seenAt,
+        tracked: false,
+      },
+      expect.objectContaining({ keyword: "microlab", position: 3 }),
+    ]);
+
+    const all = await requestJson({
+      method: "GET",
+      path: "/api/aso/play-suggestions?country=US&includeTracked=1&days=500",
+    });
+    expect(all.body.data.days).toBe(90);
+    expect(all.body.data.items.map((i: any) => [i.keyword, i.tracked])).toEqual([
+      ["microlife blood pressure app", false],
+      ["microlearning", true],
+      ["microlab", false],
+    ]);
+
+    const gb = await requestJson({ method: "GET", path: "/api/aso/play-suggestions?country=GB" });
+    expect(gb.body.data.items).toEqual([]);
+
+    const notEnabled = await requestJson({ method: "GET", path: "/api/aso/play-suggestions?country=DE" });
+    expect([notEnabled.statusCode, notEnabled.body.errorCode]).toEqual([400, "COUNTRY_NOT_ENABLED"]);
+
+    // The App Store's keyword ideas keep their own path and handler.
+    const appStore = await requestJson({ method: "GET", path: "/api/aso/suggestions?country=US" });
+    expect(appStore.body.errorCode).toBe("ADS_API_NOT_CONFIGURED");
+  });
+
   describe("Play apps on /api/apps (platform=android)", () => {
     const top = (appId: string, title: string, iconUrl?: string | null) => ({
       appId,

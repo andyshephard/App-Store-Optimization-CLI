@@ -1321,6 +1321,13 @@ export function createServerRequestHandler(): http.RequestListener {
         return;
       }
 
+      // Google Play's stored autocomplete suggestions (a database read). Its own
+      // path: /api/aso/suggestions is the App Store's Apple Ads keyword ideas.
+      if (req.method === "GET" && pathname === "/api/aso/play-suggestions") {
+        playKeywordHandlers.handlePlaySuggestionsGet(res, query);
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/aso/storefronts") {
         handleApiAsoStorefrontsGet(res);
         return;

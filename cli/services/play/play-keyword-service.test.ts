@@ -14,8 +14,11 @@ import {
 import { addPlayCompetitorApp, removePlayCompetitorApp } from "../../db/play-competitors";
 import { listKeywords } from "../../db/aso-keywords";
 import { listAllAppKeywords } from "../../db/app-keywords";
+import * as playSuggestionsDb from "../../db/play-suggestions";
+import { listPlaySuggestions } from "../../db/play-suggestions";
 import { refreshPlayKeywords, refreshPlayKeywordsForRun } from "./play-keyword-service";
 import { PlayContractError, type PlaySearchApp, type PlaySearchParseResult } from "./play-search-parser";
+import { parsePlaySuggestResponse } from "./play-suggest-parser";
 
 jest.mock("../telemetry/error-reporter", () => ({ reportBugsnagError: jest.fn() }));
 
@@ -118,6 +121,78 @@ describe("refreshPlayKeywords", () => {
     // Nothing written to the App Store tables.
     expect(listKeywords("US")).toEqual([]);
     expect(listAllAppKeywords("US")).toEqual([]);
+  });
+
+  describe("suggestions from the autocomplete check", () => {
+    // Real IJ4APc answers (__fixtures__/play-suggest-<prefix>.txt) for "mi" and
+    // "microl"; every other prefix answers one generic term.
+    const fixtureSuggest = (prefix: string): string[] => {
+      const file = path.join(__dirname, "__fixtures__", `play-suggest-${prefix}.txt`);
+      return fs.existsSync(file) ? parsePlaySuggestResponse(fs.readFileSync(file, "utf8"), prefix) : ["microsoft teams"];
+    };
+
+    it("keeps every prefix's answer without an extra request, leaving tracked terms out", async () => {
+      addPlayAppKeywords(OURS, ["microlearning"], "US");
+      const suggest = jest.fn(async (prefix: string) => fixtureSuggest(prefix));
+      const counters = await refreshPlayKeywords({
+        search: async () => results([OURS]),
+        suggest,
+        force: true,
+        countries: ["US"],
+        now: () => new Date("2026-10-30T03:00:00.000Z"),
+      });
+
+      // mi, mic, micr, micro, microl: the measure's own prefixes, each asked once.
+      expect(suggest.mock.calls.map((call) => call[0])).toEqual(["mi", "mic", "micr", "micro", "microl"]);
+      expect(listPlayKeywordAutocomplete("US")).toEqual([
+        expect.objectContaining({ keyword: "microlearning", lettersNeeded: 6, hintRank: 3 }),
+      ]);
+      const ideas = listPlaySuggestions({ country: "US", since: "2026-10-01" });
+      expect(ideas[0]).toEqual({
+        keyword: "minecraft",
+        country: "US",
+        prefix: "mi",
+        letters: 2,
+        position: 1,
+        seed: "microlearning",
+        prefixCount: 1,
+        firstSeenAt: "2026-10-30T03:00:00.000Z",
+        lastSeenAt: "2026-10-30T03:00:00.000Z",
+        tracked: false,
+      });
+      expect(ideas.find((s) => s.keyword === "microsoft teams")).toMatchObject({ prefixCount: 4 });
+      expect(ideas.find((s) => s.keyword === "microlab")).toMatchObject({ prefix: "microl", letters: 6, position: 4 });
+      expect(ideas.some((s) => s.keyword === "microlearning")).toBe(false);
+      expect(counters?.countries[0].suggestionsStored).toBe(
+        suggest.mock.calls.reduce((n, call) => n + fixtureSuggest(call[0]).length, 0)
+      );
+    });
+
+    it("never fails or changes the check when a suggestion can't be stored", async () => {
+      addPlayAppKeywords(OURS, ["microlearning"], "US");
+      const spy = jest.spyOn(playSuggestionsDb, "recordPlaySuggestions").mockImplementation(() => {
+        throw new Error("disk full");
+      });
+      try {
+        const counters = await refreshPlayKeywords({
+          search: async () => results([OURS]),
+          suggest: async (prefix: string) => fixtureSuggest(prefix),
+          force: true,
+          countries: ["US"],
+        });
+        expect(counters?.countries[0]).toMatchObject({
+          autocompleteChecked: 1,
+          autocompleteSuggested: 1,
+          autocompleteFailed: 0,
+          suggestionsStored: 0,
+        });
+        expect(listPlayKeywordAutocomplete("US")).toEqual([
+          expect.objectContaining({ keyword: "microlearning", lettersNeeded: 6, hintRank: 3 }),
+        ]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   it("records history for competitors added from the dashboard, from their next crawl", async () => {

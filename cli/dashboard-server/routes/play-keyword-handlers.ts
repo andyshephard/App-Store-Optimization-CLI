@@ -17,6 +17,11 @@ import {
   type PlayKeywordListRow,
 } from "../../db/play-keywords";
 import {
+  listPlaySuggestions,
+  PLAY_SUGGESTIONS_DEFAULT_DAYS,
+  PLAY_SUGGESTIONS_MAX_DAYS,
+} from "../../db/play-suggestions";
+import {
   addPlayCompetitorApp,
   listPlayAppDetails,
   listPlayCompetitorApps,
@@ -333,6 +338,28 @@ export function createPlayKeywordHandlers(deps: Deps) {
     });
   }
 
+  /**
+   * GET /api/aso/play-suggestions?country=US[&days=14][&includeTracked=1]:
+   * the terms Play suggested for the prefixes of our tracked keywords in the
+   * last `days` (1-90), from the autocomplete check's own requests. Tracked
+   * terms are left out unless includeTracked. A database read only.
+   */
+  function handlePlaySuggestionsGet(res: http.ServerResponse, query: Record<string, string>): void {
+    const country = resolvePlayCountry(res, query.country);
+    if (!country) return;
+    const days = toBoundedInteger(query.days, PLAY_SUGGESTIONS_DEFAULT_DAYS, 1, PLAY_SUGGESTIONS_MAX_DAYS);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const items = listPlaySuggestions({
+      country,
+      since,
+      includeTracked: deps.isTruthyQueryParam(query.includeTracked),
+    });
+    deps.sendJson(res, 200, {
+      success: true,
+      data: { platform: "android", country, days, since, totalCount: items.length, items },
+    });
+  }
+
   /** POST /api/aso/autocomplete/refresh?platform=android */
   function handlePlayAutocompleteRefreshPost(
     res: http.ServerResponse,
@@ -507,6 +534,7 @@ export function createPlayKeywordHandlers(deps: Deps) {
     handlePlayKeywordsPost,
     handlePlayKeywordsDelete,
     handlePlayAutocompleteGet,
+    handlePlaySuggestionsGet,
     handlePlayAutocompleteRefreshPost,
     handlePlayRefreshStartPost,
     handlePlayPositionHistoryGet,

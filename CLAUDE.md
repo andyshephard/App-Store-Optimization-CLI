@@ -249,6 +249,11 @@ Competitors (`play_competitor_apps`, schema v5, plus `ASO_PLAY_ROSTER_APP_IDS`)
 are ranked from the stored top 30 of our keywords, so they cost no requests;
 `/api/apps?platform=android` manages them and the dashboard lists them in the
 sidebar (google-play.md#competitors).
+Play's suggestions for the prefixes the autocomplete check already asks are kept
+in `play_keyword_suggestions` (schema v6, zero extra requests, storing never
+fails the check) and served read-only by
+`GET /api/aso/play-suggestions?country=US` without the tracked
+terms: the middleware's Play gems (google-play.md#suggestions).
 
 ## Apple Ads Platform API (popularity source)
 

@@ -359,6 +359,12 @@ Separate from the App Store tables, which they mirror; see
   `added_at`. Competitors added from the dashboard or `POST /api/apps` with
   `platform=android`; with `ASO_PLAY_ROSTER_APP_IDS` they make up the Play
   roster. Names and icons come from `play_keywords.top_apps_json`.
+- `play_keyword_suggestions` (schema version 6): (`country`, `prefix`,
+  `suggestion`) -> `position` (1-5), `seed` (the tracked keyword whose
+  autocomplete check asked the prefix), `first_seen_at`, `last_seen_at`. The
+  prefix's latest answer (terms that dropped out are deleted when the prefix
+  is asked again); index (`country`, `last_seen_at`); rows unseen for 90 days
+  pruned nightly. Read by `GET /api/aso/play-suggestions`.
 
 ## Notes
 - New tables are added through numbered steps in `store.ts`
