@@ -23,6 +23,11 @@
  * failure.
  */
 
+import { PACKAGE_ID } from "../../domain/play-package";
+
+/** A Play package name (e.g. com.andyshephard.chunks). */
+export { PACKAGE_ID };
+
 export const PLAY_MAX_RESULTS = 30;
 
 export type PlaySearchApp = {
@@ -38,6 +43,8 @@ export type PlaySearchApp = {
   ratingCount: number | null;
   free: boolean | null;
   isTopCard: boolean;
+  /** Icon on play-lh.googleusercontent.com; null when the page has none. */
+  iconUrl: string | null;
 };
 
 export type PlaySearchLayout = "list" | "top-card" | "empty";
@@ -64,8 +71,6 @@ export class PlayContractError extends Error {
 /** Longest keyword accepted for Play tracking. */
 export const PLAY_MAX_KEYWORD_LENGTH = 100;
 
-/** A Play package name (e.g. com.andyshephard.chunks). */
-export const PACKAGE_ID = /^[A-Za-z][\w]*(\.[\w]+)+$/;
 const RANGE_LABEL = /search_results_cluster_apps_range_(\d+)_(\d+)/;
 const TOP_CARD_LABEL = /apps_mdp_search_results_cluster_([A-Za-z][\w.]*)/;
 const ZERO_LABEL = /zero_results_cluster/;
@@ -98,6 +103,13 @@ function at(value: unknown, ...path: number[]): unknown {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+const ICON_URL = /^https:\/\/play-lh\.googleusercontent\.com\//;
+
+/** An https Play icon URL, or null: it ends up in an <img src> on the dashboard. */
+function asIconUrl(value: unknown): string | null {
+  return typeof value === "string" && ICON_URL.test(value) ? value : null;
 }
 
 function asNumber(value: unknown): number | null {
@@ -155,6 +167,7 @@ function parseOrganicItem(item: unknown, keyword: string): PlaySearchApp {
     ratingCount: null,
     free: priceMicros == null ? null : priceMicros === 0,
     isTopCard: false,
+    iconUrl: asIconUrl(at(app, 1, 3, 2)),
   };
 }
 
@@ -181,6 +194,7 @@ function parseTopCard(details: unknown[], labelAppId: string | null, keyword: st
     ratingCount: asNumber(at(details, 51, 2, 1)),
     free: priceMicros == null ? null : priceMicros === 0,
     isTopCard: true,
+    iconUrl: asIconUrl(at(details, 95, 0, 3, 2)),
   };
 }
 

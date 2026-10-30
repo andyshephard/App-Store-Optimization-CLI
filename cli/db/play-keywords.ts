@@ -18,6 +18,8 @@ export type PlayTopApp = {
   rating: number | null;
   ratingCount: number | null;
   isTopCard: boolean;
+  /** Absent on results stored before icons were kept. */
+  iconUrl?: string | null;
 };
 
 export type PlayKeywordObservation = {

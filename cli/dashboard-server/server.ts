@@ -796,7 +796,10 @@ function getPendingPromptResponse(
 }
 
 const appsHandlers = createAppsHandlers({
-  parseJsonBody,
+  parseJsonBody: <T>(req: http.IncomingMessage, res: http.ServerResponse) =>
+    preParsedBodies.has(req)
+      ? Promise.resolve(preParsedBodies.get(req) as T | null)
+      : parseJsonBody<T>(req, res),
   sendJson,
   sendApiError,
   reportDashboardError,
@@ -1146,6 +1149,12 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "GET" && pathname === "/api/apps") {
+        const platform = resolveRequestPlatform(res, query.platform, sendApiError);
+        if (!platform) return;
+        if (platform === "android") {
+          playKeywordHandlers.handlePlayAppsGet(res);
+          return;
+        }
         const country = resolveRequestCountry(res, query.country);
         if (!country) return;
         ensureDefaultResearchAppExists();
@@ -1214,6 +1223,15 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "POST" && pathname === "/api/apps") {
+        const parsed = await readBodyWithPlatform(req, res, query);
+        if (!parsed) return;
+        if (parsed.platform === "android") {
+          runAsForegroundMutationSync(() => {
+            playKeywordHandlers.handlePlayAppsPost(res, parsed.body);
+          });
+          return;
+        }
+        preParsedBodies.set(req, parsed.body);
         await runAsForegroundMutation(() =>
           appsHandlers.handleApiAppsPost(req, res)
         );
@@ -1221,6 +1239,15 @@ export function createServerRequestHandler(): http.RequestListener {
       }
 
       if (req.method === "DELETE" && pathname === "/api/apps") {
+        const parsed = await readBodyWithPlatform(req, res, query);
+        if (!parsed) return;
+        if (parsed.platform === "android") {
+          runAsForegroundMutationSync(() => {
+            playKeywordHandlers.handlePlayAppsDelete(res, parsed.body);
+          });
+          return;
+        }
+        preParsedBodies.set(req, parsed.body);
         await runAsForegroundMutation(() =>
           appsHandlers.handleApiAppsDelete(req, res)
         );

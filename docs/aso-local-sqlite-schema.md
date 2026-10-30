@@ -346,7 +346,7 @@ Separate from the App Store tables, which they mirror; see
   `keyword`, `difficulty_score`, `difficulty_model_version`, `result_count`,
   `rank_depth`, `layout` (`list` | `top-card` | `empty`), `ordered_app_ids`
   (JSON package list, <= 30), `top_apps_json` (title, developer, category,
-  installs, rating per result), `created_at`, `updated_at`.
+  installs, rating, icon URL per result), `created_at`, `updated_at`.
 - `play_keyword_autocomplete`: (`country`, `normalized_keyword`) ->
   `letters_needed`, `hint_rank`, `checked_at`, as `aso_keyword_autocomplete`.
 - `play_keyword_failures`: last failure per (`country`, `normalized_keyword`,
@@ -355,6 +355,10 @@ Separate from the App Store tables, which they mirror; see
 - `play_keyword_position_history`: (`app_id`, `keyword`, `country`,
   `captured_at`) -> `position` (null = outside the top 30). Tracked apps every
   crawl, roster apps where they rank; 730 days kept; index on `captured_at`.
+- `play_competitor_apps` (schema version 5): `app_id` (package, PK),
+  `added_at`. Competitors added from the dashboard or `POST /api/apps` with
+  `platform=android`; with `ASO_PLAY_ROSTER_APP_IDS` they make up the Play
+  roster. Names and icons come from `play_keywords.top_apps_json`.
 
 ## Notes
 - New tables are added through numbered steps in `store.ts`

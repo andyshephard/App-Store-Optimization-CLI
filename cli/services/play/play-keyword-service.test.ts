@@ -11,6 +11,7 @@ import {
   listPlayKeywordFailures,
   listPlayKeywordRowsForApp,
 } from "../../db/play-keywords";
+import { addPlayCompetitorApp, removePlayCompetitorApp } from "../../db/play-competitors";
 import { listKeywords } from "../../db/aso-keywords";
 import { listAllAppKeywords } from "../../db/app-keywords";
 import { refreshPlayKeywords, refreshPlayKeywordsForRun } from "./play-keyword-service";
@@ -41,6 +42,7 @@ function app(appId: string, installs = 10_000): PlaySearchApp {
     ratingCount: null,
     free: true,
     isTopCard: false,
+    iconUrl: null,
   };
 }
 
@@ -116,6 +118,34 @@ describe("refreshPlayKeywords", () => {
     // Nothing written to the App Store tables.
     expect(listKeywords("US")).toEqual([]);
     expect(listAllAppKeywords("US")).toEqual([]);
+  });
+
+  it("records history for competitors added from the dashboard, from their next crawl", async () => {
+    addPlayAppKeywords(OURS, ["microlearning"], "US");
+    const suggest = jest.fn(async () => []);
+    const crawl = (observedAt: string) =>
+      refreshPlayKeywords({
+        search: async () => results(["com.deepstash", "com.rival.app", OURS]),
+        suggest,
+        force: true,
+        countries: ["US"],
+        now: () => new Date(observedAt),
+      });
+    await crawl("2026-10-28T03:00:00.000Z");
+    addPlayCompetitorApp("com.deepstash");
+    await crawl("2026-10-29T03:00:00.000Z");
+    removePlayCompetitorApp("com.deepstash");
+    await crawl("2026-10-30T03:00:00.000Z");
+
+    const deepstash = listPlayDailyPositionHistory({
+      since: "2000-01-01",
+      appIds: ["com.deepstash"],
+      limit: 100,
+      offset: 0,
+    });
+    expect(deepstash).toEqual([
+      { appId: "com.deepstash", keyword: "microlearning", country: "US", date: "2026-10-29", position: 1 },
+    ]);
   });
 
   it("records previous positions across crawls", async () => {

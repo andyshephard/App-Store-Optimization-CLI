@@ -245,6 +245,10 @@ The search parser reads sections by their range label and throws
 `PlayContractError` rather than guess; fixtures in `cli/services/play/__fixtures__/`.
 Validated 10/10 against DataForSEO's Play ranks. Play has no popularity:
 `popularity` is null, autocomplete letters/position are stored raw.
+Competitors (`play_competitor_apps`, schema v5, plus `ASO_PLAY_ROSTER_APP_IDS`)
+are ranked from the stored top 30 of our keywords, so they cost no requests;
+`/api/apps?platform=android` manages them and the dashboard lists them in the
+sidebar (google-play.md#competitors).
 
 ## Apple Ads Platform API (popularity source)
 

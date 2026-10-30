@@ -1,0 +1,17 @@
+# Google Play competitors tracked beside Chunks (com.andyshephard.chunks): the
+# middleware's competitor roster. One package per line; the text after the
+# package is a note. Seed with scripts/play/seed-play-competitors.sh (API), or
+# set ASO_PLAY_ROSTER_APP_IDS to the packages instead.
+com.deepstash                        Deepstash
+com.duolingo                         Duolingo
+com.polywise.lucid                   Imprint
+org.khanacademy.android              Khan Academy
+com.ai51de.nerdsip                   NerdSip
+com.nibble.lesson                    Nibble
+com.learnpaladin                     Paladin
+com.gaiali.app                       Yuno
+io.nerdish.app                       Nerdish
+com.headway.books                    Headway
+com.blinkslabs.blinkist.android      Blinkist
+com.wonder                           Elevate
+org.brilliant.android                Brilliant

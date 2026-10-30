@@ -131,8 +131,8 @@ The main endpoint. Paged keywords for one app in one storefront, joined with
 this app's ranking position. Pure database read.
 
 Google Play: add `platform=android` (here and on `POST`/`DELETE
-/api/aso/keywords`, `position-history`, `autocomplete`, `autocomplete/refresh`
-and `refresh/start`). Without it, or with `platform=ios`, nothing below
+/api/aso/keywords`, `position-history`, `autocomplete`, `autocomplete/refresh`,
+`refresh/start`, and `GET`/`POST`/`DELETE /api/apps` for competitors). Without it, or with `platform=ios`, nothing below
 changes. Shapes in [google-play.md](google-play.md#api).
 
 | Parameter | Required | Default | Notes |
@@ -541,6 +541,9 @@ against Apple as a side effect.
 
 `?country=GB` — required.
 
+With `platform=android` it is a database read that calls nobody: our Play app
+and its competitors ([google-play.md](google-play.md#competitors)).
+
 ```json
 { "success": true, "data": [ { "id": "6692632196", "kind": "owned", "name": "Chunks Microlearning", "averageUserRating": 5, "userRatingCount": 4, "previousAverageUserRating": 5, "previousUserRatingCount": 4, "icon": {}, "expiresAt": null, "lastFetchedAt": null, "lastKeywordAddedAt": "2026-07-27T21:51:08.694Z" } ] }
 ```
@@ -592,6 +595,7 @@ Always performs a live search.
 |---|---|---|
 | `POST /api/apps` | `{"type":"app","appId":"123","country":"GB"}` or `{"type":"research","name":"..."}` | Adds a tracked app; hydrates from Apple |
 | `DELETE /api/apps` | `{"appId":"123"}` | Removes the app and its keyword associations |
+| `POST` / `DELETE /api/apps` with `"platform":"android"` | `{"platform":"android","appId":"com.example.app"}` | Adds or removes a Google Play competitor. No external call ([google-play.md](google-play.md#competitors)) |
 | `POST /api/aso/keywords` | `{"appId":"123","keywords":["a","b"],"country":"GB","defer":true}` | Max 100 per call. Returns `{cachedCount, pendingCount, failedCount}`. **`defer: true` records the keywords without contacting Apple** and lets the next refresh score them — the right choice for automation. Without it the call crawls synchronously and can exceed Cloudflare's 100s limit |
 | `DELETE /api/aso/keywords` | `{"appId":"123","keywords":["a"],"country":"GB"}` | `{removedCount}` |
 | `POST /api/aso/keywords/favorite` | `{"appId":"123","keyword":"a","isFavorite":true,"country":"GB"}` | 404 if not tracked |

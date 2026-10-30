@@ -1,5 +1,12 @@
 import {
+  formatPlayPlacements,
   mergeStoreKeywords,
+  playPlacements,
+  playRankFor,
+  readStoredShowPlayCompetitors,
+  shortPlayAppName,
+  writeStoredShowPlayCompetitors,
+  type PlayApp,
   readStoredStoreMode,
   sharedCountries,
   sortMergedRows,
@@ -154,5 +161,66 @@ describe("store mode storage", () => {
     // The node test environment has no localStorage: every access throws.
     expect(readStoredStoreMode()).toBe("ios");
     expect(() => writeStoredStoreMode("both")).not.toThrow();
+  });
+});
+
+describe("Play competitors", () => {
+  const app = (id: string, name: string | null, kind: PlayApp["kind"] = "competitor"): PlayApp => ({
+    id,
+    name,
+    developer: null,
+    iconUrl: null,
+    kind,
+    source: kind === "owned" ? "ASO_PLAY_APP_ID" : "dashboard",
+    removable: kind !== "owned",
+    addedAt: null,
+  });
+  const OURS = "com.andyshephard.chunks";
+  const apps = [
+    app(OURS, "Chunks Microlearning", "owned"),
+    app("com.learnpaladin", "Paladin: Learn Anything"),
+    app("com.nibble.lesson", "Nibble - Daily Lessons"),
+    app("com.deepstash", null),
+  ];
+  const item = playItem({
+    rank: 6,
+    competitorRanks: { "com.learnpaladin": 3, "com.nibble.lesson": 7, "com.deepstash": null },
+  });
+
+  it("shortens titles at the first colon or dash, else uses the package", () => {
+    expect(shortPlayAppName(apps[1])).toBe("Paladin");
+    expect(shortPlayAppName(apps[2])).toBe("Nibble");
+    expect(shortPlayAppName({ id: "com.x", name: "Self-Help | Daily" })).toBe("Self-Help");
+    expect(shortPlayAppName(apps[3])).toBe("deepstash");
+    expect(shortPlayAppName({ id: "a.b", name: "A very long title without any separator" })).toBe(
+      "A very long title witho…"
+    );
+  });
+
+  it("reads our rank or a competitor's", () => {
+    expect(playRankFor(item, OURS)).toBe(6);
+    expect(playRankFor(item, "com.learnpaladin")).toBe(3);
+    expect(playRankFor(item, "com.deepstash")).toBeNull();
+    // Added after this list was read: unknown, shown as not ranked.
+    expect(playRankFor(item, "com.brand.new")).toBeNull();
+  });
+
+  it("lists the other ranking apps best first, including ours for a competitor", () => {
+    expect(formatPlayPlacements(playPlacements(item, apps, OURS))).toBe("Paladin 3 · Nibble 7");
+    expect(formatPlayPlacements(playPlacements(item, apps, "com.nibble.lesson"))).toBe(
+      "Paladin 3 · Chunks Microlearning 6"
+    );
+    expect(playPlacements(playItem({ rank: null, competitorRanks: {} }), apps, OURS)).toEqual([]);
+  });
+
+  it("gives a competitor's Play side its rank and no change", () => {
+    expect(toPlaySide(item, "com.learnpaladin")).toMatchObject({ rank: 3, rankChange: null });
+    expect(toPlaySide(item, OURS)).toMatchObject({ rank: 6, rankChange: -1 });
+  });
+
+  it("shows the Competitors column when storage is unavailable", () => {
+    // No localStorage in the node environment (the jsdom tests cover storing it).
+    expect(() => writeStoredShowPlayCompetitors(false)).not.toThrow();
+    expect(readStoredShowPlayCompetitors()).toBe(true);
   });
 });

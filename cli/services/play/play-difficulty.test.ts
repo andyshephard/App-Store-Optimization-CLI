@@ -15,6 +15,7 @@ function app(overrides: Partial<PlaySearchApp>): PlaySearchApp {
     ratingCount: null,
     free: true,
     isTopCard: false,
+    iconUrl: null,
     ...overrides,
   };
 }

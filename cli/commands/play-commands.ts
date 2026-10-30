@@ -19,6 +19,7 @@ import {
 } from "../services/play/play-keyword-service";
 import { PACKAGE_ID, PLAY_MAX_KEYWORD_LENGTH } from "../services/play/play-search-parser";
 import { listPlayAppKeywords } from "../db/play-keywords";
+import { listPlayRosterAppIds } from "../db/play-competitors";
 import { createPacedHintFetcher } from "../services/keywords/autocomplete-demand-service";
 import { fetchPlaySuggestions } from "../services/play/play-client";
 import { saveKeywordsToResearchApp, resolveKeywordAssociationAppId } from "../services/keywords/aso-research-keyword-service";
@@ -96,7 +97,7 @@ export async function runPlayKeywordsCommand(params: {
   for (const keyword of keywords) {
     try {
       const observation = await evaluatePlayKeyword(keyword, country);
-      savePlayKeywordObservation(observation, { rosterAppIds: ASO_ENV.playRosterAppIds });
+      savePlayKeywordObservation(observation, { rosterAppIds: listPlayRosterAppIds() });
       let autocomplete: { lettersNeeded: number | null; hintRank: number | null } = {
         lettersNeeded: null,
         hintRank: null,

@@ -18,8 +18,8 @@ Per keyword and country:
 | `resultCount` / `appCount` | Search page | How many results Play listed (at most 30). |
 | `rankDepth` | Search page | How deep the ranking was checked: equal to `resultCount`, which is the whole list. |
 | `orderedAppIds` | Search page | Package names in rank order. |
-| `topApps` | Search page | Title, developer, category, install band, rating per result (API: `includeTopApps=1`). |
-| `competitorRanks` | Search page | Rank of each roster package (`ASO_PLAY_ROSTER_APP_IDS`, plus `competitors=` on the request). |
+| `topApps` | Search page | Title, developer, category, install band, rating and icon URL per result (API: `includeTopApps=1`). Icons are kept from 30 Oct 2026 on. |
+| `competitorRanks` | Search page | Rank of each competitor package (see [Competitors](#competitors), plus `competitors=` on the request); `null` = not in the top 30. |
 | `difficultyScore` | Top 10 results | 5–100, model `play-installs-v1` (below). |
 | `autocompleteLetters` / `autocompleteRank` | Play search suggestions | Fewest letters typed (from 2) before Play suggests the exact term, and its position (1–5). `null` = never suggested. |
 | `popularity` | — | Always `null`: Play publishes no search volume or popularity score. |
@@ -151,7 +151,7 @@ autocomplete prefixes per country.
 |---|---|---|
 | `ASO_PLAY_APP_ID` | unset | Package tracked by default, e.g. `com.andyshephard.chunks`. API and CLI fall back to it when no `appId` is given. Also the switch for Play in the nightly refresh and in reports: unset, the refresh skips Play and `playsearch`/`playsuggest` are left out of `requests.byHost`, `rates`, health `rateLimits`, and `lastRun.play` is omitted. |
 | `ASO_PLAY_COUNTRIES` | `US,GB` | Play countries crawled and accepted. Add `AU`, `CA`, `NZ`, `IE`. Independent of `ASO_SUPPORTED_COUNTRIES`. |
-| `ASO_PLAY_ROSTER_APP_IDS` | unset | Comma-separated competitor packages; their ranks are kept in history and returned as `competitorRanks`. |
+| `ASO_PLAY_ROSTER_APP_IDS` | unset | Comma-separated competitor packages, fixed by the deployment (not removable from the dashboard). Added to the ones stored from the dashboard/API; see [Competitors](#competitors). |
 | `ASO_PLAY_REFRESH` | on | `0` leaves Play out of the background refresh. |
 | `ASO_PLAY_PHASE_MAX_MINUTES` | 30 | Time cap for the refresh's Play phase. |
 | `ASO_RATE_PLAYSEARCH_PER_MIN` | 20 | See Rate limits. |
@@ -223,6 +223,43 @@ directly. `keywordStatus` is `pending` until the first crawl, `failed` with a
 run; `GET /api/aso/health` carries `lastRun.play` (informational: Play never
 changes the health status).
 
+## Competitors
+
+Competitors are the Play counterpart of the App Store's competitor apps: their
+rank is read for **our** tracked keywords (`ASO_PLAY_APP_ID`'s), from the same
+search page, so tracking one costs no request.
+
+The roster is `ASO_PLAY_ROSTER_APP_IDS` plus the packages in the
+`play_competitor_apps` table (schema v5), which the dashboard and the API add
+and remove. Our own package is never on it. With both, either works; the
+environment ones cannot be removed from the dashboard.
+
+- `GET /api/apps?platform=android` → `{ platform, items: [ { id, name,
+  developer, iconUrl, kind: "owned" | "competitor", source: "ASO_PLAY_APP_ID" |
+  "ASO_PLAY_ROSTER_APP_IDS" | "dashboard", removable, addedAt } ] }`, our app
+  first. `name`, `developer` and `iconUrl` come from the newest stored search
+  result that lists the package (any keyword, any country): `null` until it has
+  appeared in a crawled top 30. No Play request is made for them.
+- `POST /api/apps` `{ "platform": "android", "appId": "com.example.app" }` →
+  `201 { platform, id, name, added }` (`added: false` when it was already on
+  the roster). 400 `INVALID_REQUEST` for anything but a package name (`PACKAGE_ID`,
+  at most 200 characters), for our own package, or past 50 competitors.
+- `DELETE /api/apps` `{ "platform": "android", "appId": … }` → `200 { platform, id }`;
+  400 for a package from the environment, 404 for one not tracked. History is kept.
+
+What a competitor gets:
+
+- **Ranks at once:** `competitorRanks` on `GET /api/aso/keywords?platform=android`
+  is computed from each keyword's stored `orderedAppIds`, so a new competitor's
+  ranks show up from the last crawl.
+- **History from the next crawl:** each crawl writes a
+  `play_keyword_position_history` point for a competitor where it ranks (none
+  where it does not; our app gets a `null` there). The dashboard's chart counts a
+  day our app was crawled without a point for the competitor as outside the
+  top 30, from the day it was added (from the start of the window for
+  environment ones).
+- **No change column:** the previous position is kept for our app only.
+
 ## Dashboard
 
 When `ASO_PLAY_APP_ID` is set (`playAppId` on `GET /api/aso/storefronts`), the
@@ -230,6 +267,16 @@ sidebar header has a store toggle: **App Store | Google Play | Both**,
 remembered per browser. Without it the dashboard is the App Store one,
 unchanged.
 
+- **Google Play apps** (sidebar, Google Play and Both): our app and the
+  competitors, with name and icon from search results (initials until a
+  package has shown up in a top 30). Add a competitor by package name at the
+  bottom of the list; × removes one added there. Selecting a competitor shows
+  its rank per keyword ("Not in top 30" otherwise) and its rank history; the
+  App Store app list is hidden on the Google Play view and stays on Both.
+- **Competitors column** (Google Play and Both; checkbox in the toolbar,
+  remembered per browser): for each keyword, the other tracked apps in its top
+  30 with their rank, best first, e.g. "Paladin 3 · Nibble 7" (title up to its
+  first ":" or " - "). With a competitor selected, our app is one of them.
 - **Google Play**: the tracked keywords for `ASO_PLAY_APP_ID` in a country from
   `playCountries` - rank ("Not in top 30" when outside the list), change,
   popularity as autocomplete letters and suggestion position, difficulty,
@@ -239,14 +286,16 @@ unchanged.
   (`platform=android`); a day outside the top 30 is a gap in the line.
 - **Both**: one row per keyword (case and whitespace ignored) across both
   stores for a country enabled on both, with App Store popularity and rank
-  (for the app selected in the sidebar) beside Play popularity and rank, all
-  sortable. A keyword tracked on one store only offers "Track on <store>":
+  (for the App Store app selected in the sidebar) beside Play popularity and
+  rank (for the selected Google Play app), all sortable. A keyword tracked on one store only offers "Track on <store>":
   App Store adds are deferred (`defer: true`, no Apple session needed; data
   arrives with the next refresh), Play adds are crawled at once.
 
 The views read every row (pages of 500) and sort in the browser. Code:
-`cli/dashboard-ui/store-merge.ts` (merge and sort),
-`components/play-keywords-view.tsx`, `components/both-stores-view.tsx`.
+`cli/dashboard-ui/store-merge.ts` (merge, sort, competitor placements),
+`components/play-keywords-view.tsx`, `components/both-stores-view.tsx`,
+`components/play-apps-list.tsx`, `hooks/use-play-apps.ts`;
+`cli/db/play-competitors.ts` on the server.
 
 ## CLI and MCP
 
@@ -279,6 +328,23 @@ That posts with `defer: true`, so nothing is crawled until the next nightly
 refresh, and autocomplete fills in over about a week (see Nightly refresh). The
 token is passed to curl as a config file on stdin, never on its command line. Locally, use `aso track` as above.
 
+The 13 competitors from the middleware's roster are in
+`scripts/play/chunks-play-competitors.txt` (Deepstash, Duolingo, Imprint, Khan
+Academy, NerdSip, Nibble, Paladin, Yuno, Nerdish, Headway, Blinkist, Elevate,
+Brilliant):
+
+```bash
+ASO_BASE_URL=https://keywords.chunks.app ASO_API_TOKEN=… \
+  scripts/play/seed-play-competitors.sh scripts/play/chunks-play-competitors.txt
+```
+
+One `POST /api/apps` per package, no Play request; re-running is harmless.
+They then appear in the dashboard and can be removed there. The same script
+works against a local dashboard (`ASO_BASE_URL` defaults to
+`http://127.0.0.1:3456`). Alternatively, set `ASO_PLAY_ROSTER_APP_IDS` to the
+packages (comma-separated) and restart; those cannot be removed from the
+dashboard.
+
 ## Storage
 
 Schema version 4 adds five tables and changes none of the existing ones
@@ -286,7 +352,8 @@ Schema version 4 adds five tables and changes none of the existing ones
 `play_keywords` (latest observation per country/keyword), `play_keyword_autocomplete`,
 `play_keyword_failures` (per stage: `search` / `autocomplete`) and
 `play_keyword_position_history` (730 days kept). The migration runs once on
-open; rolling back to an older build leaves the tables unused.
+open; rolling back to an older build leaves the tables unused. Schema version 5
+adds `play_competitor_apps` (package, `added_at`) the same way.
 
 ## Validation
 

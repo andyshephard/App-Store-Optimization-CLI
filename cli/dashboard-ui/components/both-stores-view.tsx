@@ -9,17 +9,24 @@ import {
 } from "../store-api";
 import {
   MERGED_DEFAULT_SORT_DIR,
+  playPlacements,
+  readStoredShowPlayCompetitors,
+  shortPlayAppName,
+  writeStoredShowPlayCompetitors,
+  type PlayApp,
+  type PlayKeywordItem,
   mergeStoreKeywords,
   sortMergedRows,
   toIosSide,
   toPlaySide,
+  type IosKeywordItem,
   type MergedKeywordRow,
   type MergedSortDir,
   type MergedSortKey,
   type StoreSide,
 } from "../store-merge";
 import { MetricBar } from "./metric-bar";
-import { PLAY_POPULARITY_HINT, RankChange } from "./play-keywords-view";
+import { PLAY_POPULARITY_HINT, PlayPlacementsCell, RankChange } from "./play-keywords-view";
 import { SortableTh } from "./sortable-th";
 import { StatusBanners } from "./status-banners";
 
@@ -33,6 +40,12 @@ type Props = {
   /** False for a Research entry: it is not an app, so it has no App Store rank. */
   iosHasRank: boolean;
   playAppId: string;
+  /** Our Play app and the competitors (sidebar); empty until loaded. */
+  playApps?: PlayApp[];
+  /** The Play app whose rank is shown; playAppId by default. */
+  selectedPlayAppId?: string;
+  /** Changes when a competitor is added or removed, to re-read competitorRanks. */
+  rosterVersion?: number;
   /** Called after a keyword is tracked on the App Store from here. */
   onIosKeywordsChanged: () => void;
 };
@@ -103,7 +116,16 @@ function PlayPopularityCell({ side }: { side: StoreSide }) {
 
 export function BothStoresView(props: Props) {
   const { country, iosAppId, onIosKeywordsChanged } = props;
-  const [rows, setRows] = useState<MergedKeywordRow[]>([]);
+  const playApps = props.playApps ?? [];
+  const playAppId = props.selectedPlayAppId ?? props.playAppId;
+  const selectedPlayApp = playApps.find((app) => app.id === playAppId) ?? null;
+  const hasCompetitors = playApps.some((app) => app.id !== playAppId);
+  const [showCompetitors, setShowCompetitors] = useState(() => readStoredShowPlayCompetitors());
+  const competitorsColumn = showCompetitors && hasCompetitors;
+  const [items, setItems] = useState<{ ios: IosKeywordItem[]; play: PlayKeywordItem[] }>({
+    ios: [],
+    play: [],
+  });
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [successText, setSuccessText] = useState("");
@@ -118,25 +140,34 @@ export function BothStoresView(props: Props) {
         fetchIosKeywords(country, iosAppId),
         fetchPlayKeywords(country),
       ]);
-      setRows(
-        mergeStoreKeywords(
-          ios.map((item) => toIosSide(item, iosAppId)),
-          play.map(toPlaySide)
-        )
-      );
+      setItems({ ios, play });
       setErrorText("");
     } catch (error) {
       setErrorText(toActionableErrorMessage(error, "Failed to load keywords"));
     } finally {
       setLoading(false);
     }
-  }, [country, iosAppId]);
+  }, [country, iosAppId, props.rosterVersion]);
 
   useEffect(() => {
     setLoading(true);
-    setRows([]);
+    setItems({ ios: [], play: [] });
     void load();
   }, [load]);
+
+  // The Play side is for the app selected in the sidebar; switching apps or
+  // the app list arriving needs no new request.
+  const rows = useMemo(
+    () =>
+      mergeStoreKeywords(
+        items.ios.map((item) => toIosSide(item, iosAppId)),
+        items.play.map((item) => ({
+          ...toPlaySide(item, playAppId),
+          placements: playPlacements(item, playApps, playAppId),
+        }))
+      ),
+    [items, iosAppId, playAppId, playApps]
+  );
 
   const visibleRows = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -202,7 +233,12 @@ export function BothStoresView(props: Props) {
             App Store: <strong>{props.iosAppName}</strong>
           </span>
           <span>
-            Google Play: <strong>{props.playAppId}</strong>
+            Google Play:{" "}
+            <strong>
+              {selectedPlayApp && playAppId !== props.playAppId
+                ? `${shortPlayAppName(selectedPlayApp)} (${playAppId})`
+                : playAppId}
+            </strong>
           </span>
         </p>
         <StatusBanners
@@ -239,6 +275,19 @@ export function BothStoresView(props: Props) {
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
+        {hasCompetitors ? (
+          <label className="store-toggle-column">
+            <input
+              type="checkbox"
+              checked={showCompetitors}
+              onChange={(event) => {
+                setShowCompetitors(event.target.checked);
+                writeStoredShowPlayCompetitors(event.target.checked);
+              }}
+            />
+            Play competitors
+          </label>
+        ) : null}
         <Badge>
           {rows.length} keyword{rows.length === 1 ? "" : "s"}
           {onlyIos > 0 ? ` · ${onlyIos} App Store only` : ""}
@@ -295,6 +344,14 @@ export function BothStoresView(props: Props) {
                   dir={sortDir}
                   onSort={() => onSort("playRank")}
                 />
+                {competitorsColumn ? (
+                  <th
+                    className="play-competitors-col"
+                    title="Other tracked apps in this keyword's Google Play top 30, with their rank"
+                  >
+                    Play competitors
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -330,9 +387,21 @@ export function BothStoresView(props: Props) {
                       <td className="num col-middle">
                         <RankCell side={row.play} available unrankedLabel="Not in top 30" />
                       </td>
+                      {competitorsColumn ? (
+                        <td className="play-competitors-col">
+                          {row.play.status === "pending" ? (
+                            <span className="metric-pending">Pending</span>
+                          ) : (
+                            <PlayPlacementsCell placements={row.play.placements ?? []} />
+                          )}
+                        </td>
+                      ) : null}
                     </>
                   ) : (
-                    notTracked(row, "play")
+                    <>
+                      {notTracked(row, "play")}
+                      {competitorsColumn ? <td className="play-competitors-col" /> : null}
+                    </>
                   )}
                 </tr>
               ))}

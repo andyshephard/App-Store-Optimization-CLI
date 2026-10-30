@@ -17,6 +17,7 @@ import {
   upsertPlayKeywordAutocomplete,
   type PlayKeywordObservation,
 } from "../../db/play-keywords";
+import { listPlayRosterAppIds } from "../../db/play-competitors";
 import { fetchPlaySearch, fetchPlaySuggestions } from "./play-client";
 import { calculatePlayDifficulty, PLAY_DIFFICULTY_MODEL_VERSION } from "./play-difficulty";
 import { PlayContractError, type PlaySearchParseResult } from "./play-search-parser";
@@ -111,6 +112,7 @@ export async function evaluatePlayKeyword(
       rating: app.rating,
       ratingCount: app.ratingCount,
       isTopCard: app.isTopCard,
+      iconUrl: app.iconUrl,
     })),
     observedAt: now().toISOString(),
   };
@@ -261,7 +263,7 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
       while (isForegroundBusy() && !isStopRequested()) await sleep(FOREGROUND_PAUSE_MS);
       try {
         const observation = await evaluatePlayKeyword(keyword, country, search, now);
-        savePlayKeywordObservation(observation, { rosterAppIds: ASO_ENV.playRosterAppIds });
+        savePlayKeywordObservation(observation, { rosterAppIds: listPlayRosterAppIds() });
         cc.refreshed += 1;
         counters.refreshedKeywordCount += 1;
         consecutiveFailures = 0;

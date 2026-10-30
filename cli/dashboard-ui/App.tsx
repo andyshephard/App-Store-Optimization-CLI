@@ -32,6 +32,7 @@ import { useAuthFlow } from "./hooks/use-auth-flow";
 import { usePrimaryAppSetupFlow } from "./hooks/use-primary-app-setup-flow";
 import { useAddAppSearch } from "./hooks/use-add-app-search";
 import { useStorefronts } from "./hooks/use-storefronts";
+import { usePlayApps } from "./hooks/use-play-apps";
 import { useTheme } from "./hooks/use-theme";
 import { StatusBanners } from "./components/status-banners";
 import { AsoPromptDialog } from "./components/aso-prompt-dialog";
@@ -43,6 +44,7 @@ import { MetricBar } from "./components/metric-bar";
 import { StoreToggle } from "./components/store-toggle";
 import { PlayKeywordsView } from "./components/play-keywords-view";
 import { BothStoresView } from "./components/both-stores-view";
+import { PlayAppsList } from "./components/play-apps-list";
 import {
   readStoredPlayCountry,
   readStoredStoreMode,
@@ -558,6 +560,7 @@ export function App() {
   // Without Google Play on the server there is no toggle and the dashboard is
   // the App Store one, whatever was remembered.
   const activeStoreMode: StoreMode = playAppId ? storeMode : "ios";
+  const playApps = usePlayApps(playAppId);
   const { isDark, toggleTheme } = useTheme();
   const [apps, setApps] = useState<AppItem[]>([]);
   const [selectedAppId, setSelectedAppId] = useState(() => {
@@ -3059,7 +3062,8 @@ export function App() {
             <StoreToggle value={activeStoreMode} onChange={setStoreMode} />
           ) : null}
           <p className="sidebar-subtitle"></p>
-          <div className="sidebar-actions">
+          {/* The App Store apps stay mounted on the Google Play view, like its <main>. */}
+          <div className="sidebar-actions" hidden={activeStoreMode === "android"}>
             <div className="onboarding-target-slot">
               <span className="add-app-tooltip-anchor">
                 <Button
@@ -3080,7 +3084,12 @@ export function App() {
           </div>
         </div>
 
-        <div className="apps-list" role="tablist" aria-label="Applications">
+        <div
+          className="apps-list"
+          role="tablist"
+          aria-label="Applications"
+          hidden={activeStoreMode === "android"}
+        >
           <section className="apps-section">
             <div className="apps-section-header">
               <button
@@ -3306,6 +3315,17 @@ export function App() {
             })}
           </section>
         </div>
+        {activeStoreMode !== "ios" && playAppId ? (
+          <div className="apps-list play-apps-list">
+            <PlayAppsList
+              apps={playApps.apps}
+              selectedAppId={playApps.selectedAppId}
+              onSelect={playApps.select}
+              onAdd={playApps.add}
+              onRemove={playApps.remove}
+            />
+          </div>
+        ) : null}
       </aside>
 
       {activeStoreMode === "android" && playAppId ? (
@@ -3315,6 +3335,9 @@ export function App() {
             countries={playCountries}
             onCountryChange={setPlayCountry}
             playAppId={playAppId}
+            apps={playApps.apps}
+            selectedAppId={playApps.selectedAppId}
+            rosterVersion={playApps.rosterVersion}
             displayLocale={displayLocale}
           />
         </main>
@@ -3330,6 +3353,9 @@ export function App() {
               iosAppName={selectedAppName}
               iosHasRank={showRankingColumns}
               playAppId={playAppId}
+              playApps={playApps.apps}
+              selectedPlayAppId={playApps.selectedAppId}
+              rosterVersion={playApps.rosterVersion}
               onIosKeywordsChanged={() => {
                 // Errors are reported by the request helper; the App Store
                 // view reloads again when it is next used.

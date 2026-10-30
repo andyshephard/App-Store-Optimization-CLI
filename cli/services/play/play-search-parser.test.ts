@@ -59,6 +59,7 @@ describe("parsePlaySearchPage", () => {
       ratingCount: null,
       free: true,
       isTopCard: false,
+      iconUrl: "https://play-lh.googleusercontent.com/x",
     });
     expect(result.apps[1].appId).toBe("com.chunks.chunks");
     // No rating on an app without enough reviews.
@@ -86,6 +87,8 @@ describe("parsePlaySearchPage", () => {
       installsBand: "100,000+",
       ratingCount: 3494,
       isTopCard: true,
+      // The app icon at details[95], not the content-rating badge at [9].
+      iconUrl: "https://play-lh.googleusercontent.com/x",
     });
     expect(result.apps[1]).toMatchObject({ appId: "stoameditation.stoa", isTopCard: false });
   });

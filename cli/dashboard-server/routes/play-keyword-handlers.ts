@@ -17,11 +17,19 @@ import {
   type PlayKeywordListRow,
 } from "../../db/play-keywords";
 import {
+  addPlayCompetitorApp,
+  listPlayAppDetails,
+  listPlayCompetitorApps,
+  listPlayRosterAppIds,
+  removePlayCompetitorApp,
+} from "../../db/play-competitors";
+import {
   isPlayRefreshRunning,
   refreshPlayAutocomplete,
   refreshPlayKeywords,
 } from "../../services/play/play-keyword-service";
 import { PACKAGE_ID, PLAY_MAX_KEYWORD_LENGTH } from "../../services/play/play-search-parser";
+import { isPlayPackageId } from "../../domain/play-package";
 
 /**
  * Google Play on the existing keyword endpoints. Every endpoint keeps its App
@@ -46,6 +54,8 @@ type Deps = {
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
 const POSITION_HISTORY_MAX_PAGE = 5000;
+/** Competitors add no requests (their ranks come from the same page), only history rows. */
+const MAX_PLAY_COMPETITORS = 50;
 
 /** "ios" when absent; null (after a 400) when it is neither ios nor android. */
 export function resolveRequestPlatform(
@@ -187,7 +197,7 @@ export function createPlayKeywordHandlers(deps: Deps) {
       return;
     }
     const competitorAppIds = Array.from(
-      new Set([...ASO_ENV.playRosterAppIds, ...requestedCompetitors])
+      new Set([...listPlayRosterAppIds(), ...requestedCompetitors])
     );
     const all = listPlayKeywordRowsForApp(appId, country).map((row) =>
       toPlayKeywordItem(row, {
@@ -388,7 +398,111 @@ export function createPlayKeywordHandlers(deps: Deps) {
     });
   }
 
+  /**
+   * GET /api/apps?platform=android: our app (ASO_PLAY_APP_ID) first, then
+   * each competitor with where it comes from. Names and icons are from stored
+   * search results; null until the package shows up in a crawled top 30.
+   */
+  function handlePlayAppsGet(res: http.ServerResponse): void {
+    const stored = new Map(listPlayCompetitorApps().map((app) => [app.appId, app.addedAt]));
+    const envRoster = new Set(ASO_ENV.playRosterAppIds);
+    const ours = ASO_ENV.playAppId;
+    const competitorIds = listPlayRosterAppIds();
+    const details = listPlayAppDetails(ours ? [ours, ...competitorIds] : competitorIds);
+    const describe = (appId: string) => ({
+      id: appId,
+      name: details.get(appId)?.title ?? null,
+      developer: details.get(appId)?.developer ?? null,
+      iconUrl: details.get(appId)?.iconUrl ?? null,
+    });
+    const items = [
+      ...(ours
+        ? [{ ...describe(ours), kind: "owned", source: "ASO_PLAY_APP_ID", removable: false, addedAt: null }]
+        : []),
+      ...competitorIds.map((appId) => ({
+        ...describe(appId),
+        kind: "competitor",
+        source: envRoster.has(appId) ? "ASO_PLAY_ROSTER_APP_IDS" : "dashboard",
+        // A package from the environment stays until the variable changes.
+        removable: !envRoster.has(appId),
+        addedAt: stored.get(appId) ?? null,
+      })),
+    ];
+    deps.sendJson(res, 200, { success: true, data: { platform: "android", items } });
+  }
+
+  function parsePackageFromBody(res: http.ServerResponse, body: Record<string, unknown>): string | null {
+    const appId = typeof body.appId === "string" ? body.appId.trim() : "";
+    if (!isPlayPackageId(appId)) {
+      deps.sendApiError(
+        res,
+        400,
+        "INVALID_REQUEST",
+        "appId must be a Google Play package name, e.g. com.example.app."
+      );
+      return null;
+    }
+    return appId;
+  }
+
+  /**
+   * POST /api/apps with platform "android": adds a competitor package. Its
+   * ranks are read from the stored top 30 at once, and its rank history is
+   * recorded from the next crawl. No Play request is made.
+   */
+  function handlePlayAppsPost(res: http.ServerResponse, body: Record<string, unknown>): void {
+    const appId = parsePackageFromBody(res, body);
+    if (!appId) return;
+    if (appId === ASO_ENV.playAppId) {
+      deps.sendApiError(res, 400, "INVALID_REQUEST", `${appId} is our app (ASO_PLAY_APP_ID).`);
+      return;
+    }
+    const roster = listPlayRosterAppIds();
+    if (!roster.includes(appId) && roster.length >= MAX_PLAY_COMPETITORS) {
+      deps.sendApiError(
+        res,
+        400,
+        "INVALID_REQUEST",
+        `At most ${MAX_PLAY_COMPETITORS} Google Play competitors can be tracked.`
+      );
+      return;
+    }
+    const added = !roster.includes(appId) && addPlayCompetitorApp(appId);
+    deps.sendJson(res, 201, {
+      success: true,
+      data: {
+        platform: "android",
+        id: appId,
+        name: listPlayAppDetails([appId]).get(appId)?.title ?? null,
+        added,
+      },
+    });
+  }
+
+  /** DELETE /api/apps with platform "android": stops tracking a competitor; its history is kept. */
+  function handlePlayAppsDelete(res: http.ServerResponse, body: Record<string, unknown>): void {
+    const appId = parsePackageFromBody(res, body);
+    if (!appId) return;
+    if (removePlayCompetitorApp(appId)) {
+      deps.sendJson(res, 200, { success: true, data: { platform: "android", id: appId } });
+      return;
+    }
+    if (ASO_ENV.playRosterAppIds.includes(appId) || appId === ASO_ENV.playAppId) {
+      deps.sendApiError(
+        res,
+        400,
+        "INVALID_REQUEST",
+        `${appId} is set by ${appId === ASO_ENV.playAppId ? "ASO_PLAY_APP_ID" : "ASO_PLAY_ROSTER_APP_IDS"}; change the environment to remove it.`
+      );
+      return;
+    }
+    deps.sendApiError(res, 404, "NOT_FOUND", "App not found.");
+  }
+
   return {
+    handlePlayAppsGet,
+    handlePlayAppsPost,
+    handlePlayAppsDelete,
     handlePlayKeywordsGet,
     handlePlayKeywordsPost,
     handlePlayKeywordsDelete,

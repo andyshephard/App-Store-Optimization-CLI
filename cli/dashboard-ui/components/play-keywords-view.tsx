@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Input } from "../ui-react";
 import {
   copyTextToClipboard,
@@ -10,7 +10,17 @@ import { sanitizeKeywords } from "../../domain/keywords/policy";
 import { ASO_MAX_KEYWORDS, ASO_MAX_KEYWORDS_PER_REQUEST_ERROR } from "../../shared/aso-keyword-limits";
 import type { PlayCountryOption } from "../hooks/use-storefronts";
 import { addPlayKeywords, fetchPlayKeywords, removePlayKeywords } from "../store-api";
-import type { PlayKeywordItem } from "../store-merge";
+import {
+  formatPlayPlacements,
+  playPlacements,
+  playRankFor,
+  readStoredShowPlayCompetitors,
+  shortPlayAppName,
+  writeStoredShowPlayCompetitors,
+  type PlayApp,
+  type PlayKeywordItem,
+  type PlayPlacement,
+} from "../store-merge";
 import { ContextDeleteConfirm } from "./context-delete-confirm";
 import { KeywordActionMenu } from "./keyword-action-menu";
 import { MetricBar } from "./metric-bar";
@@ -46,16 +56,21 @@ const LAYOUT_LABEL: Record<string, string> = {
   empty: "No results",
 };
 
-function sortValue(item: PlayKeywordItem, key: SortKey): number | string | null {
+function sortValue(
+  item: PlayKeywordItem,
+  key: SortKey,
+  appId: string
+): number | string | null {
+  const own = appId === item.appId;
   switch (key) {
     case "popularity":
       return item.autocompleteLetters;
     case "difficulty":
       return item.difficultyScore;
     case "rank":
-      return item.rank;
+      return playRankFor(item, appId);
     case "change":
-      return item.rankChange;
+      return own ? item.rankChange : null;
     case "updatedAt":
       return item.updatedAt;
     default:
@@ -63,11 +78,17 @@ function sortValue(item: PlayKeywordItem, key: SortKey): number | string | null 
   }
 }
 
-export function sortPlayItems(items: PlayKeywordItem[], key: SortKey, dir: SortDir) {
+/** Sorts a copy; rank and change are those of `appId` (default: each item's own app). */
+export function sortPlayItems(
+  items: PlayKeywordItem[],
+  key: SortKey,
+  dir: SortDir,
+  appId?: string
+) {
   const sign = dir === "asc" ? 1 : -1;
   return [...items].sort((a, b) => {
-    const va = sortValue(a, key);
-    const vb = sortValue(b, key);
+    const va = sortValue(a, key, appId ?? a.appId);
+    const vb = sortValue(b, key, appId ?? b.appId);
     const byKeyword = a.normalizedKeyword.localeCompare(b.normalizedKeyword);
     if (va == null && vb == null) return byKeyword;
     if (va == null) return 1;
@@ -128,16 +149,49 @@ export function RankChange({ change }: { change: number | null }) {
   );
 }
 
+/** "Paladin 3 · Nibble 7": the other tracked apps in this keyword's top 30. */
+export function PlayPlacementsCell({ placements }: { placements: PlayPlacement[] }) {
+  if (placements.length === 0) {
+    return <span className="metric-empty">-</span>;
+  }
+  return (
+    <span className="play-placements" title={formatPlayPlacements(placements)}>
+      {placements.map((placement, index) => (
+        <Fragment key={placement.appId}>
+          {/* Lines break at the separators, never inside "Paladin 3". */}
+          {index > 0 ? <span className="play-placement-sep"> · </span> : null}
+          <span className="play-placement">
+            {placement.label} <strong>{placement.rank}</strong>
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
 type Props = {
   country: string;
   countries: PlayCountryOption[];
   onCountryChange: (country: string) => void;
   playAppId: string;
+  /** Our app and the competitors (sidebar); empty until loaded. */
+  apps?: PlayApp[];
+  /** The app whose ranks are shown; our app (playAppId) by default. */
+  selectedAppId?: string;
+  /** Changes when a competitor is added or removed, to re-read competitorRanks. */
+  rosterVersion?: number;
   displayLocale?: string;
 };
 
 export function PlayKeywordsView(props: Props) {
   const { country, playAppId, displayLocale } = props;
+  const apps = props.apps ?? [];
+  const selectedAppId = props.selectedAppId ?? playAppId;
+  const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
+  const viewingCompetitor = selectedAppId !== playAppId;
+  const hasCompetitors = apps.some((app) => app.id !== selectedAppId);
+  const [showCompetitors, setShowCompetitors] = useState(() => readStoredShowPlayCompetitors());
+  const competitorsColumn = showCompetitors && hasCompetitors;
   const [items, setItems] = useState<PlayKeywordItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyText, setBusyText] = useState("");
@@ -161,7 +215,7 @@ export function PlayKeywordsView(props: Props) {
     } finally {
       setLoading(false);
     }
-  }, [country]);
+  }, [country, props.rosterVersion]);
 
   useEffect(() => {
     setLoading(true);
@@ -200,8 +254,8 @@ export function PlayKeywordsView(props: Props) {
     const visible = needle
       ? items.filter((item) => item.normalizedKeyword.includes(needle))
       : items;
-    return sortPlayItems(visible, sortBy, sortDir);
-  }, [filter, items, sortBy, sortDir]);
+    return sortPlayItems(visible, sortBy, sortDir, selectedAppId);
+  }, [filter, items, sortBy, sortDir, selectedAppId]);
 
   const onSort = (key: SortKey) => {
     if (key === sortBy) {
@@ -309,8 +363,18 @@ export function PlayKeywordsView(props: Props) {
             ))}
           </select>
         </label>
-        <span className="store-app-id" title="Google Play package (ASO_PLAY_APP_ID)">
-          {playAppId}
+        <span
+          className="store-app-id"
+          title={viewingCompetitor ? "Competitor: ranks for our tracked keywords" : "Google Play package (ASO_PLAY_APP_ID)"}
+        >
+          {viewingCompetitor ? (
+            <>
+              Ranks of <strong>{selectedApp ? shortPlayAppName(selectedApp) : selectedAppId}</strong>{" "}
+              ({selectedAppId})
+            </>
+          ) : (
+            playAppId
+          )}
         </span>
         <Input
           type="search"
@@ -320,6 +384,19 @@ export function PlayKeywordsView(props: Props) {
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
+        {hasCompetitors ? (
+          <label className="store-toggle-column">
+            <input
+              type="checkbox"
+              checked={showCompetitors}
+              onChange={(event) => {
+                setShowCompetitors(event.target.checked);
+                writeStoredShowPlayCompetitors(event.target.checked);
+              }}
+            />
+            Competitors
+          </label>
+        ) : null}
         <Badge>
           {items.length} keyword{items.length === 1 ? "" : "s"}
           {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
@@ -377,6 +454,14 @@ export function PlayKeywordsView(props: Props) {
                   dir={sortDir}
                   onSort={() => onSort("change")}
                 />
+                {competitorsColumn ? (
+                  <th
+                    className="play-competitors-col"
+                    title="Other tracked apps in this keyword's Google Play top 30, with their rank"
+                  >
+                    {viewingCompetitor ? "Other apps" : "Competitors"}
+                  </th>
+                ) : null}
                 <th className="col-middle">Results</th>
                 <SortableTh
                   label="Updated"
@@ -393,6 +478,7 @@ export function PlayKeywordsView(props: Props) {
             <tbody>
               {rows.map((item) => {
                 const crawled = item.updatedAt != null;
+                const rank = playRankFor(item, selectedAppId);
                 return (
                   <tr
                     key={item.normalizedKeyword}
@@ -430,19 +516,29 @@ export function PlayKeywordsView(props: Props) {
                           className="rank-history-trigger"
                           aria-label={`Google Play position history for ${item.keyword}`}
                           title={
-                            item.rank == null && item.resultCount != null && item.resultCount < 30
+                            rank == null && item.resultCount != null && item.resultCount < 30
                               ? `Play listed only ${item.resultCount} results`
                               : "Show position history"
                           }
                           onClick={() => setHistoryKeyword(item.keyword)}
                         >
-                          {item.rank ?? <span className="metric-empty">Not in top 30</span>}
+                          {rank ?? <span className="metric-empty">Not in top 30</span>}
                         </button>
                       )}
                     </td>
                     <td className="col-middle">
-                      <RankChange change={item.rankChange} />
+                      {/* Only our app keeps a previous position. */}
+                      <RankChange change={viewingCompetitor ? null : item.rankChange} />
                     </td>
+                    {competitorsColumn ? (
+                      <td className="play-competitors-col">
+                        {crawled ? (
+                          <PlayPlacementsCell placements={playPlacements(item, apps, selectedAppId)} />
+                        ) : (
+                          <span className="metric-pending">Pending</span>
+                        )}
+                      </td>
+                    ) : null}
                     <td className="col-middle">
                       {item.layout == null
                         ? "-"
@@ -529,7 +625,10 @@ export function PlayKeywordsView(props: Props) {
         <PlayPositionHistoryDialog
           keyword={historyKeyword}
           country={country}
-          appId={items.find((item) => item.keyword === historyKeyword)?.appId ?? playAppId}
+          appId={selectedAppId}
+          appName={viewingCompetitor ? (selectedApp ? shortPlayAppName(selectedApp) : selectedAppId) : undefined}
+          crawledByAppId={viewingCompetitor ? playAppId : undefined}
+          trackedSince={selectedApp?.addedAt ?? null}
           displayLocale={displayLocale}
           onClose={() => setHistoryKeyword(null)}
         />

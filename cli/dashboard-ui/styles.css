@@ -3296,3 +3296,92 @@ td.updated-value {
     flex: 1 1 100%;
   }
 }
+
+/* Google Play apps in the sidebar (Google Play and Both views). */
+.sidebar-actions[hidden],
+.apps-list[hidden] {
+  display: none;
+}
+
+/* On Both, the two lists share the sidebar height, each scrolling. */
+.apps-list:not([hidden]) + .apps-list.play-apps-list {
+  border-top: 1px solid var(--border);
+}
+
+.play-app-item {
+  grid-template-columns: 45px 1fr auto;
+}
+
+.play-app-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.play-app-remove {
+  padding: 0 6px;
+  opacity: 0;
+}
+
+.play-app-item:hover .play-app-remove,
+.play-app-item.active .play-app-remove,
+.play-app-remove:focus-visible {
+  opacity: 1;
+}
+
+.play-app-add {
+  display: flex;
+  gap: 6px;
+  margin: 0 8px 8px;
+}
+
+.play-app-add-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.play-app-error {
+  margin: 0 8px 8px;
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+
+.store-toggle-column {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+td.play-competitors-col {
+  min-width: 180px;
+  white-space: normal;
+}
+
+.play-placements {
+  display: block;
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+.play-placement {
+  white-space: nowrap;
+}
+
+.play-placement-sep {
+  color: var(--muted-foreground);
+}
+
+@media (hover: none) {
+  .play-app-remove {
+    opacity: 1;
+  }
+}

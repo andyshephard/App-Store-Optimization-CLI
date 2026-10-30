@@ -11,6 +11,8 @@ import {
   recordPlayKeywordFailure,
   savePlayKeywordObservation,
 } from "../db/play-keywords";
+import { listPlayCompetitorApps } from "../db/play-competitors";
+import { upsertOwnedApps } from "../db/owned-apps";
 import { refreshPlayKeywords } from "../services/play/play-keyword-service";
 import { createServerRequestHandler } from "./server";
 
@@ -351,5 +353,189 @@ describe("Google Play on the keyword API (platform=android)", () => {
 
     const storefronts = await requestJson({ method: "GET", path: "/api/aso/storefronts" });
     expect(storefronts.body.data.playCountries.map((c: any) => c.country)).toEqual(["US", "GB"]);
+  });
+  describe("Play apps on /api/apps (platform=android)", () => {
+    const top = (appId: string, title: string, iconUrl?: string | null) => ({
+      appId,
+      title,
+      developer: `${title} Inc.`,
+      category: null,
+      installs: 1000,
+      installsBand: "1,000+",
+      rating: null,
+      ratingCount: null,
+      isTopCard: false,
+      ...(iconUrl === undefined ? {} : { iconUrl }),
+    });
+
+    beforeEach(() => {
+      process.env.ASO_PLAY_APP_ID = OURS;
+    });
+
+    afterEach(() => {
+      delete process.env.ASO_PLAY_APP_ID;
+    });
+
+    it("lists our app and the roster, named from stored search results", async () => {
+      addPlayAppKeywords(OURS, ["microlearning", "chunks"], "US");
+      // An older crawl without icons, then a newer one with them.
+      savePlayKeywordObservation({
+        country: "US",
+        keyword: "chunks",
+        difficultyScore: 10,
+        difficultyModelVersion: "play-installs-v1",
+        resultCount: 2,
+        rankDepth: 2,
+        layout: "list",
+        orderedAppIds: [OURS, "com.rival.app"],
+        topApps: [top(OURS, "Chunks Old Title"), top("com.rival.app", "Rival: Old")],
+        observedAt: "2026-10-29T03:00:00.000Z",
+      });
+      savePlayKeywordObservation({
+        country: "US",
+        keyword: "microlearning",
+        difficultyScore: 10,
+        difficultyModelVersion: "play-installs-v1",
+        resultCount: 2,
+        rankDepth: 2,
+        layout: "list",
+        orderedAppIds: ["com.rival.app", OURS],
+        topApps: [
+          top("com.rival.app", "Rival: Learn", "https://play-lh.googleusercontent.com/rival"),
+          top(OURS, "Chunks Microlearning", null),
+        ],
+        observedAt: "2026-10-30T03:00:00.000Z",
+      });
+      await requestJson({
+        method: "POST",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.learnpaladin" },
+      });
+
+      const response = await requestJson({ method: "GET", path: "/api/apps?platform=android" });
+      expect(response.statusCode).toBe(200);
+      expect(response.body.data.platform).toBe("android");
+      expect(response.body.data.items).toEqual([
+        {
+          id: OURS,
+          name: "Chunks Microlearning",
+          developer: "Chunks Microlearning Inc.",
+          iconUrl: null,
+          kind: "owned",
+          source: "ASO_PLAY_APP_ID",
+          removable: false,
+          addedAt: null,
+        },
+        {
+          id: "com.rival.app",
+          name: "Rival: Learn",
+          developer: "Rival: Learn Inc.",
+          iconUrl: "https://play-lh.googleusercontent.com/rival",
+          kind: "competitor",
+          source: "ASO_PLAY_ROSTER_APP_IDS",
+          removable: false,
+          addedAt: null,
+        },
+        {
+          id: "com.learnpaladin",
+          name: null,
+          developer: null,
+          iconUrl: null,
+          kind: "competitor",
+          source: "dashboard",
+          removable: true,
+          addedAt: expect.any(String),
+        },
+      ]);
+    });
+
+    it("adds a competitor whose ranks come back on the keyword list", async () => {
+      addPlayAppKeywords(OURS, ["microlearning"], "US");
+      observe("microlearning", ["com.deepstash", "com.rival.app", OURS]);
+
+      const added = await requestJson({
+        method: "POST",
+        path: "/api/apps",
+        body: { platform: "android", appId: " com.deepstash " },
+      });
+      expect(added.statusCode).toBe(201);
+      expect(added.body.data).toEqual({
+        platform: "android",
+        id: "com.deepstash",
+        name: "com.deepstash",
+        added: true,
+      });
+      const again = await requestJson({
+        method: "POST",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.deepstash" },
+      });
+      expect(again.body.data.added).toBe(false);
+      // Already on the roster through the environment: nothing stored.
+      const fromEnv = await requestJson({
+        method: "POST",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.rival.app" },
+      });
+      expect(fromEnv.body.data.added).toBe(false);
+      expect(listPlayCompetitorApps().map((app) => app.appId)).toEqual(["com.deepstash"]);
+
+      const keywords = await requestJson({ method: "GET", path: "/api/aso/keywords?platform=android&country=US" });
+      expect(keywords.body.data.items[0].competitorRanks).toEqual({
+        "com.rival.app": 2,
+        "com.deepstash": 1,
+      });
+      expect(jest.mocked(upsertOwnedApps)).not.toHaveBeenCalled();
+    });
+
+    it("rejects anything but another app's package name", async () => {
+      for (const appId of ["", "nodots", "1com.example", "com.example app", `com.${"a".repeat(200)}`, OURS]) {
+        const response = await requestJson({
+          method: "POST",
+          path: "/api/apps",
+          body: { platform: "android", appId },
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.body.errorCode ?? response.body.error?.code).toBe("INVALID_REQUEST");
+      }
+      expect(listPlayCompetitorApps()).toEqual([]);
+    });
+
+    it("removes a stored competitor but not one from the environment", async () => {
+      await requestJson({ method: "POST", path: "/api/apps", body: { platform: "android", appId: "com.deepstash" } });
+
+      const removed = await requestJson({
+        method: "DELETE",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.deepstash" },
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(removed.body.data).toEqual({ platform: "android", id: "com.deepstash" });
+      expect(listPlayCompetitorApps()).toEqual([]);
+
+      const fromEnv = await requestJson({
+        method: "DELETE",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.rival.app" },
+      });
+      expect(fromEnv.statusCode).toBe(400);
+      const unknown = await requestJson({
+        method: "DELETE",
+        path: "/api/apps",
+        body: { platform: "android", appId: "com.unknown.app" },
+      });
+      expect(unknown.statusCode).toBe(404);
+    });
+
+    it("still adds App Store research apps through the same route", async () => {
+      const response = await requestJson({
+        method: "POST",
+        path: "/api/apps",
+        body: { type: "research", name: "Ideas" },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.body.data).toEqual({ id: "research:ideas", name: "Ideas" });
+      expect(listPlayCompetitorApps()).toEqual([]);
+    });
   });
 });

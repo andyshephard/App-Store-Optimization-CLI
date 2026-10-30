@@ -14,6 +14,12 @@ type Props = {
   keyword: string;
   country: string;
   appId: string;
+  /** Shown in the title when the history is a competitor's. */
+  appName?: string;
+  /** Our app: a crawl without a point for `appId` is a day outside the top 30. */
+  crawledByAppId?: string;
+  /** When `appId` became a competitor; earlier days are not counted as outside. */
+  trackedSince?: string | null;
   displayLocale?: string;
   onClose: () => void;
 };
@@ -69,7 +75,7 @@ export function buildPlayHistoryChart(points: PlayHistoryPoint[]) {
 }
 
 export function PlayPositionHistoryDialog(props: Props) {
-  const { keyword, country, appId, onClose } = props;
+  const { keyword, country, appId, crawledByAppId, trackedSince, onClose } = props;
   const [points, setPoints] = useState<PlayHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,7 +84,7 @@ export function PlayPositionHistoryDialog(props: Props) {
     let cancelled = false;
     setLoading(true);
     setError("");
-    fetchPlayPositionHistory({ appId, keyword, country })
+    fetchPlayPositionHistory({ appId, keyword, country, crawledByAppId, trackedSince })
       .then((result) => {
         if (!cancelled) setPoints(result);
       })
@@ -91,7 +97,7 @@ export function PlayPositionHistoryDialog(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [appId, country, keyword]);
+  }, [appId, country, keyword, crawledByAppId, trackedSince]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -113,7 +119,10 @@ export function PlayPositionHistoryDialog(props: Props) {
         onClick={(event) => event.stopPropagation()}
       >
         <header className="dialog-header">
-          <h2>Google Play position history for "{keyword}"</h2>
+          <h2>
+            Google Play position history for "{keyword}"
+            {props.appName ? ` · ${props.appName}` : ""}
+          </h2>
           <button type="button" className="dialog-close" aria-label="Close" onClick={onClose}>
             ×
           </button>

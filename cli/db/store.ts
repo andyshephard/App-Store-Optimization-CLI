@@ -24,7 +24,7 @@ function ensureAppKeywordFavoriteColumn(database: Database.Database): void {
  * on goes in a numbered step below so an existing database is upgraded
  * exactly once, in order.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
@@ -172,6 +172,19 @@ const VERSIONED_MIGRATIONS: Array<{ version: number; sql: string }> = [
       );
       CREATE INDEX IF NOT EXISTS idx_play_keyword_position_history_captured
         ON play_keyword_position_history(captured_at);
+    `,
+  },
+  {
+    // Google Play competitor packages added from the dashboard or the API
+    // (cli/db/play-competitors.ts). Together with ASO_PLAY_ROSTER_APP_IDS
+    // they are the Play roster. Names and icons are read from stored search
+    // results, so only the package is kept.
+    version: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS play_competitor_apps (
+        app_id TEXT PRIMARY KEY,
+        added_at TEXT NOT NULL
+      );
     `,
   },
 ];
