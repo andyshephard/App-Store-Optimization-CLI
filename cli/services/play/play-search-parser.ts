@@ -215,6 +215,10 @@ export function parsePlaySearchPage(html: string, keyword: string): PlaySearchPa
   let excludedClusterApps = 0;
   const organic: PlaySearchApp[] = [];
   let expectedStart: number | null = null;
+  // Play labels a list by its page size ("0-30"), not its count; it can hold
+  // fewer apps (seen with 29 under "0-30", 30 Oct 2026). A short list is
+  // fine only as the last labelled range: after it, ranks would be ambiguous.
+  let shortRange = false;
 
   for (const section of sections) {
     if (!Array.isArray(section)) continue;
@@ -244,13 +248,14 @@ export function parsePlaySearchPage(html: string, keyword: string): PlaySearchPa
     const from = Number(range[1]);
     const to = Number(range[2]);
     const start = expectedStart ?? (topCard ? 1 : 0);
-    if (from !== start || to - from !== items.length) {
+    if (shortRange || from !== start || items.length === 0 || items.length > to - from) {
       throw new PlayContractError(
         "range_mismatch",
         `Play search for "${keyword}": result range ${from}-${to} with ${items.length} items, expected to start at ${start}`
       );
     }
     for (const item of items) organic.push(parseOrganicItem(item, keyword));
+    shortRange = items.length < to - from;
     expectedStart = to;
   }
 

@@ -145,9 +145,28 @@ describe("parsePlaySearchPage", () => {
     expect(result.apps[10].appId).toBe(ds4("chunks")[0][1][0][22][0][10][0][0][0]);
   });
 
-  it("is a contract failure when the range label disagrees with the items", () => {
+  it("accepts a last range holding fewer apps than its label (29 under 0-30, seen live)", () => {
     const data = ds4("chunks");
-    data[0][1][0][22][0] = data[0][1][0][22][0].slice(0, 12);
+    data[0][1][0][22][0] = data[0][1][0][22][0].slice(0, 29);
+    const result = parsePlaySearchPage(pageWith(data), "chunks");
+    expect(result.apps).toHaveLength(29);
+  });
+
+  it("is a contract failure when a range follows a short one", () => {
+    const data = ds4("chunks");
+    const organic = data[0][1][0];
+    const second = JSON.parse(JSON.stringify(organic));
+    organic[3] = [rangeToken(0, 10)];
+    organic[22][0] = organic[22][0].slice(0, 9);
+    second[3] = [rangeToken(10, 15)];
+    second[22][0] = second[22][0].slice(10, 15);
+    data[0][1].push(second);
+    expectContractError(pageWith(data), "range_mismatch");
+  });
+
+  it("is a contract failure when a range holds more apps than its label", () => {
+    const data = ds4("chunks");
+    data[0][1][0][3] = [rangeToken(0, 12)];
     expectContractError(pageWith(data), "range_mismatch");
   });
 
