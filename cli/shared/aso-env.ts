@@ -40,6 +40,7 @@ export const ASO_DEFAULTS = {
   dashboardHost: DEFAULT_DASHBOARD_HOST,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
   playCountries: ["US", "GB"] as readonly string[],
+  playPhaseMaxMinutes: 30,
 } as const;
 
 export type AsoEnvConfig = {
@@ -144,6 +145,11 @@ export type AsoEnvConfig = {
    * Store. ASO_PLAY_REFRESH=0 turns it off.
    */
   playRefreshEnabled: boolean;
+  /**
+   * Longest the refresh's Play phase may run (ASO_PLAY_PHASE_MAX_MINUTES,
+   * default 30); keywords left over wait for the next run.
+   */
+  playPhaseMaxMinutes: number;
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -352,6 +358,10 @@ function readAsoEnv(
       : [...ASO_DEFAULTS.playCountries],
     playRosterAppIds: parseList(env.ASO_PLAY_ROSTER_APP_IDS),
     playRefreshEnabled: parseDefaultOn(env.ASO_PLAY_REFRESH),
+    playPhaseMaxMinutes: parsePositiveInt(
+      env.ASO_PLAY_PHASE_MAX_MINUTES,
+      ASO_DEFAULTS.playPhaseMaxMinutes
+    ),
   };
 }
 

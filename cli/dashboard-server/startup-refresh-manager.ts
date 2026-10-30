@@ -72,8 +72,20 @@ export type StartupRefreshCounters = {
   storefronts: StorefrontRefreshCounters[];
   /** Apple requests made during the run, per host; set when the run ends. */
   requests?: StartupRefreshRequestMetrics;
-  /** The Google Play phase, when one ran. Never affects the run's status. */
-  play?: PlayRefreshCounters;
+  /**
+   * The Google Play phase, when one ran, with its own timing, `stopped` flag
+   * and Play-host request counts. Never affects the run's status.
+   */
+  play?: PlayRefreshCounters & {
+    startedAt?: string;
+    finishedAt?: string;
+    durationMs?: number;
+    stopped?: boolean;
+    requests?: {
+      durationMs: number;
+      byHost: Record<string, RequestHostCounters & { perMin: number }>;
+    };
+  };
 };
 
 /**
@@ -144,6 +156,8 @@ type StartupRefreshDeps = {
     force: boolean;
     isStopRequested: () => boolean;
   }) => Promise<PlayRefreshCounters | null>;
+  /** Host classes counted for the Play phase (default playsearch, playsuggest). */
+  playHostClasses?: string[];
   /** Called after every run, whatever the outcome. */
   onRunFinished?: (state: StartupRefreshState) => void;
   /** Storefronts refreshed at once (default 1). */
@@ -718,16 +732,25 @@ export function createStartupRefreshManager(
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
   };
 
+  /**
+   * Runs once the App Store part of the run is fully accounted for (status,
+   * finishedAt and request metrics are already fixed), so nothing here can
+   * change them. It keeps its own timing, request counts and stop flag in
+   * counters.play.
+   */
   const refreshPlayPhase = async (force: boolean): Promise<void> => {
     if (!deps.refreshPlay || stopRequested) return;
+    const playHosts = new Set(deps.playHostClasses ?? ["playsearch", "playsuggest"]);
+    const countersBefore = readCountersSafely();
+    const startedAtMs = nowMs();
+    let play: PlayRefreshCounters | null = null;
     try {
-      const play = await deps.refreshPlay({
+      play = await deps.refreshPlay({
         force,
         isStopRequested: () => stopRequested,
       });
-      if (play) state.counters.play = play;
     } catch (error) {
-      state.counters.play = {
+      play = {
         eligibleKeywordCount: 0,
         refreshedKeywordCount: 0,
         failedKeywordCount: 0,
@@ -737,7 +760,39 @@ export function createStartupRefreshManager(
       logger.warn(`[aso-refresh] play phase failed: ${errorToMessage(error)}`);
       deps.reportError?.(error, { phase: "play-refresh" });
     }
+    if (!play) return;
+    const finishedAtMs = nowMs();
+    const durationMs = Math.max(0, finishedAtMs - startedAtMs);
+    const countersAfter = readCountersSafely();
+    const byHost: StartupRefreshRequestMetrics["byHost"] = {};
+    if (countersAfter) {
+      const minutes = Math.max(durationMs / 60_000, 1 / 60);
+      for (const [host, after] of Object.entries(countersAfter)) {
+        if (!playHosts.has(host)) continue;
+        const diff = diffHostCounters(after, countersBefore?.[host]);
+        byHost[host] = { ...diff, perMin: Math.round((diff.requests / minutes) * 10) / 10 };
+      }
+    }
+    state.counters.play = {
+      ...play,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs,
+      stopped: stopRequested,
+      ...(countersAfter ? { requests: { durationMs, byHost } } : {}),
+    };
   };
+
+  const diffHostCounters = (
+    after: RequestHostCounters,
+    before: RequestHostCounters | undefined
+  ): RequestHostCounters => ({
+    requests: after.requests - (before?.requests ?? 0),
+    status429: after.status429 - (before?.status429 ?? 0),
+    status403: after.status403 - (before?.status403 ?? 0),
+    status5xx: after.status5xx - (before?.status5xx ?? 0),
+    throttles: after.throttles - (before?.throttles ?? 0),
+  });
 
   let requestCountersAtStart: Record<string, RequestHostCounters> | null = null;
   let lookupCacheHitsAtStart: number | null = null;
@@ -764,14 +819,7 @@ export function createStartupRefreshManager(
     const minutes = Math.max(durationMs / 60_000, 1 / 60);
     const byHost: StartupRefreshRequestMetrics["byHost"] = {};
     for (const [host, counters] of Object.entries(after)) {
-      const before = requestCountersAtStart?.[host];
-      const diff = {
-        requests: counters.requests - (before?.requests ?? 0),
-        status429: counters.status429 - (before?.status429 ?? 0),
-        status403: counters.status403 - (before?.status403 ?? 0),
-        status5xx: counters.status5xx - (before?.status5xx ?? 0),
-        throttles: counters.throttles - (before?.throttles ?? 0),
-      };
+      const diff = diffHostCounters(counters, requestCountersAtStart?.[host]);
       byHost[host] = { ...diff, perMin: Math.round((diff.requests / minutes) * 10) / 10 };
     }
     let rates: Record<string, unknown> | null = null;
@@ -824,19 +872,26 @@ export function createStartupRefreshManager(
     popularityUnavailable = false;
 
     await refreshKeywordsInBatches(force);
-    await refreshPlayPhase(force);
 
+    // The run's status, finish time and request metrics describe the App
+    // Store crawl only, and are fixed before the Play phase: a stop or a slow
+    // Play crawl must never turn a completed App Store run into "stopped".
+    const iosStopped = stopRequested;
     const finalStatus: StartupRefreshStatus =
-      state.requiresReauthentication || (!stopRequested && state.lastError)
+      state.requiresReauthentication || (!iosStopped && state.lastError)
         ? "failed"
-        : stopRequested
+        : iosStopped
           ? "stopped"
           : "completed";
+    const iosFinishedAt = new Date(nowMs()).toISOString();
+    captureRequestMetrics();
+
+    await refreshPlayPhase(force);
 
     state = {
       ...state,
       status: finalStatus,
-      finishedAt: new Date(nowMs()).toISOString(),
+      finishedAt: iosFinishedAt,
       stopRequested: false,
     };
     finishRun();
@@ -844,7 +899,7 @@ export function createStartupRefreshManager(
     // A run that got through with the session intact clears the alert
     // suppression, so the next outage is reported straight away rather than
     // being swallowed by a window left over from the previous one.
-    if (!state.requiresReauthentication && !stopRequested) {
+    if (!state.requiresReauthentication && !iosStopped) {
       try {
         deps.onRunHealthy?.();
       } catch {
@@ -853,30 +908,33 @@ export function createStartupRefreshManager(
     }
   };
 
+  /** Fixes the run's per-host request metrics as of now (the App Store crawl's end). */
+  const captureRequestMetrics = (): void => {
+    const startedAtMs = Date.parse(state.startedAt ?? "");
+    if (!Number.isFinite(startedAtMs)) return;
+    const metrics = requestMetrics(startedAtMs);
+    if (!metrics) return;
+    state.counters.requests = metrics;
+    logger.info(
+      `[aso-refresh] requests durationMs=${metrics.durationMs} ${Object.entries(metrics.byHost)
+        .map(
+          ([host, m]) =>
+            `${host}=${m.requests}(${m.perMin}/min,429=${m.status429},403=${m.status403},5xx=${m.status5xx})`
+        )
+        .join(" ")}${
+        metrics.lookupCacheHits != null
+          ? ` lookupCacheHits=${metrics.lookupCacheHits}`
+          : ""
+      }`
+    );
+  };
+
   let finishedRunId: number | null = null;
   const finishRun = (): void => {
     // Once per run, even if the unhandled-error path below runs after it.
     if (state.runId != null && finishedRunId === state.runId) return;
     finishedRunId = state.runId;
-    const startedAtMs = Date.parse(state.startedAt ?? "");
-    if (Number.isFinite(startedAtMs)) {
-      const metrics = requestMetrics(startedAtMs);
-      if (metrics) {
-        state.counters.requests = metrics;
-        logger.info(
-          `[aso-refresh] requests durationMs=${metrics.durationMs} ${Object.entries(metrics.byHost)
-            .map(
-              ([host, m]) =>
-                `${host}=${m.requests}(${m.perMin}/min,429=${m.status429},403=${m.status403},5xx=${m.status5xx})`
-            )
-            .join(" ")}${
-            metrics.lookupCacheHits != null
-              ? ` lookupCacheHits=${metrics.lookupCacheHits}`
-              : ""
-          }`
-        );
-      }
-    }
+    if (!state.counters.requests) captureRequestMetrics();
     const c = state.counters;
     const level = state.status === "completed" ? "info" : "warn";
     logger[level](

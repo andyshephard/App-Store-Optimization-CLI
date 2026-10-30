@@ -57,3 +57,20 @@ export function getPlayCountry(country: string): PlayCountry {
   }
   return entry;
 }
+
+/**
+ * Whether this install uses Google Play at all (ASO_PLAY_APP_ID set). When
+ * not, Play host classes and Play run counters are left out of health and
+ * run reports, so an App Store-only install sees the shapes it always did.
+ */
+export function isPlayConfigured(): boolean {
+  return ASO_ENV.playAppId != null;
+}
+
+/** Drops the Play host classes from a per-host record unless Play is configured. */
+export function withoutPlayHostsUnlessConfigured<T>(byHost: Record<string, T>): Record<string, T> {
+  if (isPlayConfigured()) return byHost;
+  return Object.fromEntries(
+    Object.entries(byHost).filter(([host]) => host !== "playsearch" && host !== "playsuggest")
+  );
+}

@@ -60,6 +60,10 @@ export type PlayRefreshCounters = {
   countries: PlayCountryRefreshCounters[];
   /** Set when the Play phase itself threw; the App Store run is unaffected. */
   error?: string;
+  /** The phase hit its time cap (ASO_PLAY_PHASE_MAX_MINUTES); the rest waits for the next run. */
+  timedOut?: boolean;
+  /** Why the phase did nothing, e.g. "already-running" (another Play crawl held the lock). */
+  skipped?: string;
 };
 
 export function reasonCodeForPlayError(error: unknown): string {
@@ -131,6 +135,34 @@ export function isPlayRefreshRunning(): boolean {
   return running;
 }
 
+/**
+ * The background refresh's Play phase. If an ad-hoc Play crawl (keywords just
+ * added, a manual Play refresh) holds the single-flight lock, waits for it up
+ * to `waitMs`; if it is still running, records the phase as skipped
+ * ("already-running") rather than silently doing nothing.
+ */
+export async function refreshPlayKeywordsForRun(
+  options: PlayRefreshOptions & { waitMs?: number; pollMs?: number }
+): Promise<PlayRefreshCounters> {
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = options.now ?? (() => new Date());
+  const waitUntil = now().getTime() + (options.waitMs ?? 10 * 60 * 1000);
+  while (running && now().getTime() < waitUntil && !(options.isStopRequested?.() ?? false)) {
+    await sleep(options.pollMs ?? 5000);
+  }
+  const counters = await refreshPlayKeywords(options);
+  if (counters) return counters;
+  logger.warn("[play-refresh] skipped: another Play crawl is still running");
+  return {
+    eligibleKeywordCount: 0,
+    refreshedKeywordCount: 0,
+    failedKeywordCount: 0,
+    countries: [],
+    skipped: "already-running",
+  };
+}
+
 export type PlayRefreshOptions = {
   /** Re-crawl every keyword, ignoring how recently it was crawled. */
   force?: boolean;
@@ -142,6 +174,8 @@ export type PlayRefreshOptions = {
   autocomplete?: boolean;
   isStopRequested?: () => boolean;
   isForegroundBusy?: () => boolean;
+  /** Stop starting new keywords after this long; counters.timedOut says it happened. */
+  maxDurationMs?: number;
   search?: PlaySearchFetcher;
   suggest?: PlaySuggestFetcher;
   sleep?: (ms: number) => Promise<void>;
@@ -175,6 +209,9 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
   const countries =
     options.countries ?? listEnabledPlayCountries().map((entry) => entry.country);
   const only = options.keywords ? new Set(options.keywords) : null;
+  const startedAtMs = now().getTime();
+  const deadlineReached = (): boolean =>
+    options.maxDurationMs != null && now().getTime() - startedAtMs >= options.maxDurationMs;
   const freshForMs = ASO_ENV.keywordOrderTtlHours * 60 * 60 * 1000;
   const counters: PlayRefreshCounters = {
     eligibleKeywordCount: 0,
@@ -185,6 +222,10 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
 
   for (const country of countries) {
     if (isStopRequested()) break;
+    if (deadlineReached()) {
+      counters.timedOut = true;
+      break;
+    }
     const cc: PlayCountryRefreshCounters = {
       country,
       eligible: 0,
@@ -213,6 +254,10 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
     let consecutiveFailures = 0;
     for (const keyword of keywords) {
       if (isStopRequested()) break;
+      if (deadlineReached()) {
+        counters.timedOut = true;
+        break;
+      }
       while (isForegroundBusy() && !isStopRequested()) await sleep(FOREGROUND_PAUSE_MS);
       try {
         const observation = await evaluatePlayKeyword(keyword, country, search, now);
@@ -243,10 +288,10 @@ async function runPlayRefresh(options: PlayRefreshOptions): Promise<PlayRefreshC
     }
     cc.skipped = Math.max(0, cc.eligible - cc.refreshed - cc.failed);
 
-    if (options.autocomplete !== false && !cc.abandoned && !isStopRequested()) {
+    if (options.autocomplete !== false && !cc.abandoned && !isStopRequested() && !deadlineReached()) {
       await refreshPlayAutocompleteForCountry(country, cc, {
         suggest: options.suggest,
-        isStopRequested,
+        isStopRequested: () => isStopRequested() || deadlineReached(),
         now,
         keywords: only ? Array.from(only) : undefined,
       });

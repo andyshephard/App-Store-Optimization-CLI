@@ -17,6 +17,8 @@ import {
   measurePlayAutocomplete,
   reasonCodeForPlayError,
 } from "../services/play/play-keyword-service";
+import { PACKAGE_ID, PLAY_MAX_KEYWORD_LENGTH } from "../services/play/play-search-parser";
+import { listPlayAppKeywords } from "../db/play-keywords";
 import { createPacedHintFetcher } from "../services/keywords/autocomplete-demand-service";
 import { fetchPlaySuggestions } from "../services/play/play-client";
 import { saveKeywordsToResearchApp, resolveKeywordAssociationAppId } from "../services/keywords/aso-research-keyword-service";
@@ -35,7 +37,20 @@ import { assertSupportedCountry, normalizeCountry, sanitizeKeywords } from "../d
  */
 
 function resolvePlayAppId(raw: unknown): string | null {
-  return typeof raw === "string" && raw.trim() ? raw.trim() : ASO_ENV.playAppId;
+  const appId = typeof raw === "string" && raw.trim() ? raw.trim() : ASO_ENV.playAppId;
+  if (appId && !PACKAGE_ID.test(appId)) {
+    throw new Error(`${appId} is not a valid Google Play package name.`);
+  }
+  return appId;
+}
+
+function assertPlayKeywordLengths(keywords: string[]): void {
+  const tooLong = keywords.find((keyword) => keyword.length > PLAY_MAX_KEYWORD_LENGTH);
+  if (tooLong) {
+    throw new Error(
+      `Keywords must be at most ${PLAY_MAX_KEYWORD_LENGTH} characters: "${tooLong.slice(0, 40)}…"`
+    );
+  }
 }
 
 function assertEnabledPlayCountry(country: string): string {
@@ -58,14 +73,27 @@ export async function runPlayKeywordsCommand(params: {
   appId?: string;
   associate: boolean;
   stdout: boolean;
+  /** Skip keywords already tracked for the app in this country (reported in filteredOut). */
+  excludeExisting?: boolean;
 }): Promise<void> {
   if (params.stdout) logger.setLevel("warn");
   const country = assertEnabledPlayCountry(params.country);
   const appId = resolvePlayAppId(params.appId);
+  assertPlayKeywordLengths(params.keywords);
+  const filteredOut: Array<{ keyword: string; reason: string }> = [];
+  let keywords = params.keywords;
+  if (params.excludeExisting && appId) {
+    const existing = new Set(listPlayAppKeywords({ appId, country }).map((row) => row.keyword));
+    keywords = keywords.filter((keyword) => {
+      if (!existing.has(keyword)) return true;
+      filteredOut.push({ keyword, reason: "already_associated" });
+      return false;
+    });
+  }
   const hints = createPacedHintFetcher({ delayMs: 0, fetch: fetchPlaySuggestions });
   const items: unknown[] = [];
   const failedKeywords: Array<{ keyword: string; reasonCode: string; message: string }> = [];
-  for (const keyword of params.keywords) {
+  for (const keyword of keywords) {
     try {
       const observation = await evaluatePlayKeyword(keyword, country);
       savePlayKeywordObservation(observation, { rosterAppIds: ASO_ENV.playRosterAppIds });
@@ -116,7 +144,7 @@ export async function runPlayKeywordsCommand(params: {
       country
     );
   }
-  console.log(JSON.stringify({ items, failedKeywords, filteredOut: [] }, null, 2));
+  console.log(JSON.stringify({ items, failedKeywords, filteredOut }, null, 2));
 }
 
 /** Keywords from the comma-separated argument and/or a file (one per line, # comments). */
@@ -152,6 +180,7 @@ export function runTrackCommand(params: {
   );
   const results: Array<{ country: string; added?: number; saved?: number; removed?: number }> = [];
   if (params.platform === "android") {
+    assertPlayKeywordLengths(params.keywords);
     const appId = resolvePlayAppId(params.appId);
     if (!appId) {
       throw new Error("Google Play tracking needs --app-id <package> or ASO_PLAY_APP_ID.");

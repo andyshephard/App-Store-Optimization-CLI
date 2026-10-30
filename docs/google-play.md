@@ -62,10 +62,13 @@ blocks. The results block (`ds:4`) holds `data[0][1]`, a list of sections:
   the spike.
 - **No results:** a `zero_results_cluster` section and no list.
 
-Anything else — an app list without a range label (a "similar apps" style
-cluster) is left out of the ranking; a page with only such lists, a range that
-disagrees with its items, a top card after other results, or a page with no
-result sections — is a **contract failure**: `PlayContractError`
+An app list without a range label (a "similar apps" style cluster) is left out
+of the ranking only when the labelled ranking already has all 30 results.
+Anything else is a **contract failure**: a top card not followed by a labelled
+list (`top_card_without_list`), an unlabelled list after a ranking shorter
+than 30 (`cluster_after_short_ranking`), a page with only unlabelled lists, a
+range that disagrees with its items, a top card after other results, or a page
+with no result sections. Such a page: `PlayContractError`
 (`PLAY_CONTRACT_CHANGED`), logged and reported like
 `reportAppleContractChange` (`reportPlayContractChange`, deduplicated hourly),
 recorded as the keyword's failure, and no ranks are written. Fixtures for each
@@ -75,7 +78,9 @@ layout are in `cli/services/play/__fixtures__/`.
 with form body `f.req=[[["IJ4APc","[[null,[\"<prefix>\"],[10],[2],4]]"]]]`. The
 `[["wrb.fr","IJ4APc","<json>"...` line holds the payload; suggestions are at
 `[0][0][i][0]`. A prefix with no suggestions answers `[[null, ...]]`, which is
-an empty list, not an error. The letters measure is the App Store one
+an empty list, not an error; batchexecute's error envelope (null payload, error
+code at `[5]`) is a contract failure (`suggest_rpc_error`), so a failed call is
+never stored as "never suggested". The letters measure is the App Store one
 (`measureAutocomplete`) reused as is, with prefixes shared between keywords.
 
 **Difficulty (`play-installs-v1`, `play-difficulty.ts`):** each top-10 app's
@@ -106,8 +111,19 @@ errors; 20 s search / 15 s suggest timeout).
 The background refresh crawls Play **after** every App Store storefront has
 finished, in the same run, so it never delays or slows the App Store crawl.
 
-- Runs only when `ASO_PLAY_REFRESH` is not `0` and at least one Play keyword is
-  tracked; countries from `ASO_PLAY_COUNTRIES`.
+- Runs only when `ASO_PLAY_APP_ID` is set, `ASO_PLAY_REFRESH` is not `0` and at
+  least one Play keyword is tracked; countries from `ASO_PLAY_COUNTRIES`.
+- The run's status, `finishedAt` and `requests` (per-host counts and rates) are
+  fixed when the App Store crawl ends, before Play starts, so they describe the
+  App Store crawl only. The Play phase keeps its own `startedAt`, `finishedAt`,
+  `durationMs` and `requests` (Play hosts only) in `counters.play`. A stop
+  during the Play phase sets `counters.play.stopped`; the run stays
+  `completed`.
+- Capped at `ASO_PLAY_PHASE_MAX_MINUTES` (default 30): no new keyword starts
+  after that (`counters.play.timedOut`), the rest go first next run.
+- If an ad-hoc Play crawl (keywords just added, a Play-only manual refresh) is
+  still running, the phase waits up to 10 minutes for it, then records
+  `counters.play.skipped = "already-running"`.
 - Scheduled runs are forced (every keyword re-crawled daily); manual runs
   without `force` skip keywords crawled within `ASO_KEYWORD_ORDER_TTL_HOURS`.
 - Least recently crawled first, so a stopped run resumes where it stopped.
@@ -116,8 +132,10 @@ finished, in the same run, so it never delays or slows the App Store crawl.
   run. Nothing from the Play phase changes the run's status or `lastError`; a
   failure of the whole phase is kept in `counters.play.error`.
 - Autocomplete: like the App Store check, each run re-measures about a seventh
-  of a country's keywords (oldest first), so each is checked weekly; newly
-  added keywords are measured at once.
+  of a country's keywords (oldest first), so each is checked weekly. Keywords
+  added without `defer` are measured at once; **deferred adds (the seed
+  script) get their autocomplete over about a week**, roughly a seventh per
+  night, so `autocompleteLetters` stays `null` for most of them until then.
 - Run accounting: `counters.play` on `GET /api/aso/refresh-status` and on the
   run row (health `lastRun.play`): per country eligible / refreshed / failed /
   skipped / abandoned / failure reasons / autocomplete checked.
@@ -131,14 +149,18 @@ autocomplete prefixes per country.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `ASO_PLAY_APP_ID` | unset | Package tracked by default, e.g. `com.andyshephard.chunks`. API and CLI fall back to it when no `appId` is given. |
+| `ASO_PLAY_APP_ID` | unset | Package tracked by default, e.g. `com.andyshephard.chunks`. API and CLI fall back to it when no `appId` is given. Also the switch for Play in the nightly refresh and in reports: unset, the refresh skips Play and `playsearch`/`playsuggest` are left out of `requests.byHost`, `rates`, health `rateLimits`, and `lastRun.play` is omitted. |
 | `ASO_PLAY_COUNTRIES` | `US,GB` | Play countries crawled and accepted. Add `AU`, `CA`, `NZ`, `IE`. Independent of `ASO_SUPPORTED_COUNTRIES`. |
 | `ASO_PLAY_ROSTER_APP_IDS` | unset | Comma-separated competitor packages; their ranks are kept in history and returned as `competitorRanks`. |
 | `ASO_PLAY_REFRESH` | on | `0` leaves Play out of the background refresh. |
+| `ASO_PLAY_PHASE_MAX_MINUTES` | 30 | Time cap for the refresh's Play phase. |
 | `ASO_RATE_PLAYSEARCH_PER_MIN` | 20 | See Rate limits. |
 | `ASO_RATE_PLAYSUGGEST_PER_MIN` | 30 | See Rate limits. |
 
-With nothing tracked on Play, behaviour is unchanged.
+With `ASO_PLAY_APP_ID` unset, every response shape is unchanged.
+
+Package names (`appId`, `competitors`) must look like package names (400
+`INVALID_REQUEST` otherwise), and keywords are at most 100 characters.
 
 ## API
 
@@ -213,8 +235,10 @@ aso untrack "old term" --platform android --country US,GB --app-id com.andysheph
 ```
 
 The MCP tool `aso_evaluate_keywords` takes `platform: "android"` (and an
-optional `country`); Play items are filtered by `maxDifficulty` only and carry
-`autocompleteLetters`, `autocompleteRank`, `rank` and `appCount`.
+optional `country`); Play items are filtered by `maxDifficulty`, `appId` and
+`excludeExisting` apply, and they carry `autocompleteLetters`,
+`autocompleteRank`, `rank` and `appCount`. `minPopularity` does not apply (no
+Play popularity); when it is passed the result says it was ignored.
 
 ## Seeding Chunks
 
@@ -227,7 +251,8 @@ ASO_BASE_URL=https://keywords.chunks.app ASO_API_TOKEN=… \
 ```
 
 That posts with `defer: true`, so nothing is crawled until the next nightly
-refresh. Locally, use `aso track` as above.
+refresh, and autocomplete fills in over about a week (see Nightly refresh). The
+token is passed to curl as a config file on stdin, never on its command line. Locally, use `aso track` as above.
 
 ## Storage
 

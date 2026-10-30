@@ -23,10 +23,19 @@ describe("parsePlaySuggestResponse", () => {
     expect(parsePlaySuggestResponse(fixture("zzqxjvkw"), "zzqxjvkw")).toEqual([]);
   });
 
-  it("returns [] for a null payload", () => {
-    expect(
-      parsePlaySuggestResponse(`)]}'\n\n[["wrb.fr","IJ4APc",null,null,null,null,"generic"]]`, "x")
-    ).toEqual([]);
+  it("is a contract failure for batchexecute's error envelope, not 'no suggestions'", () => {
+    for (const body of [
+      `)]}'\n\n[["wrb.fr","IJ4APc",null,null,null,[3],"generic"]]`,
+      `)]}'\n\n[["wrb.fr","IJ4APc",null,null,null,null,"generic"]]`,
+    ]) {
+      try {
+        parsePlaySuggestResponse(body, "x");
+        throw new Error("expected a PlayContractError");
+      } catch (error) {
+        expect(error).toBeInstanceOf(PlayContractError);
+        expect((error as PlayContractError).signal).toBe("suggest_rpc_error");
+      }
+    }
   });
 
   it("is a contract failure when the RPC envelope is missing", () => {

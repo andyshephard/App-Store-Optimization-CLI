@@ -101,8 +101,12 @@ import {
   resolveRequestPlatform,
 } from "./routes/play-keyword-handlers";
 import { listPlayTrackedCountries } from "../db/play-keywords";
-import { refreshPlayKeywords } from "../services/play/play-keyword-service";
-import { listEnabledPlayCountries } from "../shared/play-countries";
+import { refreshPlayKeywordsForRun } from "../services/play/play-keyword-service";
+import {
+  isPlayConfigured,
+  listEnabledPlayCountries,
+  withoutPlayHostsUnlessConfigured,
+} from "../shared/play-countries";
 import {
   sendApiError,
   sendJson,
@@ -241,22 +245,26 @@ const startupRefreshManager = createStartupRefreshManager({
     withObservationRun(startupRefreshManager.getState().runId, () =>
       keywordPipelineService.refreshStartup(country, items, options)
     ),
-  // Google Play, after the App Store: only when something is tracked there.
+  // Google Play, after the App Store: only on an install that uses Play
+  // (ASO_PLAY_APP_ID set) and has something tracked there.
   refreshPlay: async ({ force, isStopRequested }) => {
-    if (!ASO_ENV.playRefreshEnabled) return null;
+    if (!ASO_ENV.playRefreshEnabled || !isPlayConfigured()) return null;
     if (listPlayTrackedCountries().length === 0) return null;
-    return refreshPlayKeywords({
+    return refreshPlayKeywordsForRun({
       force,
       isStopRequested,
       isForegroundBusy: () => foregroundMutationCount > 0,
+      maxDurationMs: ASO_ENV.playPhaseMaxMinutes * 60 * 1000,
     });
   },
   isForegroundBusy: () => foregroundMutationCount > 0,
   interCountryDelayMs: ASO_ENV.refreshInterCountryDelayMs,
   storefrontConcurrency: ASO_ENV.storefrontConcurrency,
-  readRequestCounters: () => appleRateLimiter().counters(),
+  readRequestCounters: () =>
+    withoutPlayHostsUnlessConfigured(appleRateLimiter().counters()),
   readLookupCacheHits: lookupCacheHitCount,
-  readRateSnapshot: () => appleRateLimiter().snapshot(),
+  readRateSnapshot: () =>
+    withoutPlayHostsUnlessConfigured(appleRateLimiter().snapshot()),
   interBatchDelayMs: ASO_ENV.refreshInterBatchDelayMs,
   // Two full batches of nothing but failures means the storefront is throttled,
   // not that these particular keywords are bad.
@@ -463,9 +471,10 @@ function collectHealthReport(): HealthReport {
         requests:
           (lastRunRow.counters as { requests?: HealthRunInput["requests"] } | null)
             ?.requests ?? null,
-        play:
-          (lastRunRow.counters as { play?: HealthRunInput["play"] } | null)
-            ?.play ?? null,
+        play: isPlayConfigured()
+          ? (lastRunRow.counters as { play?: HealthRunInput["play"] } | null)
+              ?.play ?? null
+          : null,
       }
     : null;
   const current = getStartupRefreshState();
@@ -507,7 +516,10 @@ function collectHealthReport(): HealthReport {
       needsTwoFactor: keeper.needsTwoFactor,
     },
     restartLoop: currentRestartLoopState(nowMs),
-    rateLimits: safeRead<Record<string, unknown>>(() => appleRateLimiter().snapshot(), {}),
+    rateLimits: safeRead<Record<string, unknown>>(
+      () => withoutPlayHostsUnlessConfigured(appleRateLimiter().snapshot()),
+      {}
+    ),
   });
 }
 

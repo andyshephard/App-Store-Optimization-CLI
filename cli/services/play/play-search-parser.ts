@@ -61,7 +61,11 @@ export class PlayContractError extends Error {
   }
 }
 
-const PACKAGE_ID = /^[A-Za-z][\w]*(\.[\w]+)+$/;
+/** Longest keyword accepted for Play tracking. */
+export const PLAY_MAX_KEYWORD_LENGTH = 100;
+
+/** A Play package name (e.g. com.andyshephard.chunks). */
+export const PACKAGE_ID = /^[A-Za-z][\w]*(\.[\w]+)+$/;
 const RANGE_LABEL = /search_results_cluster_apps_range_(\d+)_(\d+)/;
 const TOP_CARD_LABEL = /apps_mdp_search_results_cluster_([A-Za-z][\w.]*)/;
 const ZERO_LABEL = /zero_results_cluster/;
@@ -255,6 +259,25 @@ export function parsePlaySearchPage(html: string, keyword: string): PlaySearchPa
     throw new PlayContractError(
       excludedClusterApps > 0 ? "only_unlabelled_clusters" : "no_results_or_marker",
       `Play search for "${keyword}": no ranked results and no no-results marker`
+    );
+  }
+  if (topCard && organic.length === 0) {
+    // The card is always followed by the labelled range_1_N list. Without it
+    // (or with only an unlabelled list, which may well be the organic
+    // results) ranking the card alone would record every other app as outside
+    // the top 30.
+    throw new PlayContractError(
+      "top_card_without_list",
+      `Play search for "${keyword}": a top-result card followed only by unlabelled results`
+    );
+  }
+  const ranked = (topCard ? 1 : 0) + organic.length;
+  if (excludedClusterApps > 0 && ranked < PLAY_MAX_RESULTS) {
+    // A short labelled ranking plus an unlabelled list: the list may be the
+    // rest of the ranking under a new label, not a "similar apps" cluster.
+    throw new PlayContractError(
+      "cluster_after_short_ranking",
+      `Play search for "${keyword}": ${ranked} ranked results plus ${excludedClusterApps} unlabelled ones`
     );
   }
   if (zeroResults) {

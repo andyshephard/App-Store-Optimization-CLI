@@ -334,6 +334,7 @@ const asoCommand: CommandModule = {
         appId: argv["app-id"] as string | undefined,
         associate: (argv.associate as boolean | undefined) !== false,
         stdout,
+        excludeExisting: isExcludeExistingEnabled(argv as Record<string, unknown>),
       });
       return;
     }

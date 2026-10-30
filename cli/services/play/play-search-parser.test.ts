@@ -105,7 +105,21 @@ describe("parsePlaySearchPage", () => {
     });
   });
 
-  it("leaves unlabelled clusters (similar apps) out of the ranking", () => {
+  it("is a contract failure when a top card is followed only by an unlabelled list", () => {
+    const data = ds4("stoic");
+    data[0][1][1][3] = [Buffer.from("some_new_results_cluster", "latin1").toString("base64")];
+    expectContractError(pageWith(data), "top_card_without_list");
+  });
+
+  it("is a contract failure when an unlabelled list follows a short ranking", () => {
+    const data = ds4("audio-stories");
+    const cluster = JSON.parse(JSON.stringify(data[0][1][0]));
+    cluster[3] = [Buffer.from("similar_apps_cluster", "latin1").toString("base64")];
+    data[0][1].push(cluster);
+    expectContractError(pageWith(data), "cluster_after_short_ranking");
+  });
+
+  it("leaves unlabelled clusters (similar apps) out of a full ranking", () => {
     const data = ds4("chunks");
     const organic = data[0][1][0];
     const cluster = JSON.parse(JSON.stringify(organic));

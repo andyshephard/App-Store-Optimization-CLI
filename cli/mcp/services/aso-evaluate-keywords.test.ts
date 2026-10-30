@@ -350,5 +350,24 @@ describe("aso_evaluate_keywords service", () => {
         appCount: 30,
       },
     ]);
+    expect(result.content).toHaveLength(1);
+  });
+
+  it("says that minPopularity is ignored on Google Play, and passes excludeExisting", async () => {
+    mockRunAsoCommand.mockResolvedValue({
+      stdout: JSON.stringify({ items: [], failedKeywords: [], filteredOut: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await handleAsoEvaluateKeywords({
+      keywords: ["history"],
+      platform: "android",
+      minPopularity: 20,
+      excludeExisting: true,
+    });
+    expect(mockRunAsoCommand.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["--exclude-existing", "--platform", "android"])
+    );
+    expect(result.content[1]?.text).toMatch(/minPopularity was ignored/);
   });
 });

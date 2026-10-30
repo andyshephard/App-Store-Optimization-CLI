@@ -288,6 +288,29 @@ describe("Google Play on the keyword API (platform=android)", () => {
     expect(listPlayAppKeywords()).toEqual([]);
   });
 
+  it("rejects invalid package names and over-long keywords", async () => {
+    const badApp = await requestJson({
+      method: "GET",
+      path: "/api/aso/keywords?platform=android&country=US&appId=not%20a%20package",
+    });
+    expect(badApp.statusCode).toBe(400);
+    expect(badApp.body.errorCode).toBe("INVALID_REQUEST");
+
+    const badCompetitor = await requestJson({
+      method: "GET",
+      path: `/api/aso/keywords?platform=android&country=US&appId=${OURS}&competitors=a.b,%3Cscript%3E`,
+    });
+    expect(badCompetitor.statusCode).toBe(400);
+
+    const longKeyword = await requestJson({
+      method: "POST",
+      path: "/api/aso/keywords",
+      body: { platform: "android", appId: OURS, country: "US", keywords: ["x".repeat(101)] },
+    });
+    expect(longKeyword.statusCode).toBe(400);
+    expect(listPlayAppKeywords()).toEqual([]);
+  });
+
   it("removes Play keywords through DELETE", async () => {
     addPlayAppKeywords(OURS, ["a", "b"], "US");
     const response = await requestJson({

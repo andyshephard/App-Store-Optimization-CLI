@@ -1183,10 +1183,51 @@ describe("startup-refresh-manager", () => {
 
       expect(order).toEqual(["ios:US", "ios:GB", "play:force=true"]);
       expect(manager.getState().status).toBe("completed");
-      expect(manager.getState().counters.play).toEqual(playCounters);
-      expect(finished[0].play).toEqual(playCounters);
+      expect(manager.getState().counters.play).toMatchObject({ ...playCounters, stopped: false });
+      expect(finished[0].play).toMatchObject(playCounters);
       // App Store accounting is unchanged by the Play phase.
       expect(manager.getState().counters.storefronts.map((sf) => sf.country)).toEqual(["US", "GB"]);
+    });
+
+    it("keeps the App Store status, finish time and request rates when Play is stopped", async () => {
+      let now = 0;
+      let manager: ReturnType<typeof createStartupRefreshManager>;
+      const counters = {
+        mzsearch: { requests: 0, status429: 0, status403: 0, status5xx: 0, throttles: 0 },
+        playsearch: { requests: 0, status429: 0, status403: 0, status5xx: 0, throttles: 0 },
+      };
+      manager = managerWith({
+        nowMs: () => now,
+        readRequestCounters: () => JSON.parse(JSON.stringify(counters)),
+        enrichKeywords: async (_country, items) => {
+          counters.mzsearch.requests += 60;
+          now += 60_000; // one minute of App Store crawl
+          return items;
+        },
+        refreshPlay: async ({ isStopRequested }) => {
+          counters.playsearch.requests += 10;
+          now += 30 * 60_000; // a long Play phase...
+          manager.stop(); // ...stopped by an operator
+          return { ...playCounters, refreshedKeywordCount: isStopRequested() ? 1 : 2 };
+        },
+      });
+
+      manager.start({ force: true, trigger: "scheduled" });
+      await waitForManagerToFinish(manager);
+
+      const state = manager.getState();
+      expect(state.status).toBe("completed");
+      expect(state.finishedAt).toBe(new Date(60_000).toISOString());
+      expect(state.counters.requests?.durationMs).toBe(60_000);
+      expect(state.counters.requests?.byHost.mzsearch).toMatchObject({ requests: 60, perMin: 60 });
+      expect(state.counters.requests?.byHost.playsearch.requests).toBe(0);
+      expect(state.counters.play).toMatchObject({
+        stopped: true,
+        refreshedKeywordCount: 1,
+        durationMs: 30 * 60_000,
+        requests: { durationMs: 30 * 60_000, byHost: { playsearch: { requests: 10 } } },
+      });
+      expect(state.counters.play?.requests?.byHost.mzsearch).toBeUndefined();
     });
 
     it("never fails the run when the Play phase throws", async () => {

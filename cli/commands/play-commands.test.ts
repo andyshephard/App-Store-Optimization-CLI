@@ -76,5 +76,11 @@ describe("play commands", () => {
     expect(() =>
       runTrackCommand({ action: "track", platform: "android", keywords: ["x"], countries: "US" })
     ).toThrow(/ASO_PLAY_APP_ID/);
+    expect(() =>
+      runTrackCommand({ action: "track", platform: "android", keywords: ["x"], countries: "US", appId: "../etc" })
+    ).toThrow(/not a valid Google Play package/);
+    expect(() =>
+      runTrackCommand({ action: "track", platform: "android", keywords: ["y".repeat(101)], countries: "US", appId: "a.b" })
+    ).toThrow(/at most 100/);
   });
 });

@@ -282,6 +282,7 @@ The HTTP API takes `platform=android` on the same endpoints; without it every
 response is unchanged. Validated against DataForSEO's Play SERP (exact match on
 10 of 10 terms, 30 Oct 2026). Details, env vars (`ASO_PLAY_APP_ID`,
 `ASO_PLAY_COUNTRIES`, `ASO_PLAY_ROSTER_APP_IDS`, `ASO_PLAY_REFRESH`,
+`ASO_PLAY_PHASE_MAX_MINUTES`,
 `ASO_RATE_PLAYSEARCH_PER_MIN`, `ASO_RATE_PLAYSUGGEST_PER_MIN`) and limits:
 [docs/google-play.md](docs/google-play.md).
 

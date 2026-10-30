@@ -21,6 +21,7 @@ import {
   refreshPlayAutocomplete,
   refreshPlayKeywords,
 } from "../../services/play/play-keyword-service";
+import { PACKAGE_ID, PLAY_MAX_KEYWORD_LENGTH } from "../../services/play/play-search-parser";
 
 /**
  * Google Play on the existing keyword endpoints. Every endpoint keeps its App
@@ -160,6 +161,10 @@ export function createPlayKeywordHandlers(deps: Deps) {
 
   function resolvePlayAppId(res: http.ServerResponse, raw: unknown): string | null {
     const appId = typeof raw === "string" && raw.trim() ? raw.trim() : ASO_ENV.playAppId;
+    if (appId && !PACKAGE_ID.test(appId)) {
+      deps.sendApiError(res, 400, "INVALID_REQUEST", "appId is not a valid Google Play package name.");
+      return null;
+    }
     if (appId) return appId;
     deps.sendApiError(
       res,
@@ -176,8 +181,13 @@ export function createPlayKeywordHandlers(deps: Deps) {
     if (!country) return;
     const appId = resolvePlayAppId(res, query.appId);
     if (!appId) return;
+    const requestedCompetitors = parseAppIds(query.competitors);
+    if (requestedCompetitors.some((id) => !PACKAGE_ID.test(id))) {
+      deps.sendApiError(res, 400, "INVALID_REQUEST", "competitors must be Google Play package names.");
+      return;
+    }
     const competitorAppIds = Array.from(
-      new Set([...ASO_ENV.playRosterAppIds, ...parseAppIds(query.competitors)])
+      new Set([...ASO_ENV.playRosterAppIds, ...requestedCompetitors])
     );
     const all = listPlayKeywordRowsForApp(appId, country).map((row) =>
       toPlayKeywordItem(row, {
@@ -226,6 +236,15 @@ export function createPlayKeywordHandlers(deps: Deps) {
     }
     if (keywords.length > ASO_MAX_KEYWORDS) {
       deps.sendApiError(res, 400, "INVALID_REQUEST", ASO_MAX_KEYWORDS_PER_REQUEST_ERROR);
+      return null;
+    }
+    if (keywords.some((keyword) => keyword.length > PLAY_MAX_KEYWORD_LENGTH)) {
+      deps.sendApiError(
+        res,
+        400,
+        "INVALID_REQUEST",
+        `Keywords must be at most ${PLAY_MAX_KEYWORD_LENGTH} characters.`
+      );
       return null;
     }
     return keywords;

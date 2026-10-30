@@ -63,7 +63,7 @@ export const asoEvaluateKeywordsInputSchema = z.object({
     .enum(["ios", "android"])
     .optional()
     .describe(
-      "Store to evaluate on: ios (App Store, default) or android (Google Play). Google Play has no popularity score: its items carry autocompleteLetters/autocompleteRank as the demand signal, plus the app's rank, and minPopularity is not applied."
+      "Store to evaluate on: ios (App Store, default) or android (Google Play). Google Play has no popularity score: its items carry autocompleteLetters/autocompleteRank as the demand signal, plus the app's rank, minPopularity is ignored there (and says so in the result); maxDifficulty, appId and excludeExisting apply."
     ),
   country: z
     .string()
@@ -306,14 +306,19 @@ export async function handleAsoEvaluateKeywords(args: AsoEvaluateKeywordsArgs) {
         },
       ];
     });
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify(acceptedPlay, null, 2),
-        },
-      ],
-    };
+    const content = [
+      {
+        type: "text" as const,
+        text: JSON.stringify(acceptedPlay, null, 2),
+      },
+    ];
+    if (args.minPopularity != null) {
+      content.push({
+        type: "text" as const,
+        text: "Note: minPopularity was ignored for platform android - Google Play has no popularity score; use autocompleteLetters (fewer = more searched).",
+      });
+    }
+    return { content };
   }
 
   const accepted = parsedItems

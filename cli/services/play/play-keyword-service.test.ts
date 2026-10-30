@@ -13,7 +13,7 @@ import {
 } from "../../db/play-keywords";
 import { listKeywords } from "../../db/aso-keywords";
 import { listAllAppKeywords } from "../../db/app-keywords";
-import { refreshPlayKeywords } from "./play-keyword-service";
+import { refreshPlayKeywords, refreshPlayKeywordsForRun } from "./play-keyword-service";
 import { PlayContractError, type PlaySearchApp, type PlaySearchParseResult } from "./play-search-parser";
 
 jest.mock("../telemetry/error-reporter", () => ({ reportBugsnagError: jest.fn() }));
@@ -185,6 +185,69 @@ describe("refreshPlayKeywords", () => {
     expect(search).toHaveBeenCalledTimes(10);
     expect(counters?.countries[0]).toMatchObject({ abandoned: true, failed: 10, skipped: 2 });
     expect(counters?.countries[0].failureReasons).toEqual({ HTTP_429: 10 });
+  });
+
+  it("stops starting keywords once the time cap is reached", async () => {
+    addPlayAppKeywords(OURS, ["a", "b", "c"], "US");
+    addPlayAppKeywords(OURS, ["d"], "GB");
+    let nowMs = Date.parse("2026-10-30T03:00:00.000Z");
+    const search = jest.fn(async () => {
+      nowMs += 10 * 60_000;
+      return results([OURS]);
+    });
+    const counters = await refreshPlayKeywords({
+      search,
+      suggest: async () => [],
+      force: true,
+      now: () => new Date(nowMs),
+      maxDurationMs: 25 * 60_000,
+    });
+    expect(search).toHaveBeenCalledTimes(3);
+    expect(counters?.timedOut).toBe(true);
+    expect(counters?.countries.map((c) => c.country)).toEqual(["US"]);
+  });
+
+  it("waits for an ad-hoc crawl, then records the nightly phase as skipped if it is still running", async () => {
+    addPlayAppKeywords(OURS, ["a"], "US");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const adHoc = refreshPlayKeywords({
+      countries: ["US"],
+      force: true,
+      suggest: async () => [],
+      search: async () => {
+        await gate;
+        return results([OURS]);
+      },
+    });
+    let nowMs = 0;
+    const skipped = await refreshPlayKeywordsForRun({
+      waitMs: 60_000,
+      now: () => new Date(nowMs),
+      sleep: async (ms) => {
+        nowMs += ms;
+      },
+    });
+    expect(skipped).toMatchObject({ skipped: "already-running", eligibleKeywordCount: 0 });
+
+    let polls = 0;
+    const ran = await refreshPlayKeywordsForRun({
+      waitMs: 60_000,
+      force: true,
+      countries: ["US"],
+      suggest: async () => [],
+      search: async () => results([OURS]),
+      sleep: async () => {
+        polls += 1;
+        release();
+        await adHoc;
+      },
+    });
+    expect(polls).toBe(1);
+    expect(ran.skipped).toBeUndefined();
+    expect(ran.refreshedKeywordCount).toBe(1);
   });
 
   it("is single-flight", async () => {

@@ -22,10 +22,13 @@ if [ -z "$APP_ID" ]; then
   exit 1
 fi
 
-AUTH_ARGS=()
-if [ -n "${ASO_API_TOKEN:-}" ]; then
-  AUTH_ARGS=(-H "Authorization: Bearer ${ASO_API_TOKEN}")
-fi
+# The token goes to curl as a config file on stdin (printf is a shell
+# builtin), never on curl's command line, where other users could read it.
+auth_config() {
+  if [ -n "${ASO_API_TOKEN:-}" ]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$ASO_API_TOKEN"
+  fi
+}
 
 # Keywords, one per line, without comments or blanks.
 KEYWORDS_FILE="$(mktemp)"
@@ -43,8 +46,7 @@ for COUNTRY in $(echo "$COUNTRIES" | tr ',' ' '); do
         keywords: lines, defer: true,
       }));' "$APP_ID" "$COUNTRY")"
     echo "POST ${COUNTRY} keywords ${START}-$((START + BATCH - 1 < TOTAL ? START + BATCH - 1 : TOTAL)) of ${TOTAL}"
-    curl -sS --fail-with-body -X POST "${BASE_URL}/api/aso/keywords" \
-      ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
+    auth_config | curl -sS --fail-with-body -K - -X POST "${BASE_URL}/api/aso/keywords" \
       -H "Content-Type: application/json" \
       --data "$BODY"
     echo
